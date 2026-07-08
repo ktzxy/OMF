@@ -53,12 +53,21 @@ echo ""
 chmod +x "${OMF_HOME}/omf.sh" "${OMF_HOME}/setup.sh" "${OMF_HOME}"/cmd/*.sh "${OMF_HOME}"/lib/*.sh 2>/dev/null || true
 log_info "已赋予脚本执行权限 (omf.sh/setup.sh/cmd/*.sh/lib/*.sh)"
 
-# 4. 建立全局命令软链
+# 4. 建立全局命令软链 (兼容 /usr/local/bin 与 /usr/bin)
 if [ -w /usr/local/bin ]; then
     ln -sf "${OMF_HOME}/omf.sh" /usr/local/bin/omf
-    log_info "已创建命令: omf -> ${OMF_HOME}/omf.sh (任意目录可直接 omf ...)"
+    log_info "已创建命令: omf -> ${OMF_HOME}/omf.sh"
+elif [ -w /usr/bin ]; then
+    ln -sf "${OMF_HOME}/omf.sh" /usr/bin/omf
+    log_info "已创建命令: omf -> ${OMF_HOME}/omf.sh"
 else
-    log_warn "无 /usr/local/bin 写权限, 未创建软链; 请使用 ./omf.sh"
+    log_warn "无 /usr/local/bin 与 /usr/bin 写权限, 未创建软链; 请使用 ./omf.sh 或 bash omf.sh"
+fi
+# 校验软链是否可被当前 shell 识别, 否则给出明确提示
+if command -v omf >/dev/null 2>&1; then
+    log_info "命令 omf 可用, 任意目录可直接执行"
+else
+    log_warn "当前 shell 仍未识别 omf, 请执行: hash -r  或重开终端, 也可直接使用 ./omf.sh"
 fi
 
 # 5. 可选: 预检

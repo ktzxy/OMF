@@ -4,3 +4,6 @@
 *.conf text eol=lf
 *.sql text eol=lf
 *.md text eol=lf
+
+# 取消过滤器继承(防止全局 Git LFS 过滤器在 checkout 时把文件清空)
+* -filter

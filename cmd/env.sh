@@ -117,16 +117,35 @@ env_packages() {
         # ---------- Debian / Ubuntu 系 (apt) ----------
         ubuntu|debian|linuxmint|kali|pop)
             pm="apt"
-            pkgs=(
-                binutils gcc g++ ksh make sysstat unzip
-                libaio1 libaio-dev
-                libstdc++6 libstdc++-dev
-                libelf1 libelf-dev
-                libc6 libc6-dev
-                libnsl2 libtirpc3 libtirpc-dev
-                libxcrypt1 libxcrypt-dev
-                smartmontools nfs-common
-            )
+            # Ubuntu 24.04 (noble) 起因 time_t 64 位改造, 包名变化:
+            #   libaio1    -> libaio1t64
+            #   libxcrypt* -> libcrypt* (libcrypt1 / libcrypt-dev)
+            case "$ver" in
+                24.04*|24*|25*|26*|27*|28*|29*|3*)
+                    pkgs=(
+                        binutils gcc g++ ksh make sysstat unzip
+                        libaio1t64 libaio-dev
+                        libstdc++6 libstdc++-dev
+                        libelf1 libelf-dev
+                        libc6 libc6-dev
+                        libnsl2 libtirpc3 libtirpc-dev
+                        libcrypt1 libcrypt-dev
+                        smartmontools nfs-common
+                    )
+                    ;;
+                *)
+                    pkgs=(
+                        binutils gcc g++ ksh make sysstat unzip
+                        libaio1 libaio-dev
+                        libstdc++6 libstdc++-dev
+                        libelf1 libelf-dev
+                        libc6 libc6-dev
+                        libnsl2 libtirpc3 libtirpc-dev
+                        libxcrypt1 libxcrypt-dev
+                        smartmontools nfs-common
+                    )
+                    ;;
+            esac
             ;;
         # ---------- RHEL / CentOS / OL / Rocky / Alma 系 (dnf/yum) ----------
         ol|rhel|centos|rocky|almalinux|fedora|anolis|openanolis|tencentos)
@@ -156,7 +175,17 @@ env_packages() {
         apt)
             export DEBIAN_FRONTEND=noninteractive
             apt-get update -y 2>&1 | tail -3
-            apt-get install -y "${pkgs[@]}" 2>&1 | tail -8
+            # 逐个安装: 单个包缺失/改名不阻断其余 (Ubuntu 各版本包名差异大)
+            local failed=""
+            for p in "${pkgs[@]}"; do
+                if apt-get install -y "$p" >/dev/null 2>&1; then
+                    log_debug "已安装: $p"
+                else
+                    log_warn "包安装失败(若非必需可忽略): $p"
+                    failed="$failed $p"
+                fi
+            done
+            [ -n "$failed" ] && log_warn "以下包未安装:$failed"
             ;;
         rpm)
             if command -v dnf &>/dev/null; then

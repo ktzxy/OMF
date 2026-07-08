@@ -37,7 +37,7 @@ omf/
 ### 方式一：Git 克隆（推荐，便于更新）
 
 ```bash
-git clone <your-repo-url> /opt/omf
+git clone git@github.com:ktzxy/OMF.git /opt/omf
 cd /opt/omf
 ./setup.sh                         # 自动 chmod +x 所有脚本、建 omf 软链、校验配置、可选预检
 

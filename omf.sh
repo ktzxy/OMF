@@ -7,7 +7,9 @@
 set -e
 set -o pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# 注意: 通过 /usr/local/bin/omf 软链调用时, BASH_SOURCE[0] 指向软链本身,
+# 必须用 readlink -f 解析到真实路径, 否则 OMF_HOME 会错成 /usr/local/bin
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 export OMF_HOME="${SCRIPT_DIR}"
 export OMF_VERSION="1.1.0"
 

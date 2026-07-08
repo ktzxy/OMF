@@ -49,6 +49,10 @@ load_config
 echo ""
 "${OMF_HOME}/omf.sh" config validate || log_error "配置校验未通过, 请修改 conf/omf.conf"
 
+# 3.5 赋予脚本执行权限 (全新环境避免手动 chmod)
+chmod +x "${OMF_HOME}/omf.sh" "${OMF_HOME}/setup.sh" "${OMF_HOME}"/cmd/*.sh "${OMF_HOME}"/lib/*.sh 2>/dev/null || true
+log_info "已赋予脚本执行权限 (omf.sh/setup.sh/cmd/*.sh/lib/*.sh)"
+
 # 4. 建立全局命令软链
 if [ -w /usr/local/bin ]; then
     ln -sf "${OMF_HOME}/omf.sh" /usr/local/bin/omf

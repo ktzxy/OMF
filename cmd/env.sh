@@ -48,6 +48,12 @@ env_user() {
     else
         log_info "oracle 用户已存在"
     fi
+
+    # 确保 oracle 家目录归属正确 (若目录已被 root 预先 mkdir 创建, 否则 oracle 写不进 .bash_profile)
+    local ohome; ohome=$(getent passwd oracle 2>/dev/null | cut -d: -f6)
+    if [ -n "$ohome" ] && [ -d "$ohome" ]; then
+        chown -R oracle:oinstall "$ohome" 2>/dev/null || true
+    fi
 }
 
 env_kernel() {

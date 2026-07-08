@@ -36,11 +36,22 @@ install_software() {
 
     log_step "========== Oracle 19c 软件安装 =========="
 
+    # 0. 全新环境自检: 若 oracle 用户或核心依赖缺失, 自动执行环境准备 (无需手动先跑 env prepare)
+    if ! id oracle &>/dev/null || ! ldconfig -p 2>/dev/null | grep -q "libaio.so.1"; then
+        log_warn "检测到全新环境, 自动执行 omf env prepare ..."
+        source "${OMF_HOME}/cmd/env.sh"
+        env_prepare
+    fi
+
     # 1. 检查安装包
     if [ ! -f "$zip_file" ]; then
-        log_error "安装包不存在: $zip_file"
+        log_error "安装包不存在: $zip_file (请将 LINUX.X64_193000_db_home.zip 放到该路径, 或显式传入: omf install software <zip路径>)"
     fi
     log_info "安装包: $zip_file"
+
+    # 1.1 自动接管安装包归属, 免去手动 chown (需 root, install_software 已 require_root)
+    chown oracle:oinstall "$zip_file" 2>/dev/null || true
+    chmod 644 "$zip_file" 2>/dev/null || true
 
     # 2. 安装运行时依赖
     log_step "[1/5] 安装运行时依赖"

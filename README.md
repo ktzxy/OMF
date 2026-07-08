@@ -8,7 +8,8 @@ Oracle 19c 生命周期管理框架，类似 Helm 风格的命令行工具。
 omf/
 ├── omf.sh                    # 主入口
 ├── conf/
-│   └── omf.conf              # 配置文件
+│   ├── omf.conf.example      # 配置模板 (脱敏, 入库)
+│   └── omf.conf              # 真实配置 (本地生成, 已被 .gitignore 忽略)
 ├── lib/
 │   ├── common.sh             # 公共函数库
 │   └── config.sh             # 配置加载
@@ -31,38 +32,61 @@ omf/
 └── logs/                     # 运行日志
 ```
 
-## 快速开始 (wget 解压即用)
+## 快速开始
+
+### 方式一：Git 克隆（推荐，便于更新）
 
 ```bash
-# 0. 下载解压后引导 (自检/可选配置/建软链/校验/预检)
+git clone <your-repo-url> /opt/omf
+cd /opt/omf
+./setup.sh                         # 自动 chmod +x 所有脚本、建 omf 软链、校验配置、可选预检
+
+# 用脱敏模板生成真实配置 (conf/omf.conf 已被 .gitignore 忽略, 不会上传到仓库)
+cp conf/omf.conf.example conf/omf.conf
+vi conf/omf.conf                   # 按需修改密码/路径/IP (密码也建议用环境变量注入)
+
+# 把 Oracle 19c 安装包放到默认位置 (任意路径亦可, 安装时显式传入即可)
+# 注意: 无需手动 chown, omf install software 会自动接管归属
+mv LINUX.X64_193000_db_home.zip /home/oracle/
+
+# 一键安装: 自动检测全新环境 → 自动 env prepare (建用户/装依赖/补 libnsl 软链)
+#           → 自动 chown 安装包 → 解压安装
+omf install software
+# 等价于: omf install software /home/oracle/LINUX.X64_193000_db_home.zip
+```
+
+> 如需安装前先确认磁盘/依赖, 可先跑 `omf check preflight` 查看告警。
+
+### 方式二：wget 解压即用
+
+```bash
 wget http://your-host/omf.tar.gz && tar xzf omf.tar.gz && cd omf
 ./setup.sh
-
-# 1. 配置 (密码建议用环境变量注入, 避免明文)
-vi conf/omf.conf
-omf config validate
-
-# 2. 安装前预检 (内存前置/HugePages/磁盘/依赖/用户)
-omf check preflight
-
-# 3. 环境准备
-omf env prepare
-
-# 4. 安装 Oracle 软件
+cp conf/omf.conf.example conf/omf.conf && vi conf/omf.conf
 omf install software /home/oracle/LINUX.X64_193000_db_home.zip
-
-# 5. 创建数据库 (含内存优化前置)
-omf db create
-
-# 6. 导入并执行准备好的 SQL (失败即停, 支持断点续跑)
-omf sql run --all
-
-# 7. 配置定时备份 (按 BACKUP_MODE 配置驱动)
-omf backup schedule setup
-
-# 8. 配置定时清理
-omf clean schedule setup
 ```
+
+### 后续步骤
+
+```bash
+omf db create              # 创建数据库 (含内存优化前置)
+omf sql run --all          # 导入并执行准备好的 SQL (失败即停, 支持断点续跑)
+omf backup schedule setup  # 配置定时备份
+omf clean schedule setup   # 配置定时清理
+omf status                 # 一键总览
+```
+
+## 支持的 Linux 发行版
+
+`omf env prepare` 按发行版自动选择包管理器与包名:
+
+| 发行版 | 包管理器 | 备注 |
+|--------|----------|------|
+| CentOS / RHEL / Oracle Linux / Rocky / Alma / Fedora | `dnf` / `yum` / `microdnf` | 官方支持 |
+| Ubuntu / Debian / Mint 等 | `apt` | 自动补 `libnsl.so.1` 软链 (Oracle 19c 需要) |
+
+> 防火墙: RHEL 系用 `firewalld`, Debian 系用 `ufw`, 均未启用则跳过。
+> 依赖/预检统一用 `ldconfig` 探测, 不再依赖 `rpm`。
 
 ## v1.1 关键改进
 
@@ -71,7 +95,7 @@ omf clean schedule setup
 - **密码安全**：expdp/impdp 改用 parfile，避免密码出现在 `ps`。
 - **备份失败保护**：RMAN 备份失败时不执行 `DELETE OBSOLETE`，并发送失败通知。
 - **配置驱动备份**：`BACKUP_MODE=logical|physical|both`，`omf backup auto` 按配置执行。
-- **集中日志**：所有运行日志写入 `logs/omf_<cmd>_<时间戳>.log`，并支持失败邮件/Webhook 通知（见 `conf/notify.sh`）。
+- **集中日志**：所有运行日志写入 `logs/omf_<cmd>_<时间戳>.log`（失败邮件/Webhook 通知为规划中功能，暂未实现）。
 - **SQL 严格错误检测**：退出码 + `ORA-/SP2-/PLS-/TNS-` 正则三重检测；失败即停，重跑 `omf sql run --all` 自动跳过已成功脚本（断点续跑）。
 - **安装前预检**：`omf check preflight` 校验内存下限、HugePages 建议、磁盘空间、依赖包、用户与数据库连通性。
 - **内存前置**：`env prepare` / `db create` 前可先看 `omf check preflight` 的内存与 HugePages 建议。
@@ -80,7 +104,7 @@ omf clean schedule setup
 - **并发锁**：每次执行按命令加文件锁，防止重叠运行。
 - **env_profile 配置化**：`.bash_profile` 由配置变量生成，不再写死 SID/路径。
 
-## v1.2 关键改进（后续完善）
+## v1.2 关键改进
 
 - **安装兼容性修复**：`install software` 不再写死 `LD_PRELOAD=/usr/lib64/libnsl.so.1`，改为探测 `libnsl.so.1` 实际路径，OL8/9 不再失效；并以 `PIPESTATUS` 正确捕获安装器退出码。
 - **Data Guard 备库自动构建**：`omf db dg standby` 在备库服务器通过 `RMAN duplicate from active database` 自动建备（自动生成备库参数文件、启动 nomount、执行 duplicate）；新增 `omf db dg enable`（开启日志传输）与 `omf db dg validate`（校验配置/传输）。
@@ -89,6 +113,24 @@ omf clean schedule setup
 - **tune apply 防护与分域**：`omf tune apply [--scope memory|sga|pga]` 可单独调 SGA 或 PGA；危险重启操作受 `--yes`/交互确认保护。
 - **一键总览**：`omf status` 汇总版本、数据库、监听、磁盘、备份概览与最近运行日志。
 - **框架自更新**：`omf self-update` 从 `OMF_UPDATE_URL` 下载 tar.gz 并覆盖更新（保留用户配置 `conf/sql/logs`）。
+
+## v1.3 关键改进（开箱即用 / 多发行版）
+
+- **多发行版支持**：`omf env prepare` 按发行版自动选择 `apt`（Ubuntu/Debian）或 `dnf/yum/microdnf`（RHEL 系），并映射对应包名；依赖/预检统一用 `ldconfig` 探测，不再依赖 `rpm`。
+- **Ubuntu libnsl 自动修复**：Debian 系装完依赖后，自动从 `libnsl.so.2` 软链出 `libnsl.so.1`（Oracle 19c 运行/安装必需），使 `install software` 的 `LD_PRELOAD` 探测生效。
+- **setup 自动授权**：`./setup.sh` 自动 `chmod +x` 所有 `.sh` 脚本并建 `omf` 软链，全新环境无需手动 `chmod`。
+- **安装全自动接管**：`omf install software` 检测到 `oracle` 用户或核心依赖缺失时，**自动执行 `env prepare`**；并自动把安装包 `chown` 给 `oracle`，免去手动 `chown`。
+- **用户家目录归属修正**：`omf env user` 建完用户后，若家目录已被 root 预先创建，自动将其归属改回 `oracle`，避免 `su - oracle` 写不进 `.bash_profile`。
+- **preflight 阈值告警**：`omf check preflight` 新增 `/tmp（≥5G，不足直接报错）` 与 `ORACLE_BACKUP（≥20G）` 剩余空间阈值；依赖检查改用 `ldconfig`。
+- **配置模板入库**：新增 `conf/omf.conf.example`（脱敏），真实 `conf/omf.conf` 由 `.gitignore` 忽略，避免明文密码上传。
+
+## 排错提示
+
+- **`Permission denied` / `lib/common.sh: No such file or directory`**：旧版经 `/usr/local/bin/omf` 软链调用时 `OMF_HOME` 解析错误。已修复（`readlink -f`），拉取最新代码即可；若仍报错，重跑 `./setup.sh`。
+- **`chown: invalid user: 'oracle:oinstall'`**：在 `omf env prepare` 之前手动 `chown` 了安装包。无需手动 `chown`，直接 `omf install software` 会自动建用户并接管归属。
+- **`/tmp` 空间不足导致安装失败**：Oracle 安装器需在 `/tmp` 暂存。扩容，或后续版本支持 `TMPDIR` 自动处理（见 issue）。
+- **`/backup` 剩余不足**：把 `conf/omf.conf` 的 `ORACLE_BACKUP` 改到空间充足的盘，再 `omf config validate`。
+- **脚本 CRLF 报错 `bad interpreter`**：Windows 检出后脚本被转成 CRLF。仓库已用 `.gitattributes` 锁定 `*.sh` 为 LF；若手动改过，用 `dos2unix cmd/*.sh lib/*.sh omf.sh setup.sh` 修复。
 
 ## 命令速查
 

@@ -125,7 +125,7 @@ env_packages() {
                     pkgs=(
                         binutils gcc g++ ksh make sysstat unzip
                         libaio1t64 libaio-dev
-                        libstdc++6 libstdc++-dev
+                        libstdc++6
                         libelf1 libelf-dev
                         libc6 libc6-dev
                         libnsl2 libtirpc3 libtirpc-dev
@@ -137,7 +137,7 @@ env_packages() {
                     pkgs=(
                         binutils gcc g++ ksh make sysstat unzip
                         libaio1 libaio-dev
-                        libstdc++6 libstdc++-dev
+                        libstdc++6
                         libelf1 libelf-dev
                         libc6 libc6-dev
                         libnsl2 libtirpc3 libtirpc-dev

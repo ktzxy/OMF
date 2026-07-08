@@ -97,38 +97,74 @@ EOF
     fi
 }
 
-# 依赖包: 按 OS 版本自适应
+# 依赖包: 按发行版自适应 (支持 RHEL 系 / Debian 系)
 env_packages() {
     local os_info; os_info=$(detect_os)
     local distro="${os_info%% *}"
     local ver="${os_info##* }"
     log_info "检测到 OS: $os_info"
 
-    local pkgs=(
-        binutils gcc gcc-c++ ksh make sysstat unzip
-        libaio libaio-devel libstdc++ libstdc++-devel
-        elfutils-libelf elfutils-libelf-devel
-        glibc glibc-devel glibc-headers
-        libnsl libnsl2 libtirpc libtirpc-devel libxcrypt libxcrypt-devel
-        smartmontools nfs-utils
-    )
-    # OL8/9 / RHEL8/9 已移除 compat-libstdc++-33 与 compat-libcap1
+    local pm=""
+    local -a pkgs=()
+
     case "$distro" in
-        ol|rhel|centos|rocky|almalinux)
+        # ---------- Debian / Ubuntu 系 (apt) ----------
+        ubuntu|debian|linuxmint|kali|pop)
+            pm="apt"
+            pkgs=(
+                binutils gcc g++ ksh make sysstat unzip
+                libaio1 libaio-dev
+                libstdc++6 libstdc++-dev
+                libelf1 libelf-dev
+                libc6 libc6-dev
+                libnsl2 libtirpc3 libtirpc-dev
+                libxcrypt1 libxcrypt-dev
+                smartmontools nfs-common
+            )
+            ;;
+        # ---------- RHEL / CentOS / OL / Rocky / Alma 系 (dnf/yum) ----------
+        ol|rhel|centos|rocky|almalinux|fedora|anolis|openanolis|tencentos)
+            pm="rpm"
+            pkgs=(
+                binutils gcc gcc-c++ ksh make sysstat unzip
+                libaio libaio-devel libstdc++ libstdc++-devel
+                elfutils-libelf elfutils-libelf-devel
+                glibc glibc-devel glibc-headers
+                libnsl libnsl2 libtirpc libtirpc-devel libxcrypt libxcrypt-devel
+                smartmontools nfs-utils
+            )
+            # OL8/9 / RHEL8/9 / Fedora 已移除 compat-libstdc++-33 与 compat-libcap1
             case "$ver" in
-                8*|9*) pkgs+=(libaio-devel libstdc++-devel);;
+                8*|9*|fedora*) ;;
                 *) pkgs+=(compat-libcap1 compat-libstdc++-33);;
-            esac;;
-        *) pkgs+=(compat-libcap1 compat-libstdc++-33);;
+            esac
+            ;;
+        *)
+            log_error "不支持的发行版: $distro ($os_info)。目前支持: Ubuntu/Debian, CentOS/RHEL/Oracle Linux/Rocky/Alma/Fedora"
+            return 1
+            ;;
     esac
 
-    if command -v dnf &>/dev/null; then
-        dnf install -y "${pkgs[@]}" 2>&1 | tail -5
-    elif command -v yum &>/dev/null; then
-        yum install -y "${pkgs[@]}" 2>&1 | tail -5
-    else
-        log_error "未找到 dnf/yum 包管理器"
-    fi
+    # ---------- 执行安装 ----------
+    case "$pm" in
+        apt)
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update -y 2>&1 | tail -3
+            apt-get install -y "${pkgs[@]}" 2>&1 | tail -8
+            ;;
+        rpm)
+            if command -v dnf &>/dev/null; then
+                dnf install -y "${pkgs[@]}" 2>&1 | tail -5
+            elif command -v yum &>/dev/null; then
+                yum install -y "${pkgs[@]}" 2>&1 | tail -5
+            elif command -v microdnf &>/dev/null; then
+                microdnf install -y "${pkgs[@]}" 2>&1 | tail -5
+            else
+                log_error "未找到 dnf/yum/microdnf 包管理器"
+                return 1
+            fi
+            ;;
+    esac
     log_info "依赖包安装完成"
 }
 
@@ -163,14 +199,22 @@ PROFILEEOF
 }
 
 env_firewall() {
+    # RHEL 系: firewalld
     if command -v firewall-cmd &>/dev/null && systemctl is-active firewalld &>/dev/null; then
         firewall-cmd --add-port=1521/tcp --permanent 2>/dev/null
         firewall-cmd --add-port=5500/tcp --permanent 2>/dev/null
         firewall-cmd --reload 2>/dev/null
-        log_info "防火墙已配置 (1521, 5500)"
-    else
-        log_debug "firewalld 未启用, 跳过"
+        log_info "防火墙已配置 (1521, 5500, firewalld)"
+        return
     fi
+    # Debian/Ubuntu 系: ufw
+    if command -v ufw &>/dev/null && ufw status 2>/dev/null | grep -q "Status: active"; then
+        ufw allow 1521/tcp 2>/dev/null
+        ufw allow 5500/tcp 2>/dev/null
+        log_info "防火墙已配置 (1521, 5500, ufw)"
+        return
+    fi
+    log_debug "未检测到启用的防火墙 (firewalld/ufw), 跳过"
 }
 
 env_check() {
@@ -185,9 +229,13 @@ env_check() {
     echo "SHMMAX: $(sysctl -n kernel.shmmax 2>/dev/null)"
     echo "SHMALL: $(sysctl -n kernel.shmall 2>/dev/null)"
     echo "FILE-MAX: $(sysctl -n fs.file-max 2>/dev/null)"
-    echo ""; echo "=== 依赖包 ==="
-    for pkg in libaio libnsl libtirpc glibc gcc; do
-        rpm -q "$pkg" &>/dev/null && echo "✓ $pkg" || echo "✗ $pkg"
+    echo ""; echo "=== 依赖库 (ldconfig) ==="
+    for lib in libaio.so.1 libnsl.so.1 libtirpc.so.3 libc.so.6 libstdc++.so.6 libelf.so.1; do
+        if ldconfig -p 2>/dev/null | grep -q "$lib"; then
+            echo "✓ $lib"
+        else
+            echo "✗ $lib (缺失)"
+        fi
     done
     echo ""; echo "=== 磁盘空间 ==="; df -h / /data /backup 2>/dev/null
     echo ""; echo "=== 透明大页 ==="

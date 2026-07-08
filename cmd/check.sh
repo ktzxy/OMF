@@ -72,26 +72,40 @@ check_preflight() {
     echo "--- 内存 ---"
     check_memory_prereq || errors=$((errors+1))
 
-    # 4. 磁盘空间 (数据盘/备份盘 至少留 20G)
+    # 4. 磁盘空间阈值 (数据盘/备份盘 ≥20G, /tmp ≥5G 供安装器暂存)
     echo "--- 磁盘空间 ---"
-    for p in "${ORACLE_DATA_BASE}" "${ORACLE_BACKUP}" "/tmp"; do
-        local parent="$p"
+    # 格式: 路径:阈值MB:级别(warn|err)
+    local -a disk_checks=(
+        "${ORACLE_DATA_BASE}:20480:warn"
+        "${ORACLE_BACKUP}:20480:warn"
+        "/tmp:5120:err"
+    )
+    for entry in "${disk_checks[@]}"; do
+        local dp="${entry%%:*}"
+        local thr="${entry#*:}"; local lvl="${thr#*:}"; thr="${thr%:*}"
+        local parent="$dp"
         while [ ! -d "$parent" ] && [ "$parent" != "/" ]; do parent=$(dirname "$parent"); done
         local free; free=$(get_disk_free_mb "$parent" 2>/dev/null || echo 0)
-        if [ "${free:-0}" -lt 20480 ]; then
-            ci "磁盘 ${parent} 剩余 ${free}MB (<20G, 建议扩容)" warn
+        if [ "${free:-0}" -lt "$thr" ]; then
+            if [ "$lvl" = "err" ]; then
+                ci "磁盘 ${parent} 剩余 ${free}MB (<${thr}MB, 安装将失败!)" err
+            else
+                ci "磁盘 ${parent} 剩余 ${free}MB (<${thr}MB, 建议扩容)" warn
+            fi
         else
             ci "磁盘 ${parent} 剩余 ${free}MB" ok
         fi
     done
 
-    # 5. 依赖包
-    echo "--- 依赖包 ---"
+    # 5. 依赖库 (跨发行版, 用 ldconfig 探测, 不再依赖 rpm)
+    echo "--- 依赖库 ---"
     local missing=0
-    for pkg in libaio glibc gcc make unzip ksh sysstat; do
-        rpm -q "$pkg" &>/dev/null || { missing=$((missing+1)); echo "    ✗ 缺失: $pkg"; }
+    for lib in libaio.so.1 libnsl.so.1 libtirpc.so.3 libc.so.6 libstdc++.so.6 libelf.so.1; do
+        if ! ldconfig -p 2>/dev/null | grep -q "$lib"; then
+            missing=$((missing+1)); echo "    ✗ 缺失: $lib"
+        fi
     done
-    [ "$missing" -eq 0 ] && ci "核心依赖包齐全" ok || ci "$missing 个依赖包缺失 (执行 omf env packages)" warn
+    [ "$missing" -eq 0 ] && ci "核心依赖库齐全" ok || ci "$missing 个依赖库缺失 (执行 omf env packages)" warn
 
     # 6. oracle 用户与目录
     echo "--- Oracle 用户/目录 ---"

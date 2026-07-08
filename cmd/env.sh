@@ -165,6 +165,19 @@ env_packages() {
             fi
             ;;
     esac
+
+    # Debian/Ubuntu: 系统默认仅 libnsl.so.2, Oracle 19c 运行/安装需要 libnsl.so.1
+    # 从 libnsl2 提供的 libnsl.so.2 软链一个 libnsl.so.1, 使 install.sh 的 LD_PRELOAD 探测生效
+    if [ "$pm" = "apt" ]; then
+        local nsl2
+        nsl2=$(ldconfig -p 2>/dev/null | awk '/libnsl\.so\.2/{print $NF; exit}')
+        if [ -n "$nsl2" ] && [ ! -e "${nsl2%/*}/libnsl.so.1" ]; then
+            ln -sf "$nsl2" "${nsl2%/*}/libnsl.so.1"
+            ldconfig
+            log_info "已创建 libnsl.so.1 软链 (Oracle 19c 需要): ${nsl2%/*}/libnsl.so.1 -> $nsl2"
+        fi
+    fi
+
     log_info "依赖包安装完成"
 }
 

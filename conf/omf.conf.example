@@ -1,0 +1,57 @@
+#===============================================================================
+# OMF 配置文件模板 (脱敏)
+# 用法: cp conf/omf.conf.example conf/omf.conf && 按需修改
+# 修改后执行: omf config validate
+# 注意: 真实密码建议通过环境变量注入, 例如 export ORACLE_PASSWORD=xxx
+#===============================================================================
+
+# ===== 数据库配置 =====
+ORACLE_USER="oracle"
+ORACLE_GROUP="oinstall"
+ORACLE_BASE="/u01/app/oracle"
+ORACLE_HOME="/u01/app/oracle/product/19.3.0/dbhome_1"
+ORACLE_SID="ARTERY"
+PDB_NAME="ARTERYPDB"
+
+# ===== 密码配置 (请替换为真实值, 或改用环境变量注入) =====
+ORACLE_PASSWORD="${ORACLE_PASSWORD:-ChangeMe_123}"
+SYSTEM_PASSWORD="${SYSTEM_PASSWORD:-ChangeMe_123}"
+PDB_PASSWORD="${PDB_PASSWORD:-ChangeMe_123}"
+APP_USER="dherp"
+APP_PASSWORD="${APP_PASSWORD:-ChangeMe_123}"
+
+# ===== 存储路径 =====
+ORACLE_DATA_BASE="/data/oracle"
+ORACLE_DATA="/data/oracle/oradata"
+ORACLE_ARCH="/data/oracle/archivelog"
+ORACLE_FRA="/data/oracle/fast_recovery"
+ORACLE_BACKUP="/backup/oracle"
+
+# ===== 数据库参数 =====
+CHARSET="AL32UTF8"
+NLS_LANG="AMERICAN_AMERICA.AL32UTF8"
+PROCESSES="1500"
+OPEN_CURSORS="1000"
+REDO_SIZE_MB="2048"
+FRA_SIZE_MB="40960"
+FRA_SIZE_MB_MIN="20480"
+
+# ===== Data Guard =====
+ENABLE_DG="false"
+PRIMARY_IP="192.168.0.108"
+STANDBY_IP="192.168.0.110"
+STANDBY_SID="${STANDBY_SID:-ARTERY}"
+
+# ===== 备份策略 =====
+BACKUP_MODE="both"
+BACKUP_RETENTION_DAYS="30"
+BACKUP_COMPRESSION="ALL"
+BACKUP_PARALLEL="4"
+
+# ===== 框架自更新 =====
+OMF_UPDATE_URL="${OMF_UPDATE_URL:-}"
+
+# ===== 清理策略 =====
+LOG_RETENTION_DAYS="7"
+AUDIT_RETENTION_DAYS="30"
+TRACE_RETENTION_DAYS="7"

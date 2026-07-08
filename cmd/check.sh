@@ -1,0 +1,388 @@
+#!/bin/bash
+#===============================================================================
+# OMF - 健康检查命令
+# 用法: omf check <subcommand>
+#===============================================================================
+
+cmd_check() {
+    local subcmd="${1:-all}"
+    shift || true
+
+    case "$subcmd" in
+        all)
+            check_all "$@"
+            ;;
+        db)
+            check_db "$@"
+            ;;
+        disk)
+            check_disk "$@"
+            ;;
+        perf)
+            check_perf "$@"
+            ;;
+        alert)
+            check_alert "$@"
+            ;;
+        listener)
+            check_listener "$@"
+            ;;
+        preflight)
+            check_preflight "$@"
+            ;;
+        *)
+            echo "用法: omf check {all|db|disk|perf|alert|listener|preflight}"
+            exit 1
+            ;;
+    esac
+}
+
+#===============================================================================
+# 安装/建库前预检
+#===============================================================================
+check_preflight() {
+    echo ""
+    echo "╔══════════════════════════════════════════════════════════╗"
+    echo "║          OMF 安装前预检 (Preflight)                        ║"
+    echo "╚══════════════════════════════════════════════════════════╝"
+    echo ""
+
+    local errors=0 warns=0 ok=0
+    local ci
+    ci() {
+        case "$2" in
+            ok)   echo "  ✓ $1"; ok=$((ok+1));;
+            warn) echo "  ⚠ $1"; warns=$((warns+1));;
+            err)  echo "  ✗ $1"; errors=$((errors+1));;
+        esac
+    }
+
+    # 1. 运行用户
+    echo "--- 运行环境 ---"
+    if [ "$(id -u)" -eq 0 ]; then ci "以 root 执行 (将用 su 切换到 oracle)" ok
+    elif [ "$(whoami)" = "oracle" ]; then ci "以 oracle 执行" ok
+    else ci "需要 root 或 oracle 用户 (当前: $(whoami))" err; fi
+
+    # 2. OS
+    echo "--- 操作系统 ---"
+    local os_info; os_info=$(detect_os)
+    ci "OS: $os_info" ok
+
+    # 3. 内存前置
+    echo "--- 内存 ---"
+    check_memory_prereq || errors=$((errors+1))
+
+    # 4. 磁盘空间 (数据盘/备份盘 至少留 20G)
+    echo "--- 磁盘空间 ---"
+    for p in "${ORACLE_DATA_BASE}" "${ORACLE_BACKUP}" "/tmp"; do
+        local parent="$p"
+        while [ ! -d "$parent" ] && [ "$parent" != "/" ]; do parent=$(dirname "$parent"); done
+        local free; free=$(get_disk_free_mb "$parent" 2>/dev/null || echo 0)
+        if [ "${free:-0}" -lt 20480 ]; then
+            ci "磁盘 ${parent} 剩余 ${free}MB (<20G, 建议扩容)" warn
+        else
+            ci "磁盘 ${parent} 剩余 ${free}MB" ok
+        fi
+    done
+
+    # 5. 依赖包
+    echo "--- 依赖包 ---"
+    local missing=0
+    for pkg in libaio glibc gcc make unzip ksh sysstat; do
+        rpm -q "$pkg" &>/dev/null || { missing=$((missing+1)); echo "    ✗ 缺失: $pkg"; }
+    done
+    [ "$missing" -eq 0 ] && ci "核心依赖包齐全" ok || ci "$missing 个依赖包缺失 (执行 omf env packages)" warn
+
+    # 6. oracle 用户与目录
+    echo "--- Oracle 用户/目录 ---"
+    id oracle &>/dev/null && ci "oracle 用户存在" ok || ci "oracle 用户不存在 (执行 omf env user)" err
+    [ -d "${ORACLE_BASE}" ] && ci "ORACLE_BASE 存在" ok || ci "ORACLE_BASE 不存在 (执行 omf env dirs)" warn
+
+    # 7. 数据库连通性 (若已建库)
+    echo "--- 数据库连通性 ---"
+    if as_oracle "echo 'SELECT 1 FROM dual;' | sqlplus -s / as sysdba" &>/dev/null; then
+        ci "数据库可连接且 OPEN" ok
+    else
+        ci "数据库暂不可连接 (未建库或已停止, 可忽略)" warn
+    fi
+
+    echo ""
+    echo "═════════════════════════════════════════"
+    echo "预检结果: ✓ $ok 正常  ⚠ $warns 警告  ✗ $errors 错误"
+    echo "═════════════════════════════════════════"
+    [ "$errors" -gt 0 ] && return 1
+    return 0
+}
+
+#===============================================================================
+# 全面检查
+#===============================================================================
+check_all() {
+    echo ""
+    echo "╔══════════════════════════════════════════════════════════╗"
+    echo "║          OMF 全面健康检查                                  ║"
+    echo "╚══════════════════════════════════════════════════════════╝"
+    echo ""
+
+    local errors=0
+    local warns=0
+    local ok=0
+
+    check_item() {
+        local desc="$1"
+        local status="$2"  # ok|warn|err
+        case "$status" in
+            ok)   echo "  ✓ $desc"; ok=$((ok+1));;
+            warn) echo "  ⚠ $desc"; warns=$((warns+1));;
+            err)  echo "  ✗ $desc"; errors=$((errors+1));;
+        esac
+    }
+
+    # 数据库状态
+    echo "--- 数据库检查 ---"
+    if su - oracle -c "
+export ORACLE_SID=${OMF_CONFIG[ORACLE_SID]}
+export ORACLE_HOME=${OMF_CONFIG[ORACLE_HOME]}
+export PATH=\$ORACLE_HOME/bin:\$PATH
+echo \"select status from v\\\$instance;\" | sqlplus -s / as sysdba
+" 2>/dev/null | grep -q "OPEN"; then
+        check_item "实例状态" ok
+    else
+        check_item "实例状态" err
+    fi
+
+    # 监听器
+    echo "--- 监听器检查 ---"
+    if su - oracle -c "${OMF_CONFIG[ORACLE_HOME]}/bin/lsnrctl status" 2>/dev/null | grep -q "Uptime"; then
+        check_item "监听器 (1521)" ok
+    else
+        check_item "监听器 (1521)" err
+    fi
+
+    # 归档模式
+    echo "--- 归档检查 ---"
+    local arch_status
+    arch_status=$(su - oracle -c "
+export ORACLE_SID=${OMF_CONFIG[ORACLE_SID]}
+export ORACLE_HOME=${OMF_CONFIG[ORACLE_HOME]}
+export PATH=\$ORACLE_HOME/bin:\$PATH
+echo \"select log_mode from v\\\$database;\" | sqlplus -s / as sysdba | grep -i 'ARCHIVELOG'
+" 2>/dev/null)
+    if [ -n "$arch_status" ]; then
+        check_item "归档模式" ok
+    else
+        check_item "归档模式 (NOARCHIVELOG)" warn
+    fi
+
+    # 磁盘空间
+    echo "--- 磁盘空间检查 ---"
+    local paths=("/" "${OMF_CONFIG[ORACLE_DATA_BASE]}" "${OMF_CONFIG[ORACLE_BACKUP]}")
+    for p in "${paths[@]}"; do
+        if [ -d "$p" ]; then
+            local usage
+            usage=$(get_disk_usage_pct "$p" 2>/dev/null)
+            if [ -n "$usage" ]; then
+                if [ "$usage" -gt 90 ]; then
+                    check_item "磁盘 $p (${usage}%)" err
+                elif [ "$usage" -gt 80 ]; then
+                    check_item "磁盘 $p (${usage}%)" warn
+                else
+                    check_item "磁盘 $p (${usage}%)" ok
+                fi
+            fi
+        fi
+    done
+
+    # 内存
+    echo "--- 内存检查 ---"
+    local mem_free
+    mem_free=$(awk '/MemAvailable/ {print int($2/1024)}' /proc/meminfo)
+    local mem_total
+    mem_total=$(get_total_memory_mb)
+    local mem_pct=$((mem_free * 100 / mem_total))
+    if [ "$mem_pct" -lt 10 ]; then
+        check_item "可用内存 (${mem_free}MB/${mem_total}MB)" err
+    elif [ "$mem_pct" -lt 20 ]; then
+        check_item "可用内存 (${mem_free}MB/${mem_total}MB)" warn
+    else
+        check_item "可用内存 (${mem_free}MB/${mem_total}MB)" ok
+    fi
+
+    # CPU
+    echo "--- CPU 检查 ---"
+    local load
+    load=$(uptime | awk -F'load average:' '{print $2}' | awk '{print $1}' | tr -d ',')
+    local cpu_cores
+    cpu_cores=$(nproc)
+    if command -v bc &>/dev/null && [ "$(echo "$load > $cpu_cores" | bc 2>/dev/null)" = "1" ]; then
+        check_item "CPU 负载 ($load / ${cpu_cores}核)" warn
+    else
+        check_item "CPU 负载 ($load / ${cpu_cores}核)" ok
+    fi
+
+    # Alert 日志检查
+    echo "--- Alert 日志检查 ---"
+    local alert_log="${OMF_CONFIG[ORACLE_BASE]}/diag/rdbms/${OMF_CONFIG[ORACLE_SID]}/${OMF_CONFIG[ORACLE_SID]}/trace/alert_${OMF_CONFIG[ORACLE_SID]}.log"
+    if [ -f "$alert_log" ]; then
+        local ora_errors
+        ora_errors=$(grep -c "ORA-" "$alert_log" 2>/dev/null || echo 0)
+        if [ "$ora_errors" -gt 0 ]; then
+            check_item "Alert 日志 (最近有 $ora_errors 个 ORA- 错误)" warn
+        else
+            check_item "Alert 日志" ok
+        fi
+    else
+        check_item "Alert 日志 (文件不存在)" warn
+    fi
+
+    echo ""
+    echo "═══════════════════════════════════════"
+    echo "检查结果: ✓ $ok 正常  ⚠ $warns 警告  ✗ $errors 错误"
+    echo "═══════════════════════════════════════"
+
+    [ "$errors" -gt 0 ] && return 1
+    return 0
+}
+
+#===============================================================================
+# 数据库检查
+#===============================================================================
+check_db() {
+    su - oracle -c "
+export ORACLE_SID=${OMF_CONFIG[ORACLE_SID]}
+export ORACLE_HOME=${OMF_CONFIG[ORACLE_HOME]}
+export PATH=\$ORACLE_HOME/bin:\$PATH
+
+sqlplus -s / as sysdba <<SQL
+SET PAGES 50 LINES 200
+PROMPT ===== 实例状态 =====
+SELECT instance_name, host_name, version, status, startup_time, ROUND(sysdate-startup_time) AS days_up FROM v\$instance;
+
+PROMPT ===== 数据库状态 =====
+SELECT name, open_mode, log_mode, database_role, flashback_on, force_logging FROM v\$database;
+
+PROMPT ===== PDB状态 =====
+SELECT con_id, name, open_mode, restricted FROM v\$pdbs;
+
+PROMPT ===== 无效对象 =====
+SELECT COUNT(*) AS invalid_objects FROM dba_objects WHERE status='INVALID';
+
+PROMPT ===== 表空间使用 =====
+SELECT tablespace_name,
+    ROUND(SUM(bytes)/1024/1024/1024,2) AS total_gb,
+    ROUND(SUM(bytes)/1024/1024/1024 - SUM(free_bytes)/1024/1024/1024,2) AS used_gb,
+    ROUND((SUM(bytes) - SUM(free_bytes))*100/SUM(bytes),1) AS pct
+FROM (
+    SELECT tablespace_name, bytes, 0 AS free_bytes FROM dba_data_files
+    UNION ALL
+    SELECT tablespace_name, 0 AS bytes, bytes AS free_bytes FROM dba_free_space
+)
+GROUP BY tablespace_name
+ORDER BY pct DESC;
+
+PROMPT ===== 最近备份 =====
+SELECT TO_CHAR(MAX(start_time), 'YYYY-MM-DD HH24:MI') AS last_full_backup
+FROM v\$rman_backup_job_details
+WHERE input_type='DB FULL' AND status='COMPLETED';
+
+EXIT;
+SQL
+"
+}
+
+#===============================================================================
+# 磁盘检查
+#===============================================================================
+check_disk() {
+    echo ""
+    echo "=== 磁盘使用情况 ==="
+    df -h
+    echo ""
+
+    echo "=== Oracle 目录磁盘使用 ==="
+    if [ -d "${OMF_CONFIG[ORACLE_DATA_BASE]}" ]; then
+        du -sh "${OMF_CONFIG[ORACLE_DATA_BASE]}"/* 2>/dev/null
+    fi
+    echo ""
+
+    echo "=== 备份目录磁盘使用 ==="
+    if [ -d "${OMF_CONFIG[ORACLE_BACKUP]}" ]; then
+        du -sh "${OMF_CONFIG[ORACLE_BACKUP]}"/* 2>/dev/null
+    fi
+}
+
+#===============================================================================
+# 性能检查
+#===============================================================================
+check_perf() {
+    su - oracle -c "
+export ORACLE_SID=${OMF_CONFIG[ORACLE_SID]}
+export ORACLE_HOME=${OMF_CONFIG[ORACLE_HOME]}
+export PATH=\$ORACLE_HOME/bin:\$PATH
+
+sqlplus -s / as sysdba <<SQL
+SET PAGES 50 LINES 200
+
+PROMPT ===== Top 等待事件 (最近1小时) =====
+SELECT event, total_waits, time_waited_micro/1000000 AS waited_sec,
+       average_wait_micro/1000 AS avg_ms
+FROM v\$system_event
+WHERE wait_class != 'Idle' AND time_waited_micro > 0
+ORDER BY time_waited_micro DESC
+FETCH FIRST 10 ROWS ONLY;
+
+PROMPT ===== Buffer Cache 命中率 =====
+SELECT ROUND((1 - (phy.value - lob.value - dir.value) / ses.value) * 100, 2) AS buffer_hit_pct
+FROM v\$sysstat ses, v\$sysstat lob, v\$sysstat dir, v\$sysstat phy
+WHERE ses.name = 'session logical reads'
+  AND dir.name = 'physical reads direct'
+  AND lob.name = 'physical reads direct (lob)'
+  AND phy.name = 'physical reads';
+
+PROMPT ===== 活跃会话 =====
+SELECT COUNT(*) AS active_sessions FROM v\$session WHERE status='ACTIVE' AND type!='BACKGROUND';
+
+PROMPT ===== Redo 生成速率 (MB/s) =====
+SELECT ROUND(value/1024/1024,2) AS redo_mb_per_sec
+FROM v\$sysstat WHERE name='redo size';
+
+EXIT;
+SQL
+"
+}
+
+#===============================================================================
+# Alert 日志检查
+#===============================================================================
+check_alert() {
+    local lines="${1:-200}"
+    local alert_log="${OMF_CONFIG[ORACLE_BASE]}/diag/rdbms/${OMF_CONFIG[ORACLE_SID]}/${OMF_CONFIG[ORACLE_SID]}/trace/alert_${OMF_CONFIG[ORACLE_SID]}.log"
+
+    if [ ! -f "$alert_log" ]; then
+        log_error "Alert 日志不存在: $alert_log"
+    fi
+
+    echo ""
+    echo "=== Alert 日志最后 ${lines} 行 ==="
+    echo "文件: $alert_log"
+    echo "大小: $(du -h "$alert_log" | cut -f1)"
+    echo ""
+
+    tail -"$lines" "$alert_log"
+
+    echo ""
+    echo "=== 最近 ORA- 错误 ==="
+    grep "ORA-" "$alert_log" | tail -20 || echo "(无 ORA- 错误)"
+}
+
+#===============================================================================
+# 监听器检查
+#===============================================================================
+check_listener() {
+    su - oracle -c "
+export ORACLE_HOME=${OMF_CONFIG[ORACLE_HOME]}
+export PATH=\$ORACLE_HOME/bin:\$PATH
+lsnrctl status
+lsnrctl services
+"
+}

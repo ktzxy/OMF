@@ -1,0 +1,197 @@
+#!/bin/bash
+#===============================================================================
+# OMF - SQL 脚本管理命令 v2
+# 改进: 1) 失败检测 (退出码 + ORA-/SP2-/PLS-/TNS- 正则) 2) 去掉重复写日志
+#       3) 失败即停 + 断点续跑 4) 执行前预检数据库可连
+#===============================================================================
+
+cmd_sql() {
+    local subcmd="${1:-scan}"
+    shift || true
+    case "$subcmd" in
+        scan)     sql_scan "$@";;
+        run)      sql_run "$@";;
+        init)     sql_init "$@";;
+        status)   sql_status "$@";;
+        rollback) sql_rollback "$@";;
+        *) echo "用法: omf sql {scan|run|init|status|rollback}"; exit 1;;
+    esac
+}
+
+get_sql_dirs() {
+    local dirs=("${SQL_INIT_DIR}" "${SQL_UPGRADE_DIR}" "${SQL_PATCH_DIR}" "${SQL_CUSTOM_DIR}")
+    for d in "${dirs[@]}"; do [ -d "$d" ] && echo "$d"; done
+}
+
+get_executed_file() {
+    echo "${OMF_HOME}/sql/.executed/$(basename "$1")"
+}
+
+# 预检: 数据库是否可连接
+sql_preflight() {
+    if ! as_oracle "echo 'SELECT 1 FROM dual;' | sqlplus -s / as sysdba" &>/dev/null; then
+        log_error "无法连接数据库, 请先 omf db start 并确保实例 OPEN"
+    fi
+}
+
+#===============================================================================
+# 扫描待执行脚本
+#===============================================================================
+sql_scan() {
+    local auto_exec="${1:-false}"
+    log_step "扫描待执行 SQL 脚本"
+    local total=0 pending=0
+    for dir in $(get_sql_dirs); do
+        echo ""; echo "--- $(basename "$dir") ---"
+        local scripts
+        scripts=$(find "$dir" -maxdepth 1 -name "*.sql" -type f | sort)
+        [ -z "$scripts" ] && { echo "  (无脚本)"; continue; }
+        for script in $scripts; do
+            total=$((total+1))
+            local ef; ef=$(get_executed_file "$script")
+            if [ -f "$ef" ]; then
+                echo "  ✓ $(basename "$script") - 已执行 ($(cat "$ef"))"
+            else
+                pending=$((pending+1))
+                echo "  → $(basename "$script") - 待执行"
+            fi
+        done
+    done
+    echo ""; echo "总计: $total, 待执行: $pending"
+    if [ "$auto_exec" = "--auto" ] && [ "$pending" -gt 0 ]; then
+        confirm "自动执行 $pending 个待处理脚本?"
+        sql_execute_all
+    fi
+}
+
+#===============================================================================
+# 执行指定脚本
+#===============================================================================
+sql_run() {
+    local script="$1"
+    [ -z "$script" ] && { echo "用法: omf sql run <script> | --all"; exit 1; }
+    [ "$script" = "--all" ] && { sql_execute_all; return; }
+    [ -f "$script" ] || script="${SQL_INIT_DIR}/$script"
+    [ -f "$script" ] || log_error "脚本不存在: $script"
+    sql_preflight
+    sql_execute_one "$script"
+}
+
+sql_init() {
+    log_step "初始化基线数据"
+    sql_scan
+    confirm "确认执行所有初始化脚本?"
+    sql_preflight
+    sql_execute_all
+}
+
+#===============================================================================
+# 执行所有待处理脚本 (失败即停, 支持断点续跑)
+#===============================================================================
+sql_execute_all() {
+    sql_preflight
+    local success=0 failed=0
+    local executed_dir="${OMF_HOME}/sql/.executed"
+    mkdir -p "$executed_dir"
+
+    for dir in $(get_sql_dirs); do
+        local scripts
+        scripts=$(find "$dir" -maxdepth 1 -name "*.sql" -type f | sort)
+        for script in $scripts; do
+            local ef; ef=$(get_executed_file "$script")
+            [ -f "$ef" ] && continue   # 已执行, 跳过 (断点续跑)
+            if sql_execute_one "$script"; then
+                success=$((success+1))
+                date '+%F %T' > "$ef"
+            else
+                failed=$((failed+1))
+                log_error "脚本执行失败: $(basename "$script")
+  → 已成功执行 $success 个, 失败的脚本及之后的脚本未执行
+  → 修复后重新执行: omf sql run --all  (已成功的不会重复执行)"
+            fi
+        done
+    done
+    echo ""; log_info "SQL 执行完成: 成功 $success, 失败 $failed"
+}
+
+#===============================================================================
+# 执行单个脚本 (核心: 严格错误检测)
+#===============================================================================
+sql_execute_one() {
+    local script="$1"
+    local log_dir="${OMF_HOME}/sql/.logs"
+    mkdir -p "$log_dir"
+    local log_file="${log_dir}/$(basename "$script" .sql)_$(date '+%Y%m%d_%H%M%S').log"
+
+    log_step "执行: $(basename "$script")"
+    log_info "日志: $log_file"
+
+    # 注入 DEFINE, 使脚本中的 &PDB_NAME/&ORACLE_SID/&APP_USER/&APP_PASSWORD
+    # 等非交互变量自动替换, 避免 sqlplus 卡在交互输入
+    local wrapper; wrapper=$(mktemp /tmp/omf_sql_XXXXXX.sql)
+    {
+        echo "WHENEVER SQLERROR EXIT SQL.SQLCODE ROLLBACK"
+        echo "WHENEVER OSERROR  EXIT FAILURE ROLLBACK"
+        echo "DEFINE PDB_NAME     = '${PDB_NAME}'"
+        echo "DEFINE ORACLE_SID   = '${ORACLE_SID}'"
+        echo "DEFINE APP_USER     = '${APP_USER}'"
+        echo "DEFINE APP_PASSWORD = '${APP_PASSWORD}'"
+        echo "DEFINE ORACLE_DATA  = '${ORACLE_DATA}'"
+        echo "@${script}"
+        echo "EXIT"
+    } > "$wrapper"
+    chmod 600 "$wrapper"
+
+    set +e
+    as_oracle "sqlplus -s / as sysdba @${wrapper}" 2>&1 | tee "$log_file"
+    local rc=${PIPESTATUS[0]}
+    set -e
+    rm -f "$wrapper"
+
+    # 三重检测: 退出码 / ORA- / SP2-/PLS-/TNS- 错误码
+    local has_err=0
+    if [ "$rc" -ne 0 ]; then has_err=1; fi
+    if grep -Eq "ORA-[0-9]{4,}|SP2-[0-9]+|PLS-[0-9]+|TNS-[0-9]+" "$log_file"; then
+        has_err=1
+    fi
+
+    if [ "$has_err" -eq 1 ]; then
+        log_warn "脚本包含错误, 请检查日志: $log_file"
+        grep -E "ORA-[0-9]{4,}|SP2-[0-9]+|PLS-[0-9]+|TNS-[0-9]+" "$log_file" | head -10
+        return 1
+    fi
+
+    log_info "执行成功: $(basename "$script")"
+    return 0
+}
+
+#===============================================================================
+# 查看执行状态
+#===============================================================================
+sql_status() {
+    log_step "SQL 脚本执行状态"
+    local executed_dir="${OMF_HOME}/sql/.executed"
+    if [ ! -d "$executed_dir" ]; then echo "尚无执行记录"; return; fi
+    echo ""; echo "已执行脚本:"
+    for f in "$executed_dir"/*; do
+        [ -f "$f" ] || continue
+        echo "  $(basename "$f") - $(cat "$f")"
+    done
+    echo ""; echo "执行日志:"
+    ls -lht "${OMF_HOME}/sql/.logs/" 2>/dev/null | head -20 || echo "  (无)"
+}
+
+#===============================================================================
+# 回滚 (重置执行记录, 允许重跑)
+#===============================================================================
+sql_rollback() {
+    local name="$1"
+    [ -z "$name" ] && { echo "用法: omf sql rollback <name> | --all"; exit 1; }
+    local executed_dir="${OMF_HOME}/sql/.executed"
+    if [ "$name" = "--all" ]; then
+        confirm "确认重置所有 SQL 执行记录?"
+        rm -rf "$executed_dir"; log_info "所有执行记录已清除"
+    else
+        rm -f "${executed_dir}/${name}"; log_info "已清除执行记录: $name"
+    fi
+}

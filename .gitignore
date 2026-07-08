@@ -1,0 +1,14 @@
+# ===== OMF 本地敏感/运行时文件，不要上传 GitHub =====
+# 真实配置含明文密码，仅保留本地
+conf/omf.conf
+
+# 运行日志
+logs/
+*.log
+
+# 编辑器/系统临时文件
+*.swp
+*~
+.DS_Store
+.idea/
+.vscode/

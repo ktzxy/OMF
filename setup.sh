@@ -54,28 +54,26 @@ chmod +x "${OMF_HOME}/omf.sh" "${OMF_HOME}/setup.sh" "${OMF_HOME}"/cmd/*.sh "${O
 log_info "已赋予脚本执行权限 (omf.sh/setup.sh/cmd/*.sh/lib/*.sh)"
 
 # 4. 建立全局命令软链
-#    优先选 PATH 中已存在的可写目录; 都不满足则创建 /usr/local/bin
+#    遍历 PATH 中已有的可写目录, 选第一个建链, 保证 shell 一定能找到
 link_target=""
-for d in /usr/local/bin /usr/bin /bin; do
+for d in $(echo "$PATH" | tr ':' ' '); do
     if [ -d "$d" ] && [ -w "$d" ]; then
         link_target="$d/omf"
         break
     fi
 done
+# PATH 中无合适目录时, 退而创建 /usr/local/bin 并加入 PATH
 if [ -z "$link_target" ]; then
     mkdir -p /usr/local/bin
     link_target="/usr/local/bin/omf"
+    case ":$PATH:" in
+        *:/usr/local/bin:*) ;;
+        *) export PATH="/usr/local/bin:$PATH" ;;
+    esac
 fi
 ln -sf "${OMF_HOME}/omf.sh" "$link_target"
 log_info "已创建命令: omf -> ${OMF_HOME}/omf.sh ($link_target)"
 
-# 确保软链所在目录在 PATH 中 (精简/容器环境可能缺 /usr/local/bin)
-link_dir="$(dirname "$link_target")"
-case ":$PATH:" in
-    *":$link_dir:"*) ;;
-    *) export PATH="$link_dir:$PATH"
-       log_warn "已将 $link_dir 加入当前会话 PATH; 若需持久化请写入 ~/.bashrc 或 /etc/profile" ;;
-esac
 hash -r
 if command -v omf >/dev/null 2>&1; then
     log_info "命令 omf 可用, 任意目录可直接执行"

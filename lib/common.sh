@@ -145,13 +145,20 @@ get_disk_usage_pct() {
 
 # ---- 内存前置检查 (安装/建库前调用) ----
 # 校验: 内存下限 / SGA 不超过物理内存 / 推荐 HugePages
+# $1 (可选, 忽略)  $2=fatal: true(默认, 不足即退出) / false(仅返回1, 供预检汇总)
 check_memory_prereq() {
+    local fatal="${2:-true}"
     local total_mem; total_mem=$(get_total_memory_mb)
     local min_mem=4096
     log_step "内存前置检查 (物理内存 ${total_mem}MB)"
 
     if [ "$total_mem" -lt "$min_mem" ]; then
-        log_error "物理内存 ${total_mem}MB 低于 Oracle 19c 推荐最小值 ${min_mem}MB"
+        if [ "$fatal" = "true" ]; then
+            log_error "物理内存 ${total_mem}MB 低于 Oracle 19c 推荐最小值 ${min_mem}MB"
+        else
+            log_warn "物理内存 ${total_mem}MB 低于 Oracle 19c 推荐最小值 ${min_mem}MB"
+            return 1
+        fi
     fi
 
     # SGA+PGA 默认占 80%, 单实例不应超过 80% 物理内存

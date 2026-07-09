@@ -68,9 +68,13 @@ check_preflight() {
     local os_info; os_info=$(detect_os)
     ci "OS: $os_info" ok
 
-    # 3. 内存前置
+    # 3. 内存前置 (非致命: 仅记录, 不中断后续检查)
     echo "--- 内存 ---"
-    check_memory_prereq || errors=$((errors+1))
+    if check_memory_prereq "" false; then
+        ci "物理内存满足 Oracle 19c 最低要求 (≥4096MB)" ok
+    else
+        ci "物理内存低于 Oracle 19c 推荐最小值 4096MB (安装将失败!)" err
+    fi
 
     # 4. 磁盘空间阈值 (数据盘/备份盘 ≥20G, /tmp ≥5G 供安装器暂存)
     echo "--- 磁盘空间 ---"

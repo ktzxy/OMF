@@ -72,7 +72,7 @@ log_view() {
             ;;
         dbca)
             echo "=== DBCA 日志 ==="
-            ls -lht /u01/app/oracle/cfgtoollogs/dbca/ 2>/dev/null || echo "(无)"
+            ls -lht "${OMF_CONFIG[ORACLE_BASE]}/cfgtoollogs/dbca/" 2>/dev/null || echo "(无)"
             ;;
         omf)
             echo "=== OMF 日志 ==="

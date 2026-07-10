@@ -161,7 +161,7 @@ check_all() {
 
     # 数据库状态
     echo "--- 数据库检查 ---"
-    if su - oracle -c "
+    if oracle_su "
 export ORACLE_SID=${OMF_CONFIG[ORACLE_SID]}
 export ORACLE_HOME=${OMF_CONFIG[ORACLE_HOME]}
 export PATH=\$ORACLE_HOME/bin:\$PATH
@@ -174,7 +174,7 @@ echo \"select status from v\\\$instance;\" | sqlplus -s / as sysdba
 
     # 监听器
     echo "--- 监听器检查 ---"
-    if su - oracle -c "${OMF_CONFIG[ORACLE_HOME]}/bin/lsnrctl status" 2>/dev/null | grep -q "Uptime"; then
+    if oracle_su "${OMF_CONFIG[ORACLE_HOME]}/bin/lsnrctl status" 2>/dev/null | grep -q "Uptime"; then
         check_item "监听器 (1521)" ok
     else
         check_item "监听器 (1521)" err
@@ -183,7 +183,7 @@ echo \"select status from v\\\$instance;\" | sqlplus -s / as sysdba
     # 归档模式
     echo "--- 归档检查 ---"
     local arch_status
-    arch_status=$(su - oracle -c "
+    arch_status=$(oracle_su "
 export ORACLE_SID=${OMF_CONFIG[ORACLE_SID]}
 export ORACLE_HOME=${OMF_CONFIG[ORACLE_HOME]}
 export PATH=\$ORACLE_HOME/bin:\$PATH
@@ -269,7 +269,7 @@ echo \"select log_mode from v\\\$database;\" | sqlplus -s / as sysdba | grep -i 
 # 数据库检查
 #===============================================================================
 check_db() {
-    su - oracle -c "
+    oracle_su "
 export ORACLE_SID=${OMF_CONFIG[ORACLE_SID]}
 export ORACLE_HOME=${OMF_CONFIG[ORACLE_HOME]}
 export PATH=\$ORACLE_HOME/bin:\$PATH
@@ -336,7 +336,7 @@ check_disk() {
 # 性能检查
 #===============================================================================
 check_perf() {
-    su - oracle -c "
+    oracle_su "
 export ORACLE_SID=${OMF_CONFIG[ORACLE_SID]}
 export ORACLE_HOME=${OMF_CONFIG[ORACLE_HOME]}
 export PATH=\$ORACLE_HOME/bin:\$PATH
@@ -400,7 +400,7 @@ check_alert() {
 # 监听器检查
 #===============================================================================
 check_listener() {
-    su - oracle -c "
+    oracle_su "
 export ORACLE_HOME=${OMF_CONFIG[ORACLE_HOME]}
 export PATH=\$ORACLE_HOME/bin:\$PATH
 lsnrctl status
@@ -418,7 +418,7 @@ check_monitor() {
     local mps=("/" "${OMF_CONFIG[ORACLE_DATA_BASE]}" "${OMF_CONFIG[ORACLE_BACKUP]}")
 
     # 1. 数据库存活
-    if su - oracle -c "
+    if oracle_su "
 export ORACLE_SID=${OMF_CONFIG[ORACLE_SID]}
 export ORACLE_HOME=${OMF_CONFIG[ORACLE_HOME]}
 export PATH=\$ORACLE_HOME/bin:\$PATH

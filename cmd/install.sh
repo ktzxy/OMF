@@ -160,7 +160,7 @@ install_software() {
     log_step "[3/5] 解压安装包到 ${OMF_CONFIG[ORACLE_HOME]}"
     mkdir -p "${OMF_CONFIG[ORACLE_HOME]}"
     chown oracle:oinstall "${OMF_CONFIG[ORACLE_HOME]}"
-    su - oracle -c "unzip -o $zip_file -d ${OMF_CONFIG[ORACLE_HOME]}" 2>&1 | tail -5
+    oracle_su "unzip -o $zip_file -d ${OMF_CONFIG[ORACLE_HOME]}" 2>&1 | tail -5
 
     # 5. 生成响应文件
     log_step "[4/5] 生成静默安装响应文件"
@@ -278,7 +278,7 @@ run_installer() {
     libn=$(ldconfig -p 2>/dev/null | awk '/libnsl\.so\.1/{print $NF; exit}')
     [ -n "$libn" ] && libn="export LD_PRELOAD=${libn}"
 
-    su - oracle -c "
+    oracle_su "
 export ORACLE_HOME=${OMF_CONFIG[ORACLE_HOME]}
 export ORACLE_BASE=${OMF_CONFIG[ORACLE_BASE]}
 export TMPDIR=${omf_tmp}
@@ -323,7 +323,7 @@ install_listener() {
     set +e
     set +o pipefail
 
-    su - oracle -c "
+    oracle_su "
 export ORACLE_HOME=${OMF_CONFIG[ORACLE_HOME]}
 export PATH=\$ORACLE_HOME/bin:\$PATH
 netca -silent -responseFile \$ORACLE_HOME/assistants/netca/netca.rsp 2>&1
@@ -348,7 +348,7 @@ install_check() {
         echo "✗ sqlplus 不可用"
     fi
 
-    if su - oracle -c "${OMF_CONFIG[ORACLE_HOME]}/bin/lsnrctl status" 2>/dev/null | grep -q "Uptime"; then
+    if oracle_su "${OMF_CONFIG[ORACLE_HOME]}/bin/lsnrctl status" 2>/dev/null | grep -q "Uptime"; then
         echo "✓ 监听器运行中"
     else
         echo "✗ 监听器未运行"

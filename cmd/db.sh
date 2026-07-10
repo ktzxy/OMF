@@ -113,7 +113,7 @@ db_create() {
         "${OMF_CONFIG[ORACLE_BASE]}/admin"
 
     # 清理旧实例
-    su - oracle -c "
+    oracle_su "
 export ORACLE_SID=${OMF_CONFIG[ORACLE_SID]}
 export ORACLE_HOME=${OMF_CONFIG[ORACLE_HOME]}
 export PATH=\$ORACLE_HOME/bin:\$PATH
@@ -132,7 +132,7 @@ echo 'shutdown abort;' | sqlplus -s / as sysdba
     set +e
     set +o pipefail
 
-    su - oracle -c "
+    oracle_su "
 export ORACLE_HOME=${OMF_CONFIG[ORACLE_HOME]}
 export ORACLE_SID=${OMF_CONFIG[ORACLE_SID]}
 export PATH=\$ORACLE_HOME/bin:\$PATH
@@ -192,7 +192,7 @@ db_recovery_file_dest_size=${fra_size_mb}M
 db_optimize() {
     log_step "配置数据库优化参数..."
 
-    su - oracle -c "
+    oracle_su "
 export ORACLE_SID=${OMF_CONFIG[ORACLE_SID]}
 export ORACLE_HOME=${OMF_CONFIG[ORACLE_HOME]}
 export PATH=\$ORACLE_HOME/bin:\$PATH
@@ -236,7 +236,7 @@ SQL
 db_status() {
     log_step "数据库状态"
 
-    su - oracle -c "
+    oracle_su "
 export ORACLE_SID=${OMF_CONFIG[ORACLE_SID]}
 export ORACLE_HOME=${OMF_CONFIG[ORACLE_HOME]}
 export PATH=\$ORACLE_HOME/bin:\$PATH
@@ -262,7 +262,7 @@ SQL
 db_start() {
     log_step "启动数据库..."
 
-    su - oracle -c "
+    oracle_su "
 export ORACLE_SID=${OMF_CONFIG[ORACLE_SID]}
 export ORACLE_HOME=${OMF_CONFIG[ORACLE_HOME]}
 export PATH=\$ORACLE_HOME/bin:\$PATH
@@ -283,7 +283,7 @@ SQL
 db_stop() {
     log_step "停止数据库..."
 
-    su - oracle -c "
+    oracle_su "
 export ORACLE_SID=${OMF_CONFIG[ORACLE_SID]}
 export ORACLE_HOME=${OMF_CONFIG[ORACLE_HOME]}
 export PATH=\$ORACLE_HOME/bin:\$PATH
@@ -306,7 +306,7 @@ db_pdb() {
 
     case "$action" in
         open)
-            su - oracle -c "
+            oracle_su "
 export ORACLE_SID=${OMF_CONFIG[ORACLE_SID]}
 export ORACLE_HOME=${OMF_CONFIG[ORACLE_HOME]}
 export PATH=\$ORACLE_HOME/bin:\$PATH
@@ -318,7 +318,7 @@ SQL
             log_info "PDB $pdb 已打开"
             ;;
         close)
-            su - oracle -c "
+            oracle_su "
 export ORACLE_SID=${OMF_CONFIG[ORACLE_SID]}
 export ORACLE_HOME=${OMF_CONFIG[ORACLE_HOME]}
 export PATH=\$ORACLE_HOME/bin:\$PATH
@@ -345,7 +345,7 @@ db_dg() {
         config)
             log_step "配置 Data Guard (主库)..."
 
-            su - oracle -c "
+            oracle_su "
 export ORACLE_SID=${OMF_CONFIG[ORACLE_SID]}
 export ORACLE_HOME=${OMF_CONFIG[ORACLE_HOME]}
 export PATH=\$ORACLE_HOME/bin:\$PATH
@@ -409,7 +409,7 @@ SQL
             ;;
         enable)
             log_step "启用日志传输 (log_archive_dest_state_2=ENABLE)..."
-            su - oracle -c "
+            oracle_su "
 export ORACLE_SID=${OMF_CONFIG[ORACLE_SID]}
 export ORACLE_HOME=${OMF_CONFIG[ORACLE_HOME]}
 export PATH=\$ORACLE_HOME/bin:\$PATH
@@ -430,7 +430,7 @@ SQL
             db_dg_validate
             ;;
         status)
-            su - oracle -c "
+            oracle_su "
 export ORACLE_SID=${OMF_CONFIG[ORACLE_SID]}
 export ORACLE_HOME=${OMF_CONFIG[ORACLE_HOME]}
 export PATH=\$ORACLE_HOME/bin:\$PATH
@@ -587,7 +587,7 @@ PWD_EOF
     chown oracle:oinstall "$wallet_pwd_file" "$sys_pwd_file" 2>/dev/null || true
 
     # 以 oracle 执行钱包与凭据创建 (密码经 cat 管道传入, 不在 ps 暴露)
-    su - oracle -c "
+    oracle_su "
 export ORACLE_SID=${OMF_CONFIG[ORACLE_SID]}
 export ORACLE_HOME=${OMF_CONFIG[ORACLE_HOME]}
 export ORACLE_BASE=${OMF_CONFIG[ORACLE_BASE]}

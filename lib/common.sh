@@ -124,10 +124,28 @@ omf_lib_present() {
 }
 
 # ---- 以 oracle 用户执行命令 (兼容 root 调用与 oracle 直接调用) ----
+# 优先 runuser: root 切换免密码认证, 规避 su 在 Linux-PAM 1.4+ 下
+#   (Ubuntu 的 root 账户本身锁定, 导致 pam_rootok 对 root->oracle 也走认证并报
+#    Authentication failure) 的问题. 回退 su - oracle (老系统无 runuser 时).
+oracle_su() {
+    local cmd="$1"
+    if [ "$(id -u)" -eq 0 ]; then
+        if command -v runuser >/dev/null 2>&1; then
+            runuser -l oracle -c "$cmd"
+        else
+            su - oracle -c "$cmd"
+        fi
+    elif [ "$(whoami)" = "oracle" ]; then
+        eval "$cmd"
+    else
+        log_error "需要 root 或 oracle 用户执行"
+    fi
+}
+
 as_oracle() {
     local script="$1"
     if [ "$(id -u)" -eq 0 ]; then
-        su - oracle -c "export ORACLE_SID=${ORACLE_SID:-ARTERY}; \
+        oracle_su "export ORACLE_SID=${ORACLE_SID:-ARTERY}; \
 export ORACLE_HOME=${ORACLE_HOME}; \
 export ORACLE_BASE=${ORACLE_BASE}; \
 export PATH=\$ORACLE_HOME/bin:\$PATH; \

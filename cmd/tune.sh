@@ -50,7 +50,7 @@ tune_memory() {
 
     echo ""
     echo "=== 当前内存使用 ==="
-    su - oracle -c "
+    oracle_su "
 export ORACLE_SID=${OMF_CONFIG[ORACLE_SID]}
 export ORACLE_HOME=${OMF_CONFIG[ORACLE_HOME]}
 export PATH=\$ORACLE_HOME/bin:\$PATH
@@ -96,7 +96,7 @@ SQL
 tune_storage() {
     log_step "存储参数调优"
 
-    su - oracle -c "
+    oracle_su "
 export ORACLE_SID=${OMF_CONFIG[ORACLE_SID]}
 export ORACLE_HOME=${OMF_CONFIG[ORACLE_HOME]}
 export PATH=\$ORACLE_HOME/bin:\$PATH
@@ -144,7 +144,7 @@ SQL
 tune_session() {
     log_step "会话参数检查"
 
-    su - oracle -c "
+    oracle_su "
 export ORACLE_SID=${OMF_CONFIG[ORACLE_SID]}
 export ORACLE_HOME=${OMF_CONFIG[ORACLE_HOME]}
 export PATH=\$ORACLE_HOME/bin:\$PATH
@@ -193,7 +193,7 @@ SQL
 tune_analyze() {
     log_step "AWR/ADDM 分析报告"
 
-    su - oracle -c "
+    oracle_su "
 export ORACLE_SID=${OMF_CONFIG[ORACLE_SID]}
 export ORACLE_HOME=${OMF_CONFIG[ORACLE_HOME]}
 export PATH=\$ORACLE_HOME/bin:\$PATH
@@ -220,7 +220,7 @@ SQL
 "
     echo ""
     echo "生成 AWR 报告:"
-    echo "  su - oracle -c 'cd \$ORACLE_HOME/rdbms/admin && sqlplus / as sysdba @awrrpt.sql'"
+    echo "  oracle_su 'cd \$ORACLE_HOME/rdbms/admin && sqlplus / as sysdba @awrrpt.sql'"
 }
 
 #===============================================================================

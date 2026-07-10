@@ -114,7 +114,7 @@ clean_archive() {
 
     # 检查是否在归档模式
     local arch_status
-    arch_status=$(su - oracle -c "
+    arch_status=$(oracle_su "
 export ORACLE_SID=${OMF_CONFIG[ORACLE_SID]}
 export ORACLE_HOME=${OMF_CONFIG[ORACLE_HOME]}
 export PATH=\$ORACLE_HOME/bin:\$PATH
@@ -127,7 +127,7 @@ echo \"select log_mode from v\\\$database;\" | sqlplus -s / as sysdba | grep -i 
     fi
 
     # 使用 RMAN 清理
-    su - oracle -c "
+    oracle_su "
 export ORACLE_SID=${OMF_CONFIG[ORACLE_SID]}
 export ORACLE_HOME=${OMF_CONFIG[ORACLE_HOME]}
 export PATH=\$ORACLE_HOME/bin:\$PATH
@@ -159,7 +159,7 @@ clean_all() {
     fi
 
     # 清理回收站
-    su - oracle -c "
+    oracle_su "
 export ORACLE_SID=${OMF_CONFIG[ORACLE_SID]}
 export ORACLE_HOME=${OMF_CONFIG[ORACLE_HOME]}
 export PATH=\$ORACLE_HOME/bin:\$PATH

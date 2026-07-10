@@ -266,25 +266,27 @@ EOF
 #===============================================================================
 # 链接兼容补丁: glibc 2.34+ (Ubuntu 22.04 / RHEL 9) 的 gcc 默认带 --as-needed,
 # 会把 Oracle 链接期实际需要的 libclntsh / libnnz19 在 --as-needed 阶段丢弃,
-# 导致 ins_rdbms.mk 的 libasmclntsh19 / libasmperl19 / client_sharedlib 目标链接
-# FATAL (Error in invoking target ...). 修复: 在 LINK 定义的 $(CC) 后注入
+# 导致 ins_rdbms.mk 的 libasmclntsh19 / libasmperl19 / client_sharedlib, 以及
+# ins_precomp.mk 的 links proc / gen_pcscfg / procob 等目标链接 FATAL
+# (Error in invoking target ...). 修复: 在 LINK 定义的 $(CC) 后注入
 # -Wl,--no-as-needed, 使这些库不被丢弃. 幂等(已注入则跳过).
+# 注意: LINK 定义分散在 rdbms/lib/env_rdbms.mk, precomp/lib/env_precomp.mk 等多处,
+# 故扫描 $ORACLE_HOME 下全部 *.mk, 且只改含 LINK 定义的那一行, 避免误伤编译规则.
 #===============================================================================
 patch_oracle_makefiles() {
     local oh="${OMF_CONFIG[ORACLE_HOME]}"
-    local mk_dir="$oh/rdbms/lib"
-    [ -d "$mk_dir" ] || return 0
+    [ -d "$oh" ] || return 0
     local patched=0 mk
-    for mk in "$mk_dir"/*.mk; do
+    while IFS= read -r mk; do
         [ -f "$mk" ] || continue
         # 仅在含 LINK 定义且出现 $(CC), 且尚未注入 --no-as-needed 时处理
         if grep -qE 'LINK[[:space:]]*=.*\$\(CC\)' "$mk" && ! grep -q -- '--no-as-needed' "$mk"; then
-            # 在第一个 $(CC) 之后注入 -Wl,--no-as-needed
-            sed -i 's/\(\$(CC)\)/\1 -Wl,--no-as-needed/' "$mk"
+            # 仅在该 LINK 行注入 -Wl,--no-as-needed (不影响其它 $(CC) 编译规则)
+            sed -i '/LINK[[:space:]]*=.*\$(CC)/ s/\$(\(CC\))/\1 -Wl,--no-as-needed/' "$mk"
             patched=1
-            log_info "已 patch $mk: LINK 注入 -Wl,--no-as-needed (修复 glibc2.34+ 链接 FATAL)"
+            log_info "已 patch ${mk#$oh/}: LINK 注入 -Wl,--no-as-needed (修复 glibc2.34+ 链接 FATAL)"
         fi
-    done
+    done < <(find "$oh" -name '*.mk' 2>/dev/null)
     [ "$patched" -eq 0 ] && log_debug "无需 patch 链接器 (已处理或无 LINK 定义)"
 }
 

@@ -15,6 +15,9 @@ fi
 # 集中运行日志路径 (由 omf.sh 的 log_init 设置)
 OMF_RUN_LOG=""
 
+# 命令锁文件路径 (由 acquire_lock 设置, 由 omf.sh 的退出 trap 统一清理)
+OMF_LOCK_FILE=""
+
 # ---- 日志核心 ----
 _log() {
     local level="$1"; shift
@@ -122,10 +125,9 @@ $script"
 # ---- 文件锁, 防止并发执行 ----
 acquire_lock() {
     local lock_name="${1:-omf}"
-    local lock_file="/tmp/omf_${lock_name}.lock"
-    exec 200>"$lock_file"
-    flock -n 200 || log_error "另一个 OMF 进程正在运行 (lock: $lock_file)"
-    trap "rm -f '$lock_file'" EXIT
+    OMF_LOCK_FILE="/tmp/omf_${lock_name}.lock"
+    exec 200>"$OMF_LOCK_FILE"
+    flock -n 200 || log_error "另一个 OMF 进程正在运行 (lock: $OMF_LOCK_FILE)"
 }
 
 # ---- 系统内存(MB) ----

@@ -38,7 +38,12 @@ list_config() {
     echo ""
     echo "========== 所有配置项 =========="
     for key in $(echo "${!OMF_CONFIG[@]}" | tr ' ' '\n' | sort); do
-        printf "  %-35s = %s\n" "$key" "${OMF_CONFIG[$key]}"
+        local val="${OMF_CONFIG[$key]}"
+        # 密码类配置项掩码, 避免明文泄露
+        case "$key" in
+            *PASSWORD*) val="****";;
+        esac
+        printf "  %-35s = %s\n" "$key" "$val"
     done
 }
 
@@ -58,7 +63,12 @@ validate_config() {
             echo "  ✗ $desc ($key) 未配置"
             errors=$((errors + 1))
         else
-            echo "  ✓ $desc: ${OMF_CONFIG[$key]}"
+            local val="${OMF_CONFIG[$key]}"
+            # 密码类配置项掩码, 避免明文泄露
+            case "$key" in
+                *PASSWORD*) val="****";;
+            esac
+            echo "  ✓ $desc: $val"
         fi
     }
 

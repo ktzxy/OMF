@@ -62,6 +62,13 @@ env_kernel() {
     local shmmax=$((total_mem * 1024 * 1024 / 2))
     local shmall=$((shmmax / 4096))
 
+    # HugePages 估算 (按 SGA 估算, 页大小 2MB):
+    #   oracle 内存 ≈ 物理内存 80%, SGA ≈ 其中 75%
+    local oracle_mb=$((total_mem * 80 / 100))
+    [ "$oracle_mb" -lt 2048 ] && oracle_mb=2048
+    local sga_mb=$((oracle_mb * 75 / 100))
+    local hp=$(( (sga_mb + 2048 - 1) / 2 + 1 ))
+
     cat > "$sysctl_file" << EOF
 # Oracle 19c 内核参数 (由 OMF 生成)
 fs.file-max = 6815744
@@ -79,7 +86,8 @@ vm.swappiness = 10
 vm.dirty_background_ratio = 3
 vm.dirty_ratio = 15
 vm.min_free_kbytes = 524288
-# HugePages 建议值(按 SGA 估算): vm.nr_hugepages = $(( (total_mem*75/100/1024/2) + 1 ))
+# HugePages (页大小 2MB, 覆盖 SGA ${sga_mb}MB, 需在数据库启动前生效)
+vm.nr_hugepages = ${hp}
 EOF
     sysctl -p "$sysctl_file" &>/dev/null || sysctl -p "$sysctl_file"
     log_info "内核参数已配置 (SHMMAX=${shmmax})"

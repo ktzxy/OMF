@@ -5,6 +5,12 @@
 #===============================================================================
 
 cmd_status() {
+    # 子命令: omf status history [N]
+    if [ "${1:-}" = "history" ]; then
+        status_history "${2:-10}"
+        return 0
+    fi
+
     echo ""
     echo "╔══════════════════════════════════════════════════════════╗"
     echo "║              OMF 一键总览 (status)                        ║"
@@ -67,5 +73,41 @@ RMANEOF" 2>/dev/null | grep -E "Full|Incr|Arch" | head -6 || echo "  (无 RMAN �
     else
         echo "  (暂无运行日志)"
     fi
+    echo ""
+}
+
+#===============================================================================
+# 监控历史趋势: omf status history [N]
+# 读取 check monitor 持久化的 JSONL 快照, 打印最近 N 次趋势
+#===============================================================================
+status_history() {
+    local n="${1:-10}"
+    local hist="${OMF_HOME}/logs/monitor_history.jsonl"
+    echo ""
+    echo "──── 监控历史趋势 (最近 ${n} 次) ────"
+    if [ ! -f "$hist" ]; then
+        echo "  (暂无历史, 请先运行: omf check monitor)"
+        echo ""
+        return 0
+    fi
+
+    printf "  %-12s %-3s %-7s %-6s %-5s %-7s\n" "时间" "库" "内存%" "ORA错" "状态" "磁盘%"
+    tail -n "$n" "$hist" | while IFS= read -r line; do
+        local ts db mem oe st dk
+        ts=$(echo "$line" | grep -o '"ts":"[^"]*"' | sed 's/"ts":"//;s/"//' | cut -c6-16)
+        db=$(echo "$line" | grep -o '"db_up":[0-9]*'      | grep -o '[0-9]*$')
+        mem=$(echo "$line" | grep -o '"mem_free_pct":[0-9]*' | grep -o '[0-9]*$')
+        oe=$(echo "$line"  | grep -o '"ora_errors":[0-9]*'  | grep -o '[0-9]*$')
+        st=$(echo "$line"  | grep -o '"status":"[^"]*"'     | sed 's/"status":"//;s/"//')
+        dk=$(echo "$line"  | grep -o '"disk":{[^}]*}'      | grep -o ':[0-9]*' | head -1 | grep -o '[0-9]*$')
+        [ -z "$db" ] && db="-"
+        [ -z "$mem" ] && mem="-"
+        [ -z "$oe" ] && oe="-"
+        [ -z "$st" ] && st="-"
+        [ -z "$dk" ] && dk="-"
+        printf "  %-12s %-3s %-7s %-6s %-5s %-7s\n" "${ts:-?}" "$db" "$mem" "$oe" "$st" "$dk"
+    done
+    echo ""
+    echo "  说明: 库=1(up)/0(down), 磁盘%=首个挂载点使用率; 完整数据见 $hist"
     echo ""
 }

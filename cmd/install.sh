@@ -61,6 +61,14 @@ install_software() {
     log_step "[2/5] 准备 Oracle Inventory"
     prepare_inventory
 
+    # 3.5 幂等检查: 若 ORACLE_HOME 已安装软件, 跳过解压与安装 (避免重复执行覆盖/报错)
+    if [ -x "${OMF_CONFIG[ORACLE_HOME]}/bin/sqlplus" ]; then
+        log_warn "检测到 ORACLE_HOME 已安装 Oracle 软件, 跳过解压与安装"
+        install_listener
+        log_info "Oracle 软件安装完成 (已存在, 跳过)!"
+        return 0
+    fi
+
     # 4. 解压安装包
     log_step "[3/5] 解压安装包到 ${OMF_CONFIG[ORACLE_HOME]}"
     mkdir -p "${OMF_CONFIG[ORACLE_HOME]}"
@@ -157,6 +165,11 @@ run_installer() {
     set +e
     set +o pipefail
 
+    # 重定向 TMPDIR 到大盘 (避免默认 /tmp 空间不足导致安装器解压/链接失败)
+    local omf_tmp="${OMF_CONFIG[ORACLE_BASE]}/tmp"
+    mkdir -p "$omf_tmp"
+    chown oracle:oinstall "$omf_tmp" 2>/dev/null || true
+
     # OL8/9 中 libnsl 由 libnsl/libnsl2 包提供, 路径可能不同 (不再是 /usr/lib64/libnsl.so.1)。
     # 仅当 libnsl.so.1 实际存在时才设置 LD_PRELOAD, 否则跳过, 避免写死路径导致安装器加载失败。
     local libn=""
@@ -166,21 +179,22 @@ run_installer() {
     su - oracle -c "
 export ORACLE_HOME=${OMF_CONFIG[ORACLE_HOME]}
 export ORACLE_BASE=${OMF_CONFIG[ORACLE_BASE]}
+export TMPDIR=${omf_tmp}
 export CV_ASSUME_DISTID=OEL7.6
 ${libn}
 
 cd ${OMF_CONFIG[ORACLE_HOME]}
 ./runInstaller -silent -ignorePrereqFailure -responseFile /tmp/oracle_install.rsp 2>&1
-" | tee /tmp/oracle_install.log
+" | tee -a "$OMF_RUN_LOG"
     local ret=${PIPESTATUS[0]}
 
     set -e
     set -o pipefail
 
-    if [ "$ret" -eq 0 ] && grep -qi "Successfully Setup Software" /tmp/oracle_install.log; then
+    if [ "$ret" -eq 0 ] && grep -qi "Successfully Setup Software" "$OMF_RUN_LOG"; then
         log_info "Oracle 软件安装成功"
     else
-        log_error "Oracle 软件安装失败 (exit=$ret), 请检查日志: /tmp/oracle_install.log"
+        log_error "Oracle 软件安装失败 (exit=$ret), 请检查日志: $OMF_RUN_LOG"
     fi
 }
 
@@ -211,7 +225,7 @@ install_listener() {
 export ORACLE_HOME=${OMF_CONFIG[ORACLE_HOME]}
 export PATH=\$ORACLE_HOME/bin:\$PATH
 netca -silent -responseFile \$ORACLE_HOME/assistants/netca/netca.rsp 2>&1
-" | tee /tmp/netca.log
+" | tee -a "$OMF_RUN_LOG"
 
     set -e
     set -o pipefail

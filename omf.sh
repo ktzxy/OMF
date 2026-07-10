@@ -22,6 +22,7 @@ while [[ $# -gt 0 ]]; do
         -y|--yes|--assume-yes) OMF_ASSUME_YES="true"; shift;;
         -d|--debug) OMF_DEBUG="true"; shift;;
         -c|--config) OMF_CONFIG_FILE="$2"; shift 2;;
+        -h|--help) usage; exit 0;;
         --) shift; break;;
         -*) echo "未知全局选项: $1"; exit 1;;
         *) break;;
@@ -33,8 +34,19 @@ export OMF_ASSUME_YES OMF_DEBUG
 source "${OMF_HOME}/lib/common.sh"
 source "${OMF_HOME}/lib/config.sh"
 
-# 退出码处理: 任何错误都给出运行日志位置
-trap 'code=$?; [ $code -ne 0 ] && echo -e "${RED}✗ 执行失败, 日志: ${OMF_RUN_LOG:-无}${NC}" >&2' EXIT
+# 退出码约定: 0=成功, 1=脚本/执行错误(真正失败), 2=检查/健康检查发现问题(预期内, 非崩溃)
+# 退出时统一: 清理命令锁 (acquire_lock 设置) + 按退出码给出提示
+OMF_LOCK_FILE=""
+_omf_exit_trap() {
+    local code=$?
+    [ -n "$OMF_LOCK_FILE" ] && rm -f "$OMF_LOCK_FILE" 2>/dev/null
+    if [ "$code" -eq 1 ]; then
+        echo -e "${RED}✗ 执行失败, 日志: ${OMF_RUN_LOG:-无}${NC}" >&2
+    elif [ "$code" -eq 2 ]; then
+        echo -e "${YELLOW}⚠ 命令执行完成, 但检查未通过 (退出码 2)${NC}" >&2
+    fi
+}
+trap _omf_exit_trap EXIT
 
 # 命令分发
 usage() {
@@ -79,6 +91,25 @@ usage() {
 EOF
 }
 
+# 各命令的子命令用法 (供 omf help <cmd> / omf <cmd> -h 使用)
+cmd_help() {
+    case "${1:-}" in
+        env)        echo "用法: omf env {prepare|user|kernel|deps|dirs|vars|firewall|all}";;
+        install)    echo "用法: omf install {software|listener|check} [zip路径] [EE|SE]";;
+        db)         echo "用法: omf db {create|start|stop|status|pdb|dg|dg-standby|dg-switchover}";;
+        backup)     echo "用法: omf backup {logical|physical|incremental|archive|auto|schedule|list|cleanup}";;
+        sql)        echo "用法: omf sql {scan|run|init|status|rollback}";;
+        tune)       echo "用法: omf tune {memory|storage|session|analyze|awr|apply}";;
+        check)      echo "用法: omf check {all|db|disk|perf|alert|listener|preflight|monitor}";;
+        status)     echo "用法: omf status [history [N]]";;
+        log)        echo "用法: omf log {view|tail|rotate|clean}";;
+        clean)      echo "用法: omf clean {all|archive|schedule}";;
+        config)     echo "用法: omf config {get|set|list|validate|show}";;
+        self-update) echo "用法: omf self-update [version|force]";;
+        *)          usage;;
+    esac
+}
+
 main() {
     if [ $# -eq 0 ]; then
         usage
@@ -87,11 +118,24 @@ main() {
 
     local cmd="$1"; shift
 
+    # 帮助: omf help <cmd> 或 omf <cmd> -h
+    if [ "$cmd" = "help" ]; then
+        cmd_help "${1:-}"
+        exit 0
+    fi
+    if [ "${1:-}" = "-h" ] || [ "${1:-}" = "--help" ]; then
+        cmd_help "$cmd"
+        exit 0
+    fi
+
     # 为每个命令初始化集中日志 (命令名作为日志前缀)
     log_init "$cmd"
 
-    # 防并发锁 (按一级命令隔离)
-    acquire_lock "$cmd"
+    # 防并发锁 (按一级命令隔离); 只读命令不加锁, 避免阻塞并发查询
+    case "$cmd" in
+        check|status|log|config) ;;   # 只读命令, 跳过锁
+        *) acquire_lock "$cmd";;
+    esac
 
     case "$cmd" in
         -h|--help) usage;;

@@ -50,6 +50,8 @@ BACKUP_PARALLEL="4"
 
 # ===== 框架自更新 =====
 OMF_UPDATE_URL="${OMF_UPDATE_URL:-}"
+# 可选: 压缩包 sha256 (用于 self-update 完整性校验, 留空则不校验)
+OMF_UPDATE_SHA256="${OMF_UPDATE_SHA256:-}"
 
 # ===== 清理策略 =====
 LOG_RETENTION_DAYS="7"

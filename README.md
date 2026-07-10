@@ -23,6 +23,7 @@ omf/
 │   ├── check.sh              # 健康检查
 │   ├── log.sh                # 日志管理
 │   ├── clean.sh              # 定时清理
+│   ├── self_update.sh        # 框架自更新
 │   └── config.sh             # 配置管理
 ├── sql/
 │   ├── init/                 # 初始化脚本
@@ -108,6 +109,7 @@ omf status                 # 一键总览
 
 - **安装兼容性修复**：`install software` 不再写死 `LD_PRELOAD=/usr/lib64/libnsl.so.1`，改为探测 `libnsl.so.1` 实际路径，OL8/9 不再失效；并以 `PIPESTATUS` 正确捕获安装器退出码。
 - **Data Guard 备库自动构建**：`omf db dg standby` 在备库服务器通过 `RMAN duplicate from active database` 自动建备（自动生成备库参数文件、启动 nomount、执行 duplicate）；新增 `omf db dg enable`（开启日志传输）与 `omf db dg validate`（校验配置/传输）。
+- **DG 钱包免密（消除 ps 密码残留）**：新增 `omf db dg wallet`，在主备各自创建自动登录钱包并将 `sys` 凭据入库，配合 `sqlnet.ora`/`tnsnames.ora`；之后 `omf db dg standby` 自动改用 `/@<别名>` 免密连接，数据库密码不再出现在命令行与 `ps` 输出中（根因修复，原 `sys/密码@host` 在长时 duplicate 期间全程可见）。
 - **时间点/SCN 物理恢复**：`omf backup restore --rman [--scn N] [--time 'YYYY-MM-DD HH24:MI:SS']` 支持不完全恢复；未指定则完全恢复到最新归档。
 - **备份可恢复性校验（演练）**：`omf backup validate` 与 `omf backup restore --rman --validate` 执行 `RESTORE ... VALIDATE`，恢复演练前必做。
 - **tune apply 防护与分域**：`omf tune apply [--scope memory|sga|pga]` 可单独调 SGA 或 PGA；危险重启操作受 `--yes`/交互确认保护。
@@ -124,11 +126,22 @@ omf status                 # 一键总览
 - **preflight 阈值告警**：`omf check preflight` 新增 `/tmp（≥5G，不足直接报错）` 与 `ORACLE_BACKUP（≥20G）` 剩余空间阈值；依赖检查改用 `ldconfig`。
 - **配置模板入库**：新增 `conf/omf.conf.example`（脱敏），真实 `conf/omf.conf` 由 `.gitignore` 忽略，避免明文密码上传。
 
+## v1.4 关键改进（运维增强 / 安全加固）
+
+- **日志统一（消除两套分离）**：所有业务日志（install / netca / dbca / backup）与 clean cron 日志统一汇入 `logs/omf_<cmd>_<时间戳>.log`（`OMF_RUN_LOG`），不再散落 `/tmp`、`/var/log` 与 `ORACLE_BACKUP`；仅保留 `/tmp` 下一次性响应文件与 `sql` 每脚本独立 `.logs`（断点续跑回看）。
+- **self-update 完整性加固（Bug13）**：新增版本比较（相同版本跳过，`force` 强制）、可选 `OMF_UPDATE_SHA256` 完整性校验、覆盖失败/校验失败自动回滚、完成后报告真实新版本号；配置模板补充 `OMF_UPDATE_SHA256` 可选项。
+- **监控机器可读输出**：`omf check monitor [json|prom]` 输出 JSON（默认）或 Prometheus 格式，采集 `db_up` / 磁盘使用率 / 内存可用率 / Alert ORA- 错误数及 `status`，对接外部监控无需解析人类排版；每次运行自动持久化快照。
+- **AWR 自动报告**：`omf tune awr [days]` 非交互取最近快照首尾 ID，调用 `awrrpt.sql` 生成 HTML 报告到 `logs/awr/`。
+- **每命令 `-h` 帮助**：`omf <cmd> -h`、`omf help <cmd>`、`omf -h` 全局总览均可用，并退出 0。
+- **DG 钱包免密**：见 v1.2（根因修复 `ps` 密码残留）。
+- **状态历史趋势**：`omf status history [N]` 读取 `check monitor` 持久化的 JSONL 快照，打印最近 N 次趋势（库存活 / 内存 / ORA 错误 / 状态 / 磁盘）。
+- **稳定性与安装健壮性（历史批次）**：密码掩码（expdp/impdp parfile、DG 连接）、`sed` 特殊字符转义、`clean_archive` 空值保护、退出码 1/2 区分、锁不阻塞只读命令且消除 trap 覆盖；安装 `TMPDIR` 重定向、HugePages 落地、安装幂等、建库前磁盘预检、备份失败判定正则修正。
+
 ## 排错提示
 
 - **`Permission denied` / `lib/common.sh: No such file or directory`**：旧版经 `/usr/local/bin/omf` 软链调用时 `OMF_HOME` 解析错误。已修复（`readlink -f`），拉取最新代码即可；若仍报错，重跑 `./setup.sh`。
 - **`chown: invalid user: 'oracle:oinstall'`**：在 `omf env prepare` 之前手动 `chown` 了安装包。无需手动 `chown`，直接 `omf install software` 会自动建用户并接管归属。
-- **`/tmp` 空间不足导致安装失败**：Oracle 安装器需在 `/tmp` 暂存。扩容，或后续版本支持 `TMPDIR` 自动处理（见 issue）。
+- **`/tmp` 空间不足导致安装失败**：Oracle 安装器需在 `/tmp` 暂存。`install software` 已自动将安装器临时目录重定向到配置的数据盘（不再写死 `/tmp`），若仍不足请扩容数据盘或手动设 `TMPDIR` 后重试。
 - **`/backup` 剩余不足**：把 `conf/omf.conf` 的 `ORACLE_BACKUP` 改到空间充足的盘，再 `omf config validate`。
 - **脚本 CRLF 报错 `bad interpreter`**：Windows 检出后脚本被转成 CRLF。仓库已用 `.gitattributes` 锁定 `*.sh` 为 LF；若手动改过，用 `dos2unix cmd/*.sh lib/*.sh omf.sh setup.sh` 修复。
 
@@ -164,6 +177,7 @@ omf status                 # 一键总览
 | `omf db dg standby` | 备库服务器自动建备 (RMAN duplicate) |
 | `omf db dg validate` | 校验 DG 配置/传输状态 |
 | `omf db dg status` | 查看 DG 配置 (dgmgrl) |
+| `omf db dg wallet` | 创建 DG 钱包 (主备各执行一次, 消除 ps 密码残留) |
 
 ### 备份管理 (`omf backup`)
 | 命令 | 说明 |
@@ -173,6 +187,8 @@ omf status                 # 一键总览
 | `omf backup archive` | 归档日志备份 |
 | `omf backup physical` | RMAN 物理全量备份 |
 | `omf backup schedule setup` | 配置定时备份 |
+| `omf backup auto` | 按 `BACKUP_MODE` 配置自动执行 (logical/physical/both) |
+| `omf backup cleanup` | 清理过期备份 (按 `BACKUP_RETENTION_DAYS`) |
 | `omf backup list` | 查看备份列表 |
 | `omf backup validate` | 校验备份可恢复性 (RESTORE VALIDATE) |
 | `omf backup restore <file>` | 逻辑恢复 (impdp) |
@@ -197,6 +213,7 @@ omf status                 # 一键总览
 | `omf tune storage` | 存储参数检查 |
 | `omf tune session` | 会话参数检查 |
 | `omf tune analyze` | AWR/ADDM 分析 |
+| `omf tune awr [days]` | 非交互生成 AWR 报告 (默认最近1天, 输出 logs/awr/) |
 | `omf tune apply [--scope memory|sga|pga]` | 应用建议配置 (需重启, 受 --yes 保护) |
 
 ### 健康检查 (`omf check`)
@@ -209,12 +226,24 @@ omf status                 # 一键总览
 | `omf check alert` | Alert 日志检查 |
 | `omf check listener` | 监听器检查 |
 | `omf check preflight` | 安装前预检 |
+| `omf check monitor [json|prom]` | 机器可读监控输出 (JSON/Prometheus, 自动持久化快照) |
 
 ### 一键总览 / 自更新
 | 命令 | 说明 |
 |------|------|
 | `omf status` | 一键总览 (库/监听/磁盘/备份/日志) |
+| `omf status history [N]` | 监控历史趋势 (默认最近10次, 读取 check monitor 快照) |
 | `omf self-update [version]` | 框架自更新 (需配置 `OMF_UPDATE_URL`) |
+| `omf self-update force` | 强制更新 (忽略版本相同) |
+| `omf help <cmd>` | 查看子命令用法 (等价 `<cmd> -h`) |
+
+### 全局选项
+| 选项 | 说明 |
+|------|------|
+| `-h / --help` | 显示总览或子命令用法 |
+| `-y / --yes` | 非交互自动确认危险操作 |
+| `-d / --debug` | 调试模式 (显示 DEBUG 日志) |
+| `-c / --config <file>` | 指定配置文件 |
 
 ### 日志管理 (`omf log`)
 | 命令 | 说明 |

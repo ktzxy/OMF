@@ -30,8 +30,11 @@ cmd_check() {
         preflight)
             check_preflight "$@"
             ;;
+        monitor)
+            check_monitor "$@"
+            ;;
         *)
-            echo "用法: omf check {all|db|disk|perf|alert|listener|preflight}"
+            echo "用法: omf check {all|db|disk|perf|alert|listener|preflight|monitor}"
             exit 1
             ;;
     esac
@@ -128,7 +131,7 @@ check_preflight() {
     echo "═════════════════════════════════════════"
     echo "预检结果: ✓ $ok 正常  ⚠ $warns 警告  ✗ $errors 错误"
     echo "═════════════════════════════════════════"
-    [ "$errors" -gt 0 ] && return 1
+    [ "$errors" -gt 0 ] && return 2
     return 0
 }
 
@@ -258,7 +261,7 @@ echo \"select log_mode from v\\\$database;\" | sqlplus -s / as sysdba | grep -i 
     echo "检查结果: ✓ $ok 正常  ⚠ $warns 警告  ✗ $errors 错误"
     echo "═══════════════════════════════════════"
 
-    [ "$errors" -gt 0 ] && return 1
+    [ "$errors" -gt 0 ] && return 2
     return 0
 }
 
@@ -403,4 +406,84 @@ export PATH=\$ORACLE_HOME/bin:\$PATH
 lsnrctl status
 lsnrctl services
 "
+}
+
+#===============================================================================
+# 监控输出 (机器可读): omf check monitor [json|prom]
+# 用于对接 Prometheus / 外部监控, 不做人类排版
+#===============================================================================
+check_monitor() {
+    local fmt="${1:-json}"
+    local db_up=0 mem_free_pct=0 ora_errors=0 status="ok" u=""
+    local mps=("/" "${OMF_CONFIG[ORACLE_DATA_BASE]}" "${OMF_CONFIG[ORACLE_BACKUP]}")
+
+    # 1. 数据库存活
+    if su - oracle -c "
+export ORACLE_SID=${OMF_CONFIG[ORACLE_SID]}
+export ORACLE_HOME=${OMF_CONFIG[ORACLE_HOME]}
+export PATH=\$ORACLE_HOME/bin:\$PATH
+echo 'SELECT 1 FROM v\$instance;' | sqlplus -s / as sysdba" &>/dev/null; then
+        db_up=1
+    fi
+
+    # 2. 内存可用率
+    local mem_free mem_total
+    mem_free=$(awk '/MemAvailable/ {print int($2/1024)}' /proc/meminfo)
+    mem_total=$(get_total_memory_mb)
+    [ "${mem_total:-0}" -gt 0 ] && mem_free_pct=$((mem_free * 100 / mem_total))
+
+    # 3. Alert 日志 ORA- 错误数
+    local alert_log="${OMF_CONFIG[ORACLE_BASE]}/diag/rdbms/${OMF_CONFIG[ORACLE_SID]}/${OMF_CONFIG[ORACLE_SID]}/trace/alert_${OMF_CONFIG[ORACLE_SID]}.log"
+    [ -f "$alert_log" ] && ora_errors=$(grep -c "ORA-" "$alert_log" 2>/dev/null || echo 0)
+
+    # 4. 状态判定
+    if [ "$db_up" -eq 0 ] || [ "$mem_free_pct" -lt 10 ]; then
+        status="err"
+    elif [ "$mem_free_pct" -lt 20 ] || [ "$ora_errors" -gt 0 ]; then
+        status="warn"
+    fi
+
+    # 5. 持久化快照 (供 omf status history 趋势展示, 写入失败不影响监控输出)
+    local hist="${OMF_HOME}/logs/monitor_history.jsonl"
+    mkdir -p "$(dirname "$hist")" 2>/dev/null || true
+    local dp_json="" dp_first=1 dp_u
+    for p in "${mps[@]}"; do
+        [ -d "$p" ] || continue
+        dp_u=$(get_disk_usage_pct "$p" 2>/dev/null || echo 0)
+        if [ "$dp_first" -eq 1 ]; then dp_json="\"$(basename "$p")\":${dp_u}"; dp_first=0
+        else dp_json="${dp_json}, \"$(basename "$p")\":${dp_u}"; fi
+    done
+    echo "{\"ts\":\"$(date '+%Y-%m-%dT%H:%M:%S')\",\"db_up\":${db_up},\"mem_free_pct\":${mem_free_pct},\"ora_errors\":${ora_errors},\"status\":\"${status}\",\"disk\":{${dp_json}}}" >> "$hist" 2>/dev/null || true
+
+    case "$fmt" in
+        prom)
+            echo "# HELP omf_db_up Oracle 实例是否存活 (1=up, 0=down)"
+            echo "# TYPE omf_db_up gauge"
+            echo "omf_db_up $db_up"
+            for p in "${mps[@]}"; do
+                [ -d "$p" ] || continue
+                u=$(get_disk_usage_pct "$p" 2>/dev/null || echo 0)
+                echo "omf_disk_usage_pct{mount=\"$p\"} $u"
+            done
+            echo "omf_mem_free_pct $mem_free_pct"
+            echo "omf_alert_ora_errors $ora_errors"
+            echo "omf_status{state=\"$status\"} 1"
+            ;;
+        *)
+            local first=1 disk_json=""
+            for p in "${mps[@]}"; do
+                [ -d "$p" ] || continue
+                u=$(get_disk_usage_pct "$p" 2>/dev/null || echo 0)
+                if [ "$first" -eq 1 ]; then disk_json="\"$p\":${u}"; first=0
+                else disk_json="${disk_json}, \"$p\":${u}"; fi
+            done
+            echo "{"
+            echo "  \"db_up\": $db_up,"
+            echo "  \"disk_usage_pct\": {${disk_json}},"
+            echo "  \"mem_free_pct\": $mem_free_pct,"
+            echo "  \"alert_ora_errors\": $ora_errors,"
+            echo "  \"status\": \"$status\""
+            echo "}"
+            ;;
+    esac
 }

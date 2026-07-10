@@ -60,7 +60,7 @@ backup_logical() {
     local ts=$(date '+%Y%m%d_%H%M%S')
     local dump_dir="${ORACLE_BACKUP}/dump"
     local parfile="/tmp/omf_expdp_${ts}.par"
-    local log_file="${dump_dir}/full_${ts}.log"
+    local log_file="$OMF_RUN_LOG"
 
     # 用 parfile 避免密码出现在 ps
     cat > "$parfile" << EOF
@@ -105,7 +105,7 @@ backup_incremental() {
     local level="${1:-1}"
     local ts=$(date '+%Y%m%d_%H%M%S')
     local backup_dir="${ORACLE_BACKUP}/incremental"
-    local log_file="${backup_dir}/incr_lvl${level}_${ts}.log"
+    local log_file="$OMF_RUN_LOG"
 
     log_step "RMAN 增量备份 (Level $level)"
     set +e
@@ -123,7 +123,7 @@ RMANEOF" 2>&1 | tee "$log_file"
     local rc=${PIPESTATUS[0]}
     set -e
 
-    if [ "$rc" -eq 0 ] && ! grep -qi "RMAN-00569\|RMAN-00600\|ORA-00999\|failure" "$log_file"; then
+    if [ "$rc" -eq 0 ] && ! grep -qiE "RMAN-[0-9]{5}|ORA-[0-9]{5}" "$log_file"; then
         log_info "RMAN 增量备份完成"
         # 备份成功后才清理 obsolete
         as_oracle "rman target / <<RMANEOF
@@ -144,7 +144,7 @@ backup_archive() {
 
     local ts=$(date '+%Y%m%d_%H%M%S')
     local backup_dir="${ORACLE_BACKUP}/archive"
-    local log_file="${backup_dir}/arch_${ts}.log"
+    local log_file="$OMF_RUN_LOG"
 
     log_step "归档日志备份"
     set +e
@@ -167,7 +167,7 @@ backup_physical() {
 
     local ts=$(date '+%Y%m%d_%H%M%S')
     local backup_dir="${ORACLE_BACKUP}/full"
-    local log_file="${backup_dir}/physical_${ts}.log"
+    local log_file="$OMF_RUN_LOG"
 
     log_step "RMAN 物理全量备份"
     set +e
@@ -184,7 +184,7 @@ RMANEOF" 2>&1 | tee "$log_file"
     local rc=${PIPESTATUS[0]}
     set -e
 
-    if [ "$rc" -eq 0 ] && ! grep -qi "RMAN-00569\|RMAN-00600\|ORA-00999\|failure" "$log_file"; then
+    if [ "$rc" -eq 0 ] && ! grep -qiE "RMAN-[0-9]{5}|ORA-[0-9]{5}" "$log_file"; then
         log_info "RMAN 物理全量备份完成"
         as_oracle "rman target / <<RMANEOF
 DELETE NOPROMPT OBSOLETE;

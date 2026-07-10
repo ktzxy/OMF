@@ -136,7 +136,11 @@ set_config() {
 
     # 已存在则替换, 否则追加
     if grep -q "^${key}=" "$config_file" 2>/dev/null; then
-        sed -i "s|^${key}=.*|${key}=\"${value}\"|" "$config_file"
+        # 转义 sed 替换串中的特殊字符: & 表示整段匹配, | 为分隔符, \ 为转义符
+        local safe_value="${value//\\/\\\\}"
+        safe_value="${safe_value//&/\\&}"
+        safe_value="${safe_value//|/\\|}"
+        sed -i "s|^${key}=.*|${key}=\"${safe_value}\"|" "$config_file"
     else
         echo "${key}=\"${value}\"" >> "$config_file"
     fi

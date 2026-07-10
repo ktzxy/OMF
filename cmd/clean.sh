@@ -109,6 +109,9 @@ clean_audit() {
 clean_archive() {
     log_step "清理过期归档日志"
 
+    # 归档保留天数 (非空保护, 避免 'SYSDATE-' 非法表达式)
+    local retention="${OMF_CONFIG[BACKUP_RETENTION_DAYS]:-30}"
+
     # 检查是否在归档模式
     local arch_status
     arch_status=$(su - oracle -c "
@@ -130,7 +133,7 @@ export ORACLE_HOME=${OMF_CONFIG[ORACLE_HOME]}
 export PATH=\$ORACLE_HOME/bin:\$PATH
 
 rman target / <<RMANEOF
-DELETE NOPROMPT ARCHIVELOG ALL COMPLETED BEFORE 'SYSDATE-${OMF_CONFIG[BACKUP_RETENTION_DAYS]}';
+DELETE NOPROMPT ARCHIVELOG ALL COMPLETED BEFORE 'SYSDATE-${retention}';
 DELETE NOPROMPT OBSOLETE;
 RMANEOF
 " 2>&1 | tail -10
@@ -184,10 +187,10 @@ clean_schedule() {
             cat > /etc/cron.d/omf_clean << EOF
 # OMF 定时清理任务
 # 每天凌晨 4:00 - 清理日志和 trace
-0 4 * * * oracle ${OMF_HOME}/omf.sh clean all >> /var/log/omf_clean.log 2>&1
+0 4 * * * oracle ${OMF_HOME}/omf.sh clean all >> ${OMF_HOME}/logs/omf_clean_cron.log 2>&1
 
 # 每周日凌晨 5:00 - 清理过期归档
-0 5 * * 0 oracle ${OMF_HOME}/omf.sh clean archive >> /var/log/omf_clean.log 2>&1
+0 5 * * 0 oracle ${OMF_HOME}/omf.sh clean archive >> ${OMF_HOME}/logs/omf_clean_cron.log 2>&1
 EOF
             chmod 644 /etc/cron.d/omf_clean
             systemctl restart crond 2>/dev/null || service cron restart 2>/dev/null || true

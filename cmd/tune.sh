@@ -21,11 +21,15 @@ cmd_tune() {
         analyze)
             tune_analyze "$@"
             ;;
+        awr)
+            tune_awr "$@"
+            ;;
         apply)
             tune_apply "$@"
             ;;
         *)
-            echo "用法: omf tune {memory|storage|session|analyze|apply}"
+            echo "用法: omf tune {memory|storage|session|analyze|awr|apply}"
+            echo "  omf tune awr [days]                      生成 AWR 报告 (默认最近1天, 输出到 logs/awr/)"
             echo "  omf tune apply [--scope memory|sga|pga]   (--yes 可跳过交互确认)"
             exit 1
             ;;
@@ -265,4 +269,45 @@ STARTUP;
 EXIT;
 SQL"
     log_info "内存参数已更新 (scope=${scope}) 并重启生效"
+}
+
+#===============================================================================
+# 自动生成 AWR 报告 (非交互)
+# 用法: omf tune awr [days]
+#   取最近 days 天内的首尾两个快照, 调用 awrrpt.sql 生成 HTML 报告
+#===============================================================================
+tune_awr() {
+    local days="${1:-1}"
+    local out_dir="${OMF_HOME}/logs/awr"
+    mkdir -p "$out_dir"
+    chown oracle:oinstall "$out_dir" 2>/dev/null || true
+
+    log_step "生成 AWR 报告 (最近 ${days} 天)"
+
+    # 取最近两个快照 id (首尾)
+    local snaps
+    snaps=$(as_oracle "sqlplus -s / as sysdba <<SQL
+SET PAGES 0 FEEDBACK OFF HEAD OFF
+SELECT MIN(snap_id) || ' ' || MAX(snap_id) FROM dba_hist_snapshot WHERE begin_interval_time > SYSDATE - ${days};
+EXIT;
+SQL" 2>/dev/null | tr -d '\r' | awk 'NF==2{print; exit}')
+
+    local begin end
+    begin=$(echo "$snaps" | awk '{print $1}')
+    end=$(echo "$snaps" | awk '{print $2}')
+
+    if [ -z "$begin" ] || [ -z "$end" ] || [ "$begin" = "$end" ]; then
+        log_error "快照不足 (需要至少 2 个 AWR 快照, 当前: '${snaps}'), 请确认 AWR 已启用且采样正常"
+    fi
+
+    local report="${out_dir}/awr_${begin}_${end}.html"
+    log_info "快照范围: ${begin} -> ${end}"
+
+    as_oracle "cd ${OMF_CONFIG[ORACLE_HOME]}/rdbms/admin && sqlplus -s / as sysdba @awrrpt.sql html ${begin} ${end} ${report}" 2>&1 | tail -5
+
+    if [ -f "$report" ] && [ -s "$report" ]; then
+        log_info "AWR 报告已生成: $report"
+    else
+        log_error "AWR 报告生成失败, 请检查: $report"
+    fi
 }

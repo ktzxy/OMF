@@ -262,12 +262,40 @@ EOF
 }
 
 #===============================================================================
+# 链接兼容补丁: glibc 2.34+ (Ubuntu 22.04 / RHEL 9) 的 gcc 默认带 --as-needed,
+# 会把 Oracle 链接期实际需要的 libclntsh / libnnz19 在 --as-needed 阶段丢弃,
+# 导致 ins_rdbms.mk 的 libasmclntsh19 / libasmperl19 / client_sharedlib 目标链接
+# FATAL (Error in invoking target ...). 修复: 在 LINK 定义的 $(CC) 后注入
+# -Wl,--no-as-needed, 使这些库不被丢弃. 幂等(已注入则跳过).
+#===============================================================================
+patch_oracle_makefiles() {
+    local oh="${OMF_CONFIG[ORACLE_HOME]}"
+    local mk_dir="$oh/rdbms/lib"
+    [ -d "$mk_dir" ] || return 0
+    local patched=0 mk
+    for mk in "$mk_dir"/*.mk; do
+        [ -f "$mk" ] || continue
+        # 仅在含 LINK 定义且出现 $(CC), 且尚未注入 --no-as-needed 时处理
+        if grep -qE 'LINK[[:space:]]*=.*\$\(CC\)' "$mk" && ! grep -q -- '--no-as-needed' "$mk"; then
+            # 在第一个 $(CC) 之后注入 -Wl,--no-as-needed
+            sed -i 's/\(\$(CC)\)/\1 -Wl,--no-as-needed/' "$mk"
+            patched=1
+            log_info "已 patch $mk: LINK 注入 -Wl,--no-as-needed (修复 glibc2.34+ 链接 FATAL)"
+        fi
+    done
+    [ "$patched" -eq 0 ] && log_debug "无需 patch 链接器 (已处理或无 LINK 定义)"
+}
+
+#===============================================================================
 # 执行安装
 #===============================================================================
 run_installer() {
     # 关键: 关闭 set -e 和 pipefail
     set +e
     set +o pipefail
+
+    # 解压后、跑安装器前, 自动 patch 链接器 (修复 glibc2.34+ 的 --as-needed 链接 FATAL)
+    patch_oracle_makefiles
 
     # 重定向 TMPDIR 到大盘 (避免默认 /tmp 空间不足导致安装器解压/链接失败)
     local omf_tmp="${OMF_CONFIG[ORACLE_BASE]}/tmp"

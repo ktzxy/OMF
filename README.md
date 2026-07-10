@@ -35,6 +35,26 @@ omf/
 
 ## 快速开始
 
+### 前置：生成正式配置文件 `conf/omf.conf`（必做）
+
+> ⚠️ **框架只读取 `conf/omf.conf`，绝不读取 `conf/omf.conf.example`**（那是入库的脱敏模板，改它无效）。
+> 之前有人把 `HUGEPAGES_DEFER`、`ORACLE_MEM_RATIO` 等项改到了 `omf.conf.example`，
+> 结果一直用默认值、配置"不生效"。请务必确认改动落在 `conf/omf.conf`：
+> `grep -n HUGEPAGES_DEFER conf/omf.conf`
+
+二选一生成正式文件（生成后编辑的是 `conf/omf.conf`，不是 example）：
+
+```bash
+# 方式 A（推荐）：内置命令生成, 含全部配置项(含内存规划 HUGEPAGES_* 等)
+omf config init
+#   若 conf/omf.conf 已存在会询问是否覆盖; 生成后按需修改
+
+# 方式 B：从模板复制
+cp conf/omf.conf.example conf/omf.conf
+
+vi conf/omf.conf                   # 按需修改密码/路径/IP (密码也建议用环境变量注入)
+```
+
 ### 方式一：Git 克隆（推荐，便于更新）
 
 ```bash
@@ -42,9 +62,8 @@ git clone git@github.com:ktzxy/OMF.git /opt/omf
 cd /opt/omf
 ./setup.sh                         # 自动 chmod +x 所有脚本、建 omf 软链、校验配置、可选预检
 
-# 用脱敏模板生成真实配置 (conf/omf.conf 已被 .gitignore 忽略, 不会上传到仓库)
-cp conf/omf.conf.example conf/omf.conf
-vi conf/omf.conf                   # 按需修改密码/路径/IP (密码也建议用环境变量注入)
+# 生成并修改正式配置 (见上方"前置"步骤, 注意改的是 conf/omf.conf 而非 example)
+omf config init && vi conf/omf.conf
 
 # 把 Oracle 安装包放到默认位置 (任意路径亦可, 安装时显式传入即可)
 # 支持 CDB 系列: 18c/19c/21c/23ai, 由 conf 中 ORACLE_VERSION 决定默认包名
@@ -64,7 +83,8 @@ omf install software
 ```bash
 wget http://your-host/omf.tar.gz && tar xzf omf.tar.gz && cd omf
 ./setup.sh
-cp conf/omf.conf.example conf/omf.conf && vi conf/omf.conf
+# 生成并修改正式配置 (见上方"前置"步骤, 注意改的是 conf/omf.conf 而非 example)
+omf config init && vi conf/omf.conf
 omf install software /home/oracle/LINUX.X64_193000_db_home.zip
 ```
 
@@ -161,6 +181,7 @@ OMF 面向 **CDB 架构** 的 Oracle 数据库，当前支持：
 - **`/tmp` 空间不足导致安装失败**：Oracle 安装器需在 `/tmp` 暂存。`install software` 已自动将安装器临时目录重定向到配置的数据盘（不再写死 `/tmp`），若仍不足请扩容数据盘或手动设 `TMPDIR` 后重试。
 - **`/backup` 剩余不足**：把 `conf/omf.conf` 的 `ORACLE_BACKUP` 改到空间充足的盘，再 `omf config validate`。
 - **脚本 CRLF 报错 `bad interpreter`**：Windows 检出后脚本被转成 CRLF。仓库已用 `.gitattributes` 锁定 `*.sh` 为 LF；若手动改过，用 `dos2unix cmd/*.sh lib/*.sh omf.sh setup.sh` 修复。
+- **配置改了不生效（如 `HUGEPAGES_DEFER` 无效、内存仍被大页占满）**：框架只读取 `conf/omf.conf`，**不读 `conf/omf.conf.example`**（那是入库的脱敏模板）。确认改动落在正式文件：`grep -n HUGEPAGES_DEFER conf/omf.conf`；若文件不存在先用 `omf config init` 生成（含全部配置项）。用 `omf config set KEY VALUE` 也会自动写入正式文件。
 
 ## 命令速查
 

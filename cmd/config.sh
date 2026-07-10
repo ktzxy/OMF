@@ -144,9 +144,26 @@ init_config() {
 ORACLE_USER="oracle"
 ORACLE_GROUP="oinstall"
 ORACLE_BASE="/u01/app/oracle"
+# ORACLE_HOME 留空则按 ORACLE_VERSION 自动推导 (19 -> /u01/app/oracle/product/19.3.0/dbhome_1)
 ORACLE_HOME="/u01/app/oracle/product/19.3.0/dbhome_1"
+# Oracle 主版本 (仅支持 CDB 系列: 18 / 19 / 21 / 23)
+ORACLE_VERSION="19"
+# 安装包 zip 路径 (留空则按 ORACLE_VERSION 推导默认名)
+ORACLE_ZIP=""
 ORACLE_SID="ARTERY"
 PDB_NAME="ARTERYPDB"
+
+# ===== 内存规划 (用于 SGA / HugePages 估算) =====
+# Oracle 内存占物理内存百分比 (默认 80)
+ORACLE_MEM_RATIO="80"
+# SGA 占 Oracle 内存百分比 (默认 75)
+SGA_RATIO="75"
+# 预留大页后至少给 OS 保留的空闲内存(MB), 防止小内存机器被大页吃满 (默认 2048)
+HUGEPAGES_RESERVE_FREE_MB="2048"
+# 是否将大页预留推迟到 omf db create 之前 (true/false)
+#   true:  env prepare 不立即预留大页(释放内存给安装器), 建库前再预留
+#   false: env prepare 立即预留大页(传统行为)
+HUGEPAGES_DEFER="false"
 
 # ===== 密码配置 =====
 # 可通过环境变量覆盖: export ORACLE_PASSWORD=xxx
@@ -169,6 +186,7 @@ NLS_LANG="AMERICAN_AMERICA.AL32UTF8"
 PROCESSES="1500"
 OPEN_CURSORS="1000"
 REDO_SIZE_MB="2048"
+FRA_SIZE_MB="40960"
 FRA_SIZE_MB_MIN="20480"
 
 # ===== Data Guard =====

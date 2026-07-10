@@ -173,9 +173,19 @@ prepare_inventory() {
 generate_response() {
     local mode="$1"
     local resp_file="/tmp/oracle_install.rsp"
-    local groups="oinstall,dba,oper,backupdba,dgdba,kmdba,racdba"
+
+    # 响应文件版本需与安装器匹配 (否则 INS-10105 报响应文件无效)
+    local rsp_ver
+    case "${OMF_CONFIG[ORACLE_VERSION]:-19}" in
+        18)      rsp_ver="18.0.0" ;;
+        19)      rsp_ver="19.3.0" ;;
+        21)      rsp_ver="21.0.0" ;;
+        23|23ai) rsp_ver="23.0.0" ;;
+        *)        rsp_ver="19.3.0" ;;
+    esac
 
     cat > "$resp_file" << EOF
+oracle.install.responseFileVersion=$rsp_ver
 oracle.install.option=INSTALL_DB_SWONLY
 UNIX_GROUP_NAME=oinstall
 INVENTORY_LOCATION=${OMF_CONFIG[ORACLE_BASE]}/oraInventory
@@ -189,6 +199,8 @@ oracle.install.db.OSDGDBA_GROUP=dgdba
 oracle.install.db.OSKMDBA_GROUP=kmdba
 oracle.install.db.OSRACDBA_GROUP=racdba
 oracle.install.db.rootconfig.executeRootScript=false
+SECURITY_UPDATES_VIA_MYORACLESUPPORT=false
+DECLINE_SECURITY_UPDATES=true
 EOF
 
     chown oracle:oinstall "$resp_file"

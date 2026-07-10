@@ -21,7 +21,7 @@ cmd_env() {
 env_prepare() {
     require_root
     log_step "========== Oracle 19c 环境准备 =========="
-    local steps=(env_user env_kernel env_packages env_dirs env_profile env_firewall)
+    local steps=(env_user env_kernel env_packages env_lib64 env_dirs env_profile env_firewall)
     local i=1
     for s in "${steps[@]}"; do
         log_step "[$i/${#steps[@]}] $s"
@@ -257,6 +257,46 @@ env_packages() {
     fi
 
     log_info "依赖包安装完成"
+}
+
+# Debian/Ubuntu 系: Oracle 的链接脚本(env_rdbms.mk 等)写死 RHEL 路径 /usr/lib64/,
+# 但 Ubuntu 的静态库/链接库实际在 /usr/lib/x86_64-linux-gnu/。缺 /usr/lib64 会导致
+# 安装链接阶段报 'cannot find /usr/lib64/libc_nonshared.a' 而 FATAL 失败。
+# 修复: 建立 /usr/lib64 -> /usr/lib/x86_64-linux-gnu 的软链, 覆盖 Oracle 链接所需全部库。
+env_lib64() {
+    case "$(detect_os)" in
+        ubuntu*|debian*|linuxmint*|kali*|pop*) ;;
+        *) return 0;;   # 非 Debian 系(RHEL 等)无需处理
+    esac
+
+    local src="/usr/lib/x86_64-linux-gnu"
+    if [ ! -d "$src" ]; then
+        log_warn "未找到 $src, 跳过 /usr/lib64 软链"
+        return 0
+    fi
+
+    # 若 /usr/lib64 已是正确软链, 跳过
+    if [ -L /usr/lib64 ] && [ "$(readlink -f /usr/lib64)" = "$(readlink -f "$src")" ]; then
+        log_debug "/usr/lib64 软链已存在, 跳过"
+        return 0
+    fi
+
+    # 若 /usr/lib64 是真实目录(非软链), 不破坏, 仅补齐 Oracle 链接常用的 .a 软链
+    if [ -d /usr/lib64 ] && [ ! -L /usr/lib64 ]; then
+        log_warn "/usr/lib64 已是真实目录, 仅补齐 Oracle 链接常用静态库软链"
+        for f in libc_nonshared.a libpthread_nonshared.a libc.a libpthread.a \
+                 libnsl.a libtirpc.a libstdc++.a libgcc_s.a; do
+            [ -e "$src/$f" ] && ln -sf "$src/$f" "/usr/lib64/$f" 2>/dev/null || true
+        done
+        ldconfig 2>/dev/null || true
+        return 0
+    fi
+
+    # 移除失效软链, 重建为指向 Ubuntu 库目录
+    rm -f /usr/lib64 2>/dev/null || true
+    ln -s "$src" /usr/lib64
+    ldconfig 2>/dev/null || true
+    log_info "已建立 /usr/lib64 -> $src 软链 (修复 Oracle 链接期 cannot find /usr/lib64/...)"
 }
 
 env_dirs() {

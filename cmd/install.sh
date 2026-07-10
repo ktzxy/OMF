@@ -86,12 +86,14 @@ install_software() {
     log_step "========== Oracle ${ver}c 软件安装 =========="
 
     # 0. 环境就绪自检: oracle 用户/核心依赖缺失, 或 Ubuntu 下 /usr/lib64 软链未建,
-    #    或 oracle 账户被锁定(useradd 默认) -> 都会导致后续 su - oracle 失败.
-    #    任一不满足则自动执行环境准备 (含 env_lib64 建链 与 oracle 账户解锁设密)
+    #    或 oracle 账户被锁定(useradd 默认), 或链接器名 libnsl.so 缺失(会导致
+    #    ins_rdbms.mk 的 libasmclntsh19/libasmperl19/client_sharedlib 链接 FATAL) ->
+    #    任一不满足则自动执行环境准备 (含 env_lib64 建链 / env_packages 补 libnsl.so / 解锁)
     local need_env=false
     if ! id oracle &>/dev/null; then need_env=true; fi
     if ! ldconfig -p 2>/dev/null | grep -q "libaio.so.1"; then need_env=true; fi
     if [ ! -e /usr/lib64 ]; then need_env=true; fi
+    if [ ! -e /usr/lib64/libnsl.so ]; then need_env=true; fi   # 链接器名缺失, 链接期 -lnsl 会失败
     if id oracle &>/dev/null; then
         local ostate; ostate=$(passwd -S oracle 2>/dev/null | awk '{print $2}')
         if [ "$ostate" = "L" ]; then need_env=true; fi   # L=锁定, 需解锁
@@ -284,6 +286,10 @@ export ORACLE_BASE=${OMF_CONFIG[ORACLE_BASE]}
 export TMPDIR=${omf_tmp}
 export CV_ASSUME_DISTID=$(oracle_cvu_distid)
 ${libn}
+# 链接期 gcc 默认不搜 /usr/lib64 (Ubuntu 的 RHEL 路径), 而 Oracle 的 env_rdbms.mk
+# 用 -lnsl 等链接 libasmclntsh19/libasmperl19/client_sharedlib. 显式把 /usr/lib64
+# (已软链到 /usr/lib/x86_64-linux-gnu) 加入 LIBRARY_PATH, 确保 -lnsl 能解析.
+export LIBRARY_PATH=/usr/lib64:/usr/lib/x86_64-linux-gnu:\$LIBRARY_PATH
 
 cd ${OMF_CONFIG[ORACLE_HOME]}
 ./runInstaller -silent -ignorePrereqFailure -responseFile ${OMF_CONFIG[ORACLE_BASE]}/oracle_install.rsp 2>&1

@@ -274,10 +274,21 @@ env_packages() {
     if [ "$pm" = "apt" ]; then
         local nsl2
         nsl2=$(ldconfig -p 2>/dev/null | awk '/libnsl\.so\.2/{print $NF; exit}')
-        if [ -n "$nsl2" ] && [ ! -e "${nsl2%/*}/libnsl.so.1" ]; then
-            ln -sf "$nsl2" "${nsl2%/*}/libnsl.so.1"
+        if [ -n "$nsl2" ]; then
+            local nsl_dir="${nsl2%/*}"
+            if [ ! -e "$nsl_dir/libnsl.so.1" ]; then
+                ln -sf "$nsl2" "$nsl_dir/libnsl.so.1"
+                log_info "已创建 libnsl.so.1 软链 (Oracle 19c 需要): $nsl_dir/libnsl.so.1 -> $nsl2"
+            fi
+            # 关键: 安装链接阶段 Oracle 的 env_rdbms.mk 用 -lnsl 链接 libasmclntsh19 /
+            #   libasmperl19 / client_sharedlib, -lnsl 需要 *链接器名* libnsl.so (由 libnsl-dev
+            #   提供, 最小化镜像未装). 仅 libnsl.so.1(soname) 不够, 缺它会报
+            #   'Error in invoking target libasmclntsh19.ohso ...' (FATAL). 这里补链接器名软链.
+            if [ ! -e "$nsl_dir/libnsl.so" ]; then
+                ln -sf libnsl.so.1 "$nsl_dir/libnsl.so"
+                log_info "已创建 libnsl.so 链接器名软链 (修复 -lnsl 链接失败): $nsl_dir/libnsl.so -> libnsl.so.1"
+            fi
             ldconfig
-            log_info "已创建 libnsl.so.1 软链 (Oracle 19c 需要): ${nsl2%/*}/libnsl.so.1 -> $nsl2"
         fi
 
         # 关键运行库校验: Oracle 二进制依赖 libcrypt.so.1 (Ubuntu22.04 由 libxcrypt1 提供, 24.04 由 libcrypt1 提供)

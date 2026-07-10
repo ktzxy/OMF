@@ -90,6 +90,7 @@ OMF 面向 **CDB 架构** 的 Oracle 数据库，当前支持：
 | 23ai | `LINUX.X64_2340000_db_home.zip` | CDB |
 
 - 通过 `conf/omf.conf` 的 `ORACLE_VERSION`（取值 `18`/`19`/`21`/`23`）切换，框架据此推导默认安装包名与 CVU 兼容假名（`CV_ASSUME_DISTID`）。
+- `ORACLE_HOME` 留空时按 `ORACLE_VERSION` 自动推导（如 `19` → `/u01/app/oracle/product/19.3.0/dbhome_1`），在 conf 中显式指定则覆盖（兼容自定义路径）。**装其他版本只需改 `ORACLE_VERSION` 一处**。
 - 若安装包路径非默认，可设 `ORACLE_ZIP="/path/to/xxx_db_home.zip"`，或安装时显式传入 `omf install software <zip>`。
 - 非 CDB 版本（如 11g、12c non-CDB）暂不官方支持（建库默认走 CDB/PDB）。
 

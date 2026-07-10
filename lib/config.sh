@@ -12,9 +12,11 @@ load_config() {
     OMF_CONFIG[ORACLE_USER]="oracle"
     OMF_CONFIG[ORACLE_GROUP]="oinstall"
     OMF_CONFIG[ORACLE_BASE]="/u01/app/oracle"
-    OMF_CONFIG[ORACLE_HOME]="/u01/app/oracle/product/19.3.0/dbhome_1"
-    # Oracle 主版本 (仅支持 CDB 系列: 18 / 19 / 21 / 23), 用于推导默认安装包名与提示
+    # Oracle 主版本 (仅支持 CDB 系列: 18 / 19 / 21 / 23), 用于推导默认安装包名/Home/CVU 假名
     OMF_CONFIG[ORACLE_VERSION]="${ORACLE_VERSION:-19}"
+    # ORACLE_HOME 留空则按 ORACLE_VERSION 自动推导 (如 19 -> /u01/app/oracle/product/19.3.0/dbhome_1)
+    # 如需自定义安装路径, 在 conf/omf.conf 中显式指定 ORACLE_HOME 即可覆盖
+    OMF_CONFIG[ORACLE_HOME]=""
     # 安装包路径 (留空则按 ORACLE_VERSION 推导默认名, 见 install.sh 的 oracle_default_zip)
     OMF_CONFIG[ORACLE_ZIP]="${ORACLE_ZIP:-}"
     OMF_CONFIG[ORACLE_SID]="ARTERY"
@@ -69,6 +71,13 @@ load_config() {
     if [ -f "$config_file" ]; then
         log_debug "加载配置文件: $config_file"
         source "$config_file"
+    fi
+
+    # ORACLE_HOME 联动推导: 未显式设置(为空)时, 按 ORACLE_VERSION 生成默认路径
+    # 兼容旧配置/自定义路径: conf 中已写 ORACLE_HOME 则保留
+    if [ -z "${OMF_CONFIG[ORACLE_HOME]}" ]; then
+        OMF_CONFIG[ORACLE_HOME]="/u01/app/oracle/product/${OMF_CONFIG[ORACLE_VERSION]}.3.0/dbhome_1"
+        log_debug "ORACLE_HOME 由 ORACLE_VERSION=${OMF_CONFIG[ORACLE_VERSION]} 推导: ${OMF_CONFIG[ORACLE_HOME]}"
     fi
 
     # ---------- 导出为环境变量 ----------

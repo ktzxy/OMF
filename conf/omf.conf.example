@@ -9,7 +9,10 @@
 ORACLE_USER="oracle"
 ORACLE_GROUP="oinstall"
 ORACLE_BASE="/u01/app/oracle"
-ORACLE_HOME="/u01/app/oracle/product/19.3.0/dbhome_1"
+# ORACLE_HOME 留空则按 ORACLE_VERSION 自动推导 (19 -> /u01/app/oracle/product/19.3.0/dbhome_1)
+# 如需自定义安装路径, 显式指定即可覆盖:
+# ORACLE_HOME="/u01/app/oracle/product/19.3.0/dbhome_1"
+ORACLE_HOME=""
 # Oracle 主版本 (仅支持 CDB 系列: 18 / 19 / 21 / 23); 用于推导默认安装包名与 CVU 兼容假名
 ORACLE_VERSION="19"
 # 安装包 zip 路径 (留空则按 ORACLE_VERSION 推导默认名, 如 LINUX.X64_193000_db_home.zip)

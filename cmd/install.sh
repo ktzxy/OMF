@@ -107,6 +107,26 @@ install_software() {
         return 0
     fi
 
+    # 3.6 清理失败残余: 若 ORACLE_HOME 已存在但软件未安装成功 (sqlplus 不存在),
+    #     说明上一次安装失败/中断, 残留文件会导致 runInstaller 报
+    #     INS-32026 (Software Location 非空). 清理后再重装, 无需手动回滚.
+    if [ -d "${OMF_CONFIG[ORACLE_HOME]}" ] && [ ! -x "${OMF_CONFIG[ORACLE_HOME]}/bin/sqlplus" ]; then
+        # 安全护栏: 仅当 ORACLE_HOME 是 ORACLE_BASE 的子目录时才清理, 避免误删
+        case "${OMF_CONFIG[ORACLE_HOME]}" in
+            "${OMF_CONFIG[ORACLE_BASE]}"/*)
+                log_warn "检测到 ORACLE_HOME 非空的失败/残留安装, 清理后重新安装..."
+                rm -rf "${OMF_CONFIG[ORACLE_HOME]}"
+                # 清理 OUI 可能遗留的 inventory 锁, 避免重跑时 'Central Inventory is locked'
+                rm -rf "${OMF_CONFIG[ORACLE_BASE]}/oraInventory/locks" 2>/dev/null || true
+                # 重新清理 inventory.xml 中残留的 HOME 记录 (prepare_inventory 已在步骤2处理过)
+                prepare_inventory
+                ;;
+            *)
+                log_error "ORACLE_HOME 不在 ORACLE_BASE 下, 拒绝自动清理以防误删: ${OMF_CONFIG[ORACLE_HOME]}"
+                ;;
+        esac
+    fi
+
     # 4. 解压安装包
     log_step "[3/5] 解压安装包到 ${OMF_CONFIG[ORACLE_HOME]}"
     mkdir -p "${OMF_CONFIG[ORACLE_HOME]}"

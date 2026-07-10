@@ -82,6 +82,15 @@ load_config() {
         source "$config_file"
     fi
 
+    # 关键修复: source 后配置项只是【全局变量】, 必须同步回 OMF_CONFIG 数组,
+    # 否则下面的导出循环会用数组默认值覆盖掉配置文件中的覆盖值
+    # (此前 HUGEPAGES_DEFER 等覆盖项不生效的根因)
+    for key in "${!OMF_CONFIG[@]}"; do
+        if [ -n "${!key:-}" ]; then
+            OMF_CONFIG[$key]="${!key}"
+        fi
+    done
+
     # ORACLE_HOME 联动推导: 未显式设置(为空)时, 按 ORACLE_VERSION 生成默认路径
     # 兼容旧配置/自定义路径: conf 中已写 ORACLE_HOME 则保留
     if [ -z "${OMF_CONFIG[ORACLE_HOME]}" ]; then

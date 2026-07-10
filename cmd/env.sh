@@ -66,6 +66,12 @@ env_kernel() {
     local sga_mb; sga_mb=$(omf_sga_mb)
     local hp; hp=$(omf_hugepages_count)
 
+    # 延迟预留: 持久化文件直接写 0 (避免重启又把内存占满), 运行时也清零, 待 omf db create 前再预留
+    local hp_line="vm.nr_hugepages = ${hp}"
+    if [ "${HUGEPAGES_DEFER:-false}" = "true" ]; then
+        hp_line="vm.nr_hugepages = 0"
+    fi
+
     cat > "$sysctl_file" << EOF
 # Oracle 内核参数 (由 OMF 生成)
 fs.file-max = 6815744
@@ -84,16 +90,17 @@ vm.dirty_background_ratio = 3
 vm.dirty_ratio = 15
 vm.min_free_kbytes = 524288
 # HugePages (页大小 2MB, 覆盖 SGA ${sga_mb}MB, 需在数据库启动前生效)
-vm.nr_hugepages = ${hp}
+${hp_line}
 EOF
+    sysctl -p "$sysctl_file" &>/dev/null || sysctl -p "$sysctl_file"
+
     if [ "${HUGEPAGES_DEFER:-false}" = "true" ]; then
-        # 立即应用其余内核参数, 但先把大页清零(释放内存给安装器), 待 omf db create 前再预留
-        sysctl -p "$sysctl_file" &>/dev/null || sysctl -p "$sysctl_file"
+        # 立即把运行时大页清零(释放内存给安装器), 待 omf db create 前再预留
         sysctl -w vm.nr_hugepages=0 >/dev/null 2>&1 || true
-        log_info "内核参数已配置 (SHMMAX=${shmmax}); 大页预留推迟到 omf db create 前 (当前释放, 留给安装器)"
+        local cur_hp; cur_hp=$(awk '/HugePages_Total/{print $2}' /proc/meminfo 2>/dev/null)
+        log_info "内核参数已配置 (SHMMAX=${shmmax}); 大页预留推迟到 omf db create 前 (当前 HugePages_Total=${cur_hp:-0}, 内存已释放给安装器)"
     else
-        sysctl -p "$sysctl_file" &>/dev/null || sysctl -p "$sysctl_file"
-        log_info "内核参数已配置 (SHMMAX=${shmmax})"
+        log_info "内核参数已配置 (SHMMAX=${shmmax}); 大页已预留 ${hp} 个 (约 $((hp*2))MB, 覆盖 SGA ${sga_mb}MB)"
     fi
 
     cat > /etc/security/limits.d/99-oracle.conf << 'EOF'

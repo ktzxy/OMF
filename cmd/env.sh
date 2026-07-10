@@ -62,15 +62,12 @@ env_kernel() {
     local shmmax=$((total_mem * 1024 * 1024 / 2))
     local shmall=$((shmmax / 4096))
 
-    # HugePages 估算 (按 SGA 估算, 页大小 2MB):
-    #   oracle 内存 ≈ 物理内存 80%, SGA ≈ 其中 75%
-    local oracle_mb=$((total_mem * 80 / 100))
-    [ "$oracle_mb" -lt 2048 ] && oracle_mb=2048
-    local sga_mb=$((oracle_mb * 75 / 100))
-    local hp=$(( (sga_mb + 2048 - 1) / 2 + 1 ))
+    # HugePages / SGA 估算 (比例可配置, 见 conf)
+    local sga_mb; sga_mb=$(omf_sga_mb)
+    local hp; hp=$(omf_hugepages_count)
 
     cat > "$sysctl_file" << EOF
-# Oracle 19c 内核参数 (由 OMF 生成)
+# Oracle 内核参数 (由 OMF 生成)
 fs.file-max = 6815744
 fs.aio-max-nr = 1048576
 kernel.shmall = ${shmall}
@@ -89,8 +86,15 @@ vm.min_free_kbytes = 524288
 # HugePages (页大小 2MB, 覆盖 SGA ${sga_mb}MB, 需在数据库启动前生效)
 vm.nr_hugepages = ${hp}
 EOF
-    sysctl -p "$sysctl_file" &>/dev/null || sysctl -p "$sysctl_file"
-    log_info "内核参数已配置 (SHMMAX=${shmmax})"
+    if [ "${HUGEPAGES_DEFER:-false}" = "true" ]; then
+        # 立即应用其余内核参数, 但先把大页清零(释放内存给安装器), 待 omf db create 前再预留
+        sysctl -p "$sysctl_file" &>/dev/null || sysctl -p "$sysctl_file"
+        sysctl -w vm.nr_hugepages=0 >/dev/null 2>&1 || true
+        log_info "内核参数已配置 (SHMMAX=${shmmax}); 大页预留推迟到 omf db create 前 (当前释放, 留给安装器)"
+    else
+        sysctl -p "$sysctl_file" &>/dev/null || sysctl -p "$sysctl_file"
+        log_info "内核参数已配置 (SHMMAX=${shmmax})"
+    fi
 
     cat > /etc/security/limits.d/99-oracle.conf << 'EOF'
 oracle   soft   nofile    65536
@@ -137,7 +141,7 @@ env_packages() {
                         libelf1 libelf-dev
                         libc6 libc6-dev
                         libnsl2 libtirpc3 libtirpc-dev
-                        libcrypt1 libcrypt-dev
+                        libcrypt1
                         smartmontools nfs-common
                     )
                     ;;
@@ -149,7 +153,7 @@ env_packages() {
                         libelf1 libelf-dev
                         libc6 libc6-dev
                         libnsl2 libtirpc3 libtirpc-dev
-                        libxcrypt1 libxcrypt-dev
+                        libxcrypt1
                         smartmontools nfs-common
                     )
                     ;;
@@ -218,6 +222,23 @@ env_packages() {
             ln -sf "$nsl2" "${nsl2%/*}/libnsl.so.1"
             ldconfig
             log_info "已创建 libnsl.so.1 软链 (Oracle 19c 需要): ${nsl2%/*}/libnsl.so.1 -> $nsl2"
+        fi
+
+        # 关键运行库校验: Oracle 二进制依赖 libcrypt.so.1 (Ubuntu22.04 由 libxcrypt1 提供, 24.04 由 libcrypt1 提供)
+        # 缺失会导致 runInstaller/sqlplus 报 'error while loading shared libraries: libcrypt.so.1'
+        if ! ldconfig -p 2>/dev/null | grep -q "libcrypt\.so\.1"; then
+            log_warn "未检测到 libcrypt.so.1, Oracle 运行/安装将失败, 尝试补装..."
+            local crypt_pkg="libxcrypt1"
+            case "$distro" in
+                ubuntu) case "$ver" in 24.04*|24*|25*|26*|27*|28*|29*|3*) crypt_pkg="libcrypt1";; esac ;;
+            esac
+            apt-get install -y "$crypt_pkg" 2>&1 | tail -5
+            ldconfig
+            if ldconfig -p 2>/dev/null | grep -q "libcrypt\.so\.1"; then
+                log_info "libcrypt.so.1 已补装 (包: $crypt_pkg)"
+            else
+                log_error "libcrypt.so.1 仍缺失, 请手动安装: $crypt_pkg (Ubuntu22.04=libxcrypt1 / 24.04=libcrypt1)"
+            fi
         fi
     fi
 

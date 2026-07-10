@@ -19,6 +19,15 @@ load_config() {
     OMF_CONFIG[ORACLE_HOME]=""
     # 安装包路径 (留空则按 ORACLE_VERSION 推导默认名, 见 install.sh 的 oracle_default_zip)
     OMF_CONFIG[ORACLE_ZIP]="${ORACLE_ZIP:-}"
+    # 内存规划比例 (用于 SGA/HugePages 估算, 可在 conf 中调整)
+    #   ORACLE_MEM_RATIO: Oracle 内存占物理内存 %
+    #   SGA_RATIO:        SGA 占 Oracle 内存 %
+    #   HUGEPAGES_RESERVE_FREE_MB: 预留大页后至少给 OS 留的空闲(MB), 防止小内存机器被吃满
+    #   HUGEPAGES_DEFER: true 时大页推迟到 omf db create 前再预留(避免安装器内存不足)
+    OMF_CONFIG[ORACLE_MEM_RATIO]="${ORACLE_MEM_RATIO:-80}"
+    OMF_CONFIG[SGA_RATIO]="${SGA_RATIO:-75}"
+    OMF_CONFIG[HUGEPAGES_RESERVE_FREE_MB]="${HUGEPAGES_RESERVE_FREE_MB:-2048}"
+    OMF_CONFIG[HUGEPAGES_DEFER]="${HUGEPAGES_DEFER:-false}"
     OMF_CONFIG[ORACLE_SID]="ARTERY"
     OMF_CONFIG[PDB_NAME]="ARTERYPDB"
     OMF_CONFIG[ORACLE_DATA_BASE]="/data/oracle"

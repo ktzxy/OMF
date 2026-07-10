@@ -20,6 +20,18 @@ ORACLE_ZIP=""
 ORACLE_SID="ARTERY"
 PDB_NAME="ARTERYPDB"
 
+# ===== 内存规划 (用于 SGA / HugePages 估算) =====
+# Oracle 内存占物理内存百分比 (默认 80)
+ORACLE_MEM_RATIO="80"
+# SGA 占 Oracle 内存百分比 (默认 75)
+SGA_RATIO="75"
+# 预留大页后至少给 OS 保留的空闲内存(MB), 防止小内存机器被大页吃满 (默认 2048)
+HUGEPAGES_RESERVE_FREE_MB="2048"
+# 是否将大页预留推迟到 omf db create 之前 (true/false)
+#   true:  env prepare 不立即预留大页(释放内存给安装器), 建库前再预留
+#   false: env prepare 立即预留大页(传统行为)
+HUGEPAGES_DEFER="false"
+
 # ===== 密码配置 (请替换为真实值, 或改用环境变量注入) =====
 ORACLE_PASSWORD="${ORACLE_PASSWORD:-ChangeMe_123}"
 SYSTEM_PASSWORD="${SYSTEM_PASSWORD:-ChangeMe_123}"

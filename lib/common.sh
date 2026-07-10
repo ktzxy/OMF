@@ -135,6 +135,36 @@ get_total_memory_mb() {
     awk '/MemTotal/ {print int($2/1024)}' /proc/meminfo
 }
 
+# ---- Oracle 内存规划 (比例可配置, 见 conf: ORACLE_MEM_RATIO / SGA_RATIO / HUGEPAGES_RESERVE_FREE_MB) ----
+# 分配给 Oracle 的总内存(MB): 物理内存 * ORACLE_MEM_RATIO%, 下限 2048
+omf_oracle_mem_mb() {
+    local total_mem; total_mem=$(get_total_memory_mb)
+    local oracle_mb=$(( total_mem * ${OMF_CONFIG[ORACLE_MEM_RATIO]:-80} / 100 ))
+    [ "$oracle_mb" -lt 2048 ] && oracle_mb=2048
+    echo "$oracle_mb"
+}
+
+# SGA 目标(MB): Oracle 内存 * SGA_RATIO%, 并钳制为不超过 (物理内存 - 给OS预留)
+# 这样小内存机器不会把内存全锁成大页, 给 OS/安装器留余量
+omf_sga_mb() {
+    local total_mem; total_mem=$(get_total_memory_mb)
+    local oracle_mb; oracle_mb=$(omf_oracle_mem_mb)
+    local sga_mb=$(( oracle_mb * ${OMF_CONFIG[SGA_RATIO]:-75} / 100 ))
+    local max_reservable=$(( total_mem - ${OMF_CONFIG[HUGEPAGES_RESERVE_FREE_MB]:-2048} ))
+    [ "$max_reservable" -lt 2048 ] && max_reservable=2048
+    if [ "$sga_mb" -gt "$max_reservable" ]; then
+        sga_mb=$max_reservable
+    fi
+    echo "$sga_mb"
+}
+
+# HugePages 数量 (2MB/页): 向上取整覆盖 SGA
+omf_hugepages_count() {
+    local sga_mb; sga_mb=$(omf_sga_mb)
+    local hp=$(( (sga_mb + 2048 - 1) / 2 + 1 ))
+    echo "$hp"
+}
+
 # ---- 磁盘剩余(MB) / 使用率(%) ----
 get_disk_free_mb() {
     local path="${1:-/}"
@@ -163,14 +193,19 @@ check_memory_prereq() {
         fi
     fi
 
-    # SGA+PGA 默认占 80%, 单实例不应超过 80% 物理内存
-    local oracle_mb=$((total_mem * 80 / 100))
-    [ "$oracle_mb" -lt 2048 ] && oracle_mb=2048
-    log_info "计划分配给 Oracle: ${oracle_mb}MB (约 $((oracle_mb/1024))GB)"
+    # SGA+PGA 默认占 ORACLE_MEM_RATIO%, 单实例不应超过物理内存
+    local oracle_mb; oracle_mb=$(omf_oracle_mem_mb)
+    log_info "计划分配给 Oracle: ${oracle_mb}MB (约 $((oracle_mb/1024))GB, 比例 ${OMF_CONFIG[ORACLE_MEM_RATIO]:-80}%)"
 
     # HugePages 推荐值 (按 SGA 估算, 页大小 2MB)
-    local sga_mb=$((oracle_mb * 75 / 100))
-    local hp=$(( (sga_mb + 2048 - 1) / 2 + 1 ))
+    local sga_mb; sga_mb=$(omf_sga_mb)
+    local raw_sga=$(( oracle_mb * ${OMF_CONFIG[SGA_RATIO]:-75} / 100 ))
+    local max_reservable=$(( total_mem - ${OMF_CONFIG[HUGEPAGES_RESERVE_FREE_MB]:-2048} ))
+    [ "$max_reservable" -lt 2048 ] && max_reservable=2048
+    if [ "$raw_sga" -gt "$max_reservable" ]; then
+        log_warn "SGA 已钳制为 ${sga_mb}MB (为给 OS 保留 ${OMF_CONFIG[HUGEPAGES_RESERVE_FREE_MB]:-2048}MB, 避免大页吃满内存)"
+    fi
+    local hp; hp=$(omf_hugepages_count)
     log_info "建议 HugePages 数量: ${hp} (页大小 2MB, 覆盖 SGA ${sga_mb}MB)"
     log_info "可将以下参数加入 env kernel 配置:"
     echo "    vm.nr_hugepages = ${hp}"

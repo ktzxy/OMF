@@ -44,12 +44,18 @@ cmd_db() {
 db_create() {
     require_root
 
+    # 若配置为延迟大页: 建库前预留 (需连续空闲内存, 趁数据库未起时做)
+    if [ "${HUGEPAGES_DEFER:-false}" = "true" ]; then
+        local hp; hp=$(omf_hugepages_count)
+        log_info "应用延迟预留的 HugePages: vm.nr_hugepages=$hp"
+        sysctl -w "vm.nr_hugepages=$hp" >/dev/null 2>&1 || \
+            log_warn "大页预留失败(可能内存碎片化), 数据库将不使用大页(性能略降)"
+    fi
+
     local total_mem
     total_mem=$(get_total_memory_mb)
-    local oracle_mb=$((total_mem * 80 / 100))
-    [ "$oracle_mb" -lt 2048 ] && oracle_mb=2048
-
-    local sga_mb=$((oracle_mb * 75 / 100))
+    local oracle_mb; oracle_mb=$(omf_oracle_mem_mb)
+    local sga_mb; sga_mb=$(omf_sga_mb)
     local pga_mb=$((oracle_mb - sga_mb))
     local align=128
     sga_mb=$(((sga_mb / align) * align))

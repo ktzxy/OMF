@@ -68,15 +68,27 @@ install_software() {
         *) log_error "不支持的 ORACLE_VERSION='${ver}' (仅支持 CDB 系列: 18 / 19 / 21 / 23)" ;;
     esac
 
+    # 参数解析: 支持 --force/-f 强制重装; 其余按位置: <zip路径> [安装模式]
+    local force=false
+    local pos=()
+    local a
+    for a in "$@"; do
+        case "$a" in
+            -f|--force) force=true ;;
+            *) pos+=("$a") ;;
+        esac
+    done
+
     # 安装包优先级: 命令行参数 > 配置 ORACLE_ZIP > 按版本推导默认名
-    local zip_file="${1:-${OMF_CONFIG[ORACLE_ZIP]:-$(oracle_default_zip)}}"
-    local install_mode="${2:-EE}"  # EE 或 SE
+    local zip_file="${pos[0]:-${OMF_CONFIG[ORACLE_ZIP]:-$(oracle_default_zip)}}"
+    local install_mode="${pos[1]:-EE}"  # EE 或 SE
 
     log_step "========== Oracle ${ver}c 软件安装 =========="
 
-    # 0. 全新环境自检: 若 oracle 用户或核心依赖缺失, 自动执行环境准备 (无需手动先跑 env prepare)
-    if ! id oracle &>/dev/null || ! ldconfig -p 2>/dev/null | grep -q "libaio.so.1"; then
-        log_warn "检测到全新环境, 自动执行 omf env prepare ..."
+    # 0. 环境就绪自检: oracle 用户/核心依赖缺失, 或 Ubuntu 下 /usr/lib64 软链未建
+    #    (Oracle 链接前提), 自动执行环境准备 (含 env_lib64 建链 与 oracle 账户解锁)
+    if ! id oracle &>/dev/null || ! ldconfig -p 2>/dev/null | grep -q "libaio.so.1" || [ ! -e /usr/lib64 ]; then
+        log_warn "检测到环境未就绪, 自动执行 omf env prepare ..."
         source "${OMF_HOME}/cmd/env.sh"
         env_prepare
     fi
@@ -99,12 +111,20 @@ install_software() {
     log_step "[2/5] 准备 Oracle Inventory"
     prepare_inventory
 
-    # 3.5 幂等检查: 若 ORACLE_HOME 已安装软件, 跳过解压与安装 (避免重复执行覆盖/报错)
-    if [ -x "${OMF_CONFIG[ORACLE_HOME]}/bin/sqlplus" ]; then
+    # 3.5 幂等检查 / 强制重装
+    # 仅当 sqlplus 存在 且 非 --force 时, 才判定为已完成并跳过;
+    # 上一次若链接阶段失败, sqlplus 可能已存在但安装残缺 -> 必须 --force 重装
+    if [ -x "${OMF_CONFIG[ORACLE_HOME]}/bin/sqlplus" ] && [ "$force" != "true" ]; then
         log_warn "检测到 ORACLE_HOME 已安装 Oracle 软件, 跳过解压与安装"
         install_listener
         log_info "Oracle 软件安装完成 (已存在, 跳过)!"
         return 0
+    fi
+    if [ "$force" = "true" ]; then
+        log_warn "强制重装: 清理 ORACLE_HOME 与 inventory 锁后重新安装..."
+        rm -rf "${OMF_CONFIG[ORACLE_HOME]}"
+        rm -rf "${OMF_CONFIG[ORACLE_BASE]}/oraInventory/locks" 2>/dev/null || true
+        prepare_inventory
     fi
 
     # 3.6 清理失败残余: 若 ORACLE_HOME 已存在但软件未安装成功 (sqlplus 不存在),

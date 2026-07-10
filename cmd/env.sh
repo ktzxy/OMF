@@ -42,11 +42,21 @@ env_user() {
     if ! id oracle &>/dev/null; then
         useradd -u 54321 -g oinstall -G dba,oper,backupdba,dgdba,kmdba,racdba \
             -d /home/oracle -m -s /bin/bash oracle
-        echo "${ORACLE_PASSWORD}" | passwd --stdin oracle 2>/dev/null || \
-            echo "oracle:${ORACLE_PASSWORD}" | chpasswd
         log_info "创建 oracle 用户 (UID=54321)"
     else
         log_info "oracle 用户已存在"
+    fi
+
+    # 设置/解锁 oracle 密码
+    # 注意: Ubuntu 不支持 'passwd --stdin', 统一用 chpasswd; 若未配置 ORACLE_PASSWORD 则跳过设密
+    # 关键: useradd 默认锁定账户(shadow 为 '!'), 必须 passwd -u 解锁,
+    #       否则 root 执行 'su - oracle' 会在 account 阶段报 Authentication failure
+    if [ -n "${ORACLE_PASSWORD:-}" ]; then
+        echo "oracle:${ORACLE_PASSWORD}" | chpasswd 2>/dev/null && \
+            log_info "已设置 oracle 密码" || log_warn "设置 oracle 密码失败"
+    fi
+    if passwd -u oracle >/dev/null 2>&1; then
+        log_info "已解锁 oracle 账户 (root 可 su - oracle)"
     fi
 
     # 确保 oracle 家目录归属正确 (若目录已被 root 预先 mkdir 创建, 否则 oracle 写不进 .bash_profile)

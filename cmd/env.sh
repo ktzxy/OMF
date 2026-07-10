@@ -83,17 +83,20 @@ env_user() {
     # 确保 runuser 可用: 框架以 oracle 身份执行命令统一改用 runuser (免密码认证,
     # 规避 su 在 Linux-PAM 1.4+ 下因 root 账户锁定导致 pam_rootok 失败而
     # 报 Authentication failure). 部分镜像缺 /etc/pam.d/runuser, runuser 会回退到
-    # /etc/pam.d/other (Ubuntu 默认 pam_deny) 被拒. 这里补最小可用配置.
-    if command -v runuser >/dev/null 2>&1 && [ ! -f /etc/pam.d/runuser ]; then
+    # /etc/pam.d/other (Ubuntu 默认 pam_deny) 被拒. 这里补最小可用配置
+    # (仅用必然存在的 pam_rootok/pam_permit, 避免 pam_keyinit/limits/unix 等
+    #  在最小化镜像中缺失导致 'Module is unknown').
+    if command -v runuser >/dev/null 2>&1; then
+        # 缺失, 或已存在但为旧的错误版本(含 pam_keyinit 等可能缺失的模块) -> 重写
+        if [ ! -f /etc/pam.d/runuser ] || ! grep -q "pam_permit.so" /etc/pam.d/runuser; then
         cat > /etc/pam.d/runuser << 'PAMEOF'
 # OMF: 允许 root 免认证以 oracle 身份执行命令 (runuser 专用)
 auth     sufficient pam_rootok.so
 account  required   pam_permit.so
-session  optional   pam_keyinit.so force revoke
-session  required   pam_limits.so
-session  required   pam_unix.so
+session  required   pam_permit.so
 PAMEOF
         log_info "已创建 /etc/pam.d/runuser (确保 runuser 免认证切换 oracle)"
+        fi
     fi
 }
 

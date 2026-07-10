@@ -86,14 +86,16 @@ install_software() {
     log_step "========== Oracle ${ver}c 软件安装 =========="
 
     # 0. 环境就绪自检: oracle 用户/核心依赖缺失, 或 Ubuntu 下 /usr/lib64 软链未建,
-    #    或 oracle 账户被锁定(useradd 默认), 或链接器名 libnsl.so 缺失(会导致
-    #    ins_rdbms.mk 的 libasmclntsh19/libasmperl19/client_sharedlib 链接 FATAL) ->
-    #    任一不满足则自动执行环境准备 (含 env_lib64 建链 / env_packages 补 libnsl.so / 解锁)
+    #    或 oracle 账户被锁定(useradd 默认), 或链接器名 libnsl.so 缺失, 或 glibc2.34+
+    #    占位静态库 libpthread_nonshared.a 缺失(均会导致 ins_rdbms.mk 的
+    #    libasmclntsh19/libasmperl19/client_sharedlib 链接 FATAL) ->
+    #    任一不满足则自动执行环境准备 (含 env_lib64 建链 / env_glibc_stubs 建占位库 / 解锁)
     local need_env=false
     if ! id oracle &>/dev/null; then need_env=true; fi
     if ! ldconfig -p 2>/dev/null | grep -q "libaio.so.1"; then need_env=true; fi
     if [ ! -e /usr/lib64 ]; then need_env=true; fi
     if [ ! -e /usr/lib64/libnsl.so ]; then need_env=true; fi   # 链接器名缺失, 链接期 -lnsl 会失败
+    if [ ! -e /usr/lib64/libpthread_nonshared.a ]; then need_env=true; fi   # glibc2.34+ 占位库缺失
     if id oracle &>/dev/null; then
         local ostate; ostate=$(passwd -S oracle 2>/dev/null | awk '{print $2}')
         if [ "$ostate" = "L" ]; then need_env=true; fi   # L=锁定, 需解锁

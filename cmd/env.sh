@@ -21,7 +21,7 @@ cmd_env() {
 env_prepare() {
     require_root
     log_step "========== Oracle 19c 环境准备 =========="
-    local steps=(env_user env_kernel env_packages env_lib64 env_dirs env_profile env_firewall)
+    local steps=(env_user env_kernel env_packages env_lib64 env_glibc_stubs env_dirs env_profile env_firewall)
     local i=1
     for s in "${steps[@]}"; do
         log_step "[$i/${#steps[@]}] $s"
@@ -312,6 +312,53 @@ env_packages() {
     fi
 
     log_info "依赖包安装完成"
+}
+
+# Debian/Ubuntu 系 glibc 2.34+ (Ubuntu 22.04 / RHEL 9): 线程实现并入 libc 后,
+# libpthread_nonshared.a / libpthread.a 等静态库被删除。但 Oracle 19c 的链接脚本
+# (ins_rdbms.mk 等) 仍硬编码链接 /usr/lib64/libpthread_nonshared.a, 导致安装链接阶段
+# 'cannot find /usr/lib64/libpthread_nonshared.a' -> libasmclntsh19/libasmperl19/
+# client_sharedlib 三个目标 FATAL。修复: 在 /usr/lib64 下建空静态归档占位
+# (符号实际已在 libc, 空归档即可满足 ld; 用 dummy.o 保证归档有效, 避免 'malformed archive')。
+# 幂等(已存在则跳过)。注意必须在 env_lib64 之后(确保 /usr/lib64 已存在)。
+env_glibc_stubs() {
+    case "$(detect_os)" in
+        ubuntu*|debian*|linuxmint*|kali*|pop*) ;;
+        *) return 0;;   # 非 Debian 系(RHEL 等)的 glibc 仍提供这些库, 无需占位
+    esac
+    [ -d /usr/lib64 ] || return 0
+
+    # 生成一次 dummy 目标文件, 用于塞进空归档(保证 ar 归档有效)
+    local dummy_o=/tmp/omf_glibc_stub.o have_gcc=0 have_ar=0
+    if command -v gcc >/dev/null 2>&1; then have_gcc=1; fi
+    if command -v ar  >/dev/null 2>&1; then have_ar=1;  fi
+    if [ "$have_gcc" -eq 1 ] && [ "$have_ar" -eq 1 ]; then
+        echo 'void omf_glibc_stub(void){}' > /tmp/omf_glibc_stub.c
+        gcc -c /tmp/omf_glibc_stub.c -o "$dummy_o" 2>/dev/null || have_gcc=0
+    fi
+
+    local stub
+    # glibc 2.34+ 一并删除且 Oracle 链接脚本仍引用的静态库(原 env_lib64 注释已提及 libc_nonshared.a)
+    for stub in libpthread_nonshared.a libpthread.a libc_nonshared.a librt.a; do
+        if [ -e "/usr/lib64/$stub" ]; then
+            log_debug "glibc 占位库已存在, 跳过: /usr/lib64/$stub"
+            continue
+        fi
+        local ok=0
+        if [ "$have_ar" -eq 1 ]; then
+            if [ "$have_gcc" -eq 1 ] && [ -e "$dummy_o" ]; then
+                ar rcs "/usr/lib64/$stub" "$dummy_o" 2>/dev/null && ok=1
+            else
+                ar rcs "/usr/lib64/$stub" 2>/dev/null && ok=1   # 空归档兜底
+            fi
+        fi
+        if [ "$ok" -eq 1 ]; then
+            log_info "已创建 glibc2.34+ 占位静态库: /usr/lib64/$stub (修复 Oracle 链接 FATAL)"
+        else
+            log_warn "创建 /usr/lib64/$stub 失败, 请手动执行: ar rcs /usr/lib64/$stub"
+        fi
+    done
+    ldconfig 2>/dev/null || true
 }
 
 # Debian/Ubuntu 系: Oracle 的链接脚本(env_rdbms.mk 等)写死 RHEL 路径 /usr/lib64/,

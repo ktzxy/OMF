@@ -56,9 +56,11 @@ log_info "已赋予脚本执行权限 (omf.sh/setup.sh/cmd/*.sh/lib/*.sh)"
 # 4. 建立全局命令软链
 #    优先写入 /usr/local/bin (绝大多数发行版默认在 PATH 中), 并持久化到
 #    /etc/profile.d, 保证新开 shell 自动可用, 避免再次出现 command not found
+#    注意: 先 rm -f 旧目标, 防止残留目录/损坏软链导致 ln -sf 失败 (set -e 下会中断引导)
 link_target="/usr/local/bin/omf"
 mkdir -p /usr/local/bin
-ln -sf "${OMF_HOME}/omf.sh" "$link_target"
+rm -f "$link_target"
+ln -sf "${OMF_HOME}/omf.sh" "$link_target" || log_warn "软链创建失败, 可手动: ln -sfn ${OMF_HOME}/omf.sh $link_target"
 
 # 持久化 PATH (仅当 /usr/local/bin 不在 PATH 时)
 case ":$PATH:" in
@@ -70,10 +72,10 @@ case ":$PATH:" in
 esac
 
 hash -r
-if command -v omf >/dev/null 2>&1; then
-    log_info "命令 omf 可用, 任意目录可直接执行"
+if command -v omf >/dev/null 2>&1 && [ -x "$link_target" ]; then
+    log_info "命令 omf 可用, 任意目录可直接执行: $(command -v omf)"
 else
-    log_warn "当前 shell 仍未识别 omf, 请重开终端, 或直接使用 ./omf.sh"
+    log_warn "omf 软链未就绪, 请手动执行: ln -sfn ${OMF_HOME}/omf.sh $link_target ; hash -r"
 fi
 
 # 5. 可选: 预检

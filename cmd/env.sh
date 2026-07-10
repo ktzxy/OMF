@@ -48,15 +48,30 @@ env_user() {
     fi
 
     # 设置/解锁 oracle 密码
-    # 注意: Ubuntu 不支持 'passwd --stdin', 统一用 chpasswd; 若未配置 ORACLE_PASSWORD 则跳过设密
+    # Ubuntu 不支持 'passwd --stdin', 统一用 chpasswd; 未配置 ORACLE_PASSWORD 时给兜底默认密码
     # 关键: useradd 默认锁定账户(shadow 为 '!'), 必须 passwd -u 解锁,
-    #       否则 root 执行 'su - oracle' 会在 account 阶段报 Authentication failure
-    if [ -n "${ORACLE_PASSWORD:-}" ]; then
-        echo "oracle:${ORACLE_PASSWORD}" | chpasswd 2>/dev/null && \
-            log_info "已设置 oracle 密码" || log_warn "设置 oracle 密码失败"
+    #       否则 root 执行 'su - oracle' 会在 account/auth 阶段报 Authentication failure
+    local opw="${ORACLE_PASSWORD:-Qiyuan!960#123}"
+    if echo "oracle:${opw}" | chpasswd 2>/dev/null; then
+        log_info "已设置 oracle 密码"
+    else
+        log_warn "chpasswd 设置 oracle 密码失败, 尝试 passwd 兜底"
+        # 兜底: 用 openssl 生成散列再写入 (避免某些镜像 chpasswd 行为异常)
+        local hp; hp=$(openssl passwd -6 "$opw" 2>/dev/null)
+        if [ -n "$hp" ]; then
+            usermod -p "$hp" oracle 2>/dev/null && log_info "已用散列兜底设置 oracle 密码" || log_warn "oracle 密码兜底设置失败"
+        fi
     fi
+    # 解锁账户 (即使已设密码, 仍确保非锁定态; -u 对未锁定账户无害)
     if passwd -u oracle >/dev/null 2>&1; then
         log_info "已解锁 oracle 账户 (root 可 su - oracle)"
+    fi
+    # 校验: 若仍为锁定态(L), 报警提示手动处理
+    local ostate; ostate=$(passwd -S oracle 2>/dev/null | awk '{print $2}')
+    if [ "$ostate" = "L" ]; then
+        log_warn "oracle 账户仍为锁定态(L), 请手动执行: passwd -u oracle"
+    else
+        log_info "oracle 账户状态: $ostate (非锁定, root 可 su - oracle)"
     fi
 
     # 确保 oracle 家目录归属正确 (若目录已被 root 预先 mkdir 创建, 否则 oracle 写不进 .bash_profile)

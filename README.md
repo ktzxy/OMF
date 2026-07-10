@@ -1,6 +1,6 @@
 # OMF - Oracle Management Framework
 
-Oracle 19c 生命周期管理框架，类似 Helm 风格的命令行工具。
+Oracle 数据库（CDB 系列：18c / 19c / 21c / 23ai）生命周期管理框架，类似 Helm 风格的命令行工具。
 
 ## 框架结构
 
@@ -46,9 +46,10 @@ cd /opt/omf
 cp conf/omf.conf.example conf/omf.conf
 vi conf/omf.conf                   # 按需修改密码/路径/IP (密码也建议用环境变量注入)
 
-# 把 Oracle 19c 安装包放到默认位置 (任意路径亦可, 安装时显式传入即可)
+# 把 Oracle 安装包放到默认位置 (任意路径亦可, 安装时显式传入即可)
+# 支持 CDB 系列: 18c/19c/21c/23ai, 由 conf 中 ORACLE_VERSION 决定默认包名
 # 注意: 无需手动 chown, omf install software 会自动接管归属
-mv LINUX.X64_193000_db_home.zip /home/oracle/
+mv LINUX.X64_193000_db_home.zip /home/oracle/   # 19c 示例, 其他版本包名见 ORACLE_VERSION
 
 # 一键安装: 自动检测全新环境 → 自动 env prepare (建用户/装依赖/补 libnsl 软链)
 #           → 自动 chown 安装包 → 解压安装
@@ -76,6 +77,21 @@ omf backup schedule setup  # 配置定时备份
 omf clean schedule setup   # 配置定时清理
 omf status                 # 一键总览
 ```
+
+## 支持的 Oracle 版本
+
+OMF 面向 **CDB 架构** 的 Oracle 数据库，当前支持：
+
+| 版本 | 默认安装包名 (ORACLE_VERSION) | 说明 |
+|------|-------------------------------|------|
+| 18c  | `LINUX.X64_180000_db_home.zip` | CDB |
+| 19c  | `LINUX.X64_193000_db_home.zip` | CDB（默认）|
+| 21c  | `LINUX.X64_213000_db_home.zip` | CDB |
+| 23ai | `LINUX.X64_2340000_db_home.zip` | CDB |
+
+- 通过 `conf/omf.conf` 的 `ORACLE_VERSION`（取值 `18`/`19`/`21`/`23`）切换，框架据此推导默认安装包名与 CVU 兼容假名（`CV_ASSUME_DISTID`）。
+- 若安装包路径非默认，可设 `ORACLE_ZIP="/path/to/xxx_db_home.zip"`，或安装时显式传入 `omf install software <zip>`。
+- 非 CDB 版本（如 11g、12c non-CDB）暂不官方支持（建库默认走 CDB/PDB）。
 
 ## 支持的 Linux 发行版
 

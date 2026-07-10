@@ -13,6 +13,10 @@ load_config() {
     OMF_CONFIG[ORACLE_GROUP]="oinstall"
     OMF_CONFIG[ORACLE_BASE]="/u01/app/oracle"
     OMF_CONFIG[ORACLE_HOME]="/u01/app/oracle/product/19.3.0/dbhome_1"
+    # Oracle 主版本 (仅支持 CDB 系列: 18 / 19 / 21 / 23), 用于推导默认安装包名与提示
+    OMF_CONFIG[ORACLE_VERSION]="${ORACLE_VERSION:-19}"
+    # 安装包路径 (留空则按 ORACLE_VERSION 推导默认名, 见 install.sh 的 oracle_default_zip)
+    OMF_CONFIG[ORACLE_ZIP]="${ORACLE_ZIP:-}"
     OMF_CONFIG[ORACLE_SID]="ARTERY"
     OMF_CONFIG[PDB_NAME]="ARTERYPDB"
     OMF_CONFIG[ORACLE_DATA_BASE]="/data/oracle"
@@ -91,6 +95,7 @@ show_config() {
     echo "╚═══════════════════════════════════════════════╝"
     echo ""
     echo "[数据库配置]"
+    echo "  ORACLE_VERSION: ${OMF_CONFIG[ORACLE_VERSION]}c (CDB)"
     echo "  ORACLE_SID:     ${OMF_CONFIG[ORACLE_SID]}"
     echo "  PDB_NAME:       ${OMF_CONFIG[PDB_NAME]}"
     echo "  CHARSET:        ${OMF_CONFIG[CHARSET]}"

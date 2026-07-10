@@ -26,15 +26,53 @@ cmd_install() {
 }
 
 #===============================================================================
+# 按 ORACLE_VERSION 推导默认安装包名 (仅 CDB 系列: 18 / 19 / 21 / 23)
+# 官方 db_home zip 命名规律: LINUX.X64_<五/六位版本>_db_home.zip
+#===============================================================================
+oracle_default_zip() {
+    local ver="${OMF_CONFIG[ORACLE_VERSION]:-19}"
+    local name
+    case "$ver" in
+        18)      name="LINUX.X64_180000_db_home.zip" ;;
+        19)      name="LINUX.X64_193000_db_home.zip" ;;
+        21)      name="LINUX.X64_213000_db_home.zip" ;;
+        23|23ai) name="LINUX.X64_2340000_db_home.zip" ;;
+        *)       name="LINUX.X64_193000_db_home.zip" ;;
+    esac
+    echo "/home/oracle/${name}"
+}
+
+#===============================================================================
+# 按 ORACLE_VERSION 推导 CVU 兼容性假名 (让安装器绕过 OS 预检)
+# 仅 CDB 系列: 18/19 在 OL8/9 上需声明为 OEL7.6; 21/23 声明为 OEL8.x
+#===============================================================================
+oracle_cvu_distid() {
+    case "${OMF_CONFIG[ORACLE_VERSION]:-19}" in
+        18|19)   echo "OEL7.6" ;;
+        21)      echo "OEL8.6" ;;
+        23|23ai) echo "OEL8.6" ;;
+        *)       echo "OEL7.6" ;;
+    esac
+}
+
+#===============================================================================
 # 安装 Oracle 软件（集成自 02_install_oracle_software.sh）
 #===============================================================================
 install_software() {
     require_root
 
-    local zip_file="${1:-/home/oracle/LINUX.X64_193000_db_home.zip}"
+    local ver="${OMF_CONFIG[ORACLE_VERSION]:-19}"
+    # 仅支持 CDB 系列版本, 非法版本给出明确提示
+    case "$ver" in
+        18|19|21|23|23ai) ;;
+        *) log_error "不支持的 ORACLE_VERSION='${ver}' (仅支持 CDB 系列: 18 / 19 / 21 / 23)" ;;
+    esac
+
+    # 安装包优先级: 命令行参数 > 配置 ORACLE_ZIP > 按版本推导默认名
+    local zip_file="${1:-${OMF_CONFIG[ORACLE_ZIP]:-$(oracle_default_zip)}}"
     local install_mode="${2:-EE}"  # EE 或 SE
 
-    log_step "========== Oracle 19c 软件安装 =========="
+    log_step "========== Oracle ${ver}c 软件安装 =========="
 
     # 0. 全新环境自检: 若 oracle 用户或核心依赖缺失, 自动执行环境准备 (无需手动先跑 env prepare)
     if ! id oracle &>/dev/null || ! ldconfig -p 2>/dev/null | grep -q "libaio.so.1"; then
@@ -45,7 +83,7 @@ install_software() {
 
     # 1. 检查安装包
     if [ ! -f "$zip_file" ]; then
-        log_error "安装包不存在: $zip_file (请将 LINUX.X64_193000_db_home.zip 放到该路径, 或显式传入: omf install software <zip路径>)"
+        log_error "安装包不存在: $zip_file (请将 Oracle ${ver}c 的 db_home zip 放到该路径, 或显式传入: omf install software <zip路径>, 或配置 ORACLE_ZIP)"
     fi
     log_info "安装包: $zip_file"
 
@@ -180,7 +218,7 @@ run_installer() {
 export ORACLE_HOME=${OMF_CONFIG[ORACLE_HOME]}
 export ORACLE_BASE=${OMF_CONFIG[ORACLE_BASE]}
 export TMPDIR=${omf_tmp}
-export CV_ASSUME_DISTID=OEL7.6
+export CV_ASSUME_DISTID=$(oracle_cvu_distid)
 ${libn}
 
 cd ${OMF_CONFIG[ORACLE_HOME]}

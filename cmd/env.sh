@@ -136,9 +136,14 @@ env_packages() {
         # ---------- Debian / Ubuntu 系 (apt) ----------
         ubuntu|debian|linuxmint|kali|pop)
             pm="apt"
-            # Ubuntu 24.04 (noble) 起因 time_t 64 位改造, 包名变化:
-            #   libaio1    -> libaio1t64
-            #   libxcrypt* -> libcrypt* (libcrypt1 / libcrypt-dev)
+            # 各版本差异主要在 libcrypt 包名:
+            #   Ubuntu 22.04+/Debian 11+ : libcrypt1  (提供 libcrypt.so.1)
+            #   Ubuntu 18.04/20.04       : libxcrypt1 (旧包名)
+            #   Ubuntu 24.04+ 因 time_t 64 位改造: libaio1 -> libaio1t64
+            local crypt_pkg="libxcrypt1"
+            case "$ver" in
+                22.04*|22*|23.04*|23.10*|23*|24.04*|24*|25*|26*|27*|28*|29*|3*) crypt_pkg="libcrypt1";;
+            esac
             case "$ver" in
                 24.04*|24*|25*|26*|27*|28*|29*|3*)
                     pkgs=(
@@ -148,7 +153,7 @@ env_packages() {
                         libelf1 libelf-dev
                         libc6 libc6-dev
                         libnsl2 libtirpc3 libtirpc-dev
-                        libcrypt1
+                        "$crypt_pkg"
                         smartmontools nfs-common
                     )
                     ;;
@@ -160,7 +165,7 @@ env_packages() {
                         libelf1 libelf-dev
                         libc6 libc6-dev
                         libnsl2 libtirpc3 libtirpc-dev
-                        libxcrypt1
+                        "$crypt_pkg"
                         smartmontools nfs-common
                     )
                     ;;
@@ -233,18 +238,20 @@ env_packages() {
 
         # 关键运行库校验: Oracle 二进制依赖 libcrypt.so.1 (Ubuntu22.04 由 libxcrypt1 提供, 24.04 由 libcrypt1 提供)
         # 缺失会导致 runInstaller/sqlplus 报 'error while loading shared libraries: libcrypt.so.1'
-        if ! ldconfig -p 2>/dev/null | grep -q "libcrypt\.so\.1"; then
+        if ! omf_lib_present "libcrypt.so.1"; then
             log_warn "未检测到 libcrypt.so.1, Oracle 运行/安装将失败, 尝试补装..."
             local crypt_pkg="libxcrypt1"
             case "$distro" in
-                ubuntu) case "$ver" in 24.04*|24*|25*|26*|27*|28*|29*|3*) crypt_pkg="libcrypt1";; esac ;;
+                ubuntu) case "$ver" in
+                    22.04*|22*|23.04*|23.10*|23*|24.04*|24*|25*|26*|27*|28*|29*|3*) crypt_pkg="libcrypt1";;
+                esac ;;
             esac
             apt-get install -y "$crypt_pkg" 2>&1 | tail -5
             ldconfig
-            if ldconfig -p 2>/dev/null | grep -q "libcrypt\.so\.1"; then
+            if omf_lib_present "libcrypt.so.1"; then
                 log_info "libcrypt.so.1 已补装 (包: $crypt_pkg)"
             else
-                log_error "libcrypt.so.1 仍缺失, 请手动安装: $crypt_pkg (Ubuntu22.04=libxcrypt1 / 24.04=libcrypt1)"
+                log_error "libcrypt.so.1 仍缺失, 请手动安装: $crypt_pkg (Ubuntu22.04+=libcrypt1 / 20.04=libxcrypt1)"
             fi
         fi
     fi
@@ -315,7 +322,7 @@ env_check() {
     echo "FILE-MAX: $(sysctl -n fs.file-max 2>/dev/null)"
     echo ""; echo "=== 依赖库 (ldconfig) ==="
     for lib in libaio.so.1 libnsl.so.1 libtirpc.so.3 libc.so.6 libstdc++.so.6 libelf.so.1; do
-        if ldconfig -p 2>/dev/null | grep -q "$lib"; then
+        if omf_lib_present "$lib"; then
             echo "✓ $lib"
         else
             echo "✗ $lib (缺失)"

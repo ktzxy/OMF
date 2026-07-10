@@ -108,7 +108,7 @@ check_preflight() {
     echo "--- 依赖库 ---"
     local missing=0
     for lib in libaio.so.1 libnsl.so.1 libtirpc.so.3 libc.so.6 libstdc++.so.6 libelf.so.1; do
-        if ! ldconfig -p 2>/dev/null | grep -q "$lib"; then
+        if ! omf_lib_present "$lib"; then
             missing=$((missing+1)); echo "    ✗ 缺失: $lib"
         fi
     done

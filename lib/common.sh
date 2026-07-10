@@ -100,6 +100,29 @@ check_cmd() {
     command -v "$1" &>/dev/null || log_error "命令不存在: $1"
 }
 
+# ---- 依赖库探测 (跨发行版, 不依赖 rpm) ----
+# 优先 ldconfig 缓存; 若 ldconfig 不可用/缓存未刷新 (或 set -o pipefail 下
+# grep -q 提前退出导致 ldconfig 收到 SIGPIPE 误判), 回退到标准库目录文件探测.
+# 返回 0=存在, 1=缺失
+omf_lib_present() {
+    local lib="$1"
+    # 方式1: ldconfig 缓存 (优先 /sbin/ldconfig, 避免 PATH 不含 /sbin 时漏检)
+    local lc=""
+    if command -v ldconfig >/dev/null 2>&1; then lc="ldconfig"
+    elif [ -x /sbin/ldconfig ]; then lc="/sbin/ldconfig"; fi
+    if [ -n "$lc" ] && $lc -p 2>/dev/null | grep -q -- "$lib"; then
+        return 0
+    fi
+    # 方式2: 直接查找常见库目录 (兜底, 解决 ldconfig 缓存未刷新/不可用的假阳性)
+    local d
+    for d in /lib /lib64 /usr/lib /usr/lib64 \
+             /lib/x86_64-linux-gnu /usr/lib/x86_64-linux-gnu \
+             /lib/i386-linux-gnu /usr/lib/i386-linux-gnu; do
+        [ -e "$d/$lib" ] && return 0
+    done
+    return 1
+}
+
 # ---- 以 oracle 用户执行命令 (兼容 root 调用与 oracle 直接调用) ----
 as_oracle() {
     local script="$1"

@@ -192,7 +192,9 @@ prepare_inventory() {
 #===============================================================================
 generate_response() {
     local mode="$1"
-    local resp_file="/tmp/oracle_install.rsp"
+    local resp_file="${OMF_CONFIG[ORACLE_BASE]}/oracle_install.rsp"
+    # 写前清理: 避免上一次失败残留的 oracle 属主文件导致 root 重定向覆盖被拒 (Permission denied)
+    rm -f "$resp_file" 2>/dev/null || true
 
     # 响应文件版本需与安装器匹配 (否则 INS-10105 报响应文件无效)
     local rsp_ver
@@ -223,7 +225,8 @@ SECURITY_UPDATES_VIA_MYORACLESUPPORT=false
 DECLINE_SECURITY_UPDATES=true
 EOF
 
-    chown oracle:oinstall "$resp_file"
+    chown oracle:oinstall "$resp_file" 2>/dev/null || true
+    chmod 644 "$resp_file" 2>/dev/null || true
     log_info "响应文件已生成: $resp_file"
 }
 
@@ -254,7 +257,7 @@ export CV_ASSUME_DISTID=$(oracle_cvu_distid)
 ${libn}
 
 cd ${OMF_CONFIG[ORACLE_HOME]}
-./runInstaller -silent -ignorePrereqFailure -responseFile /tmp/oracle_install.rsp 2>&1
+./runInstaller -silent -ignorePrereqFailure -responseFile ${OMF_CONFIG[ORACLE_BASE]}/oracle_install.rsp 2>&1
 " | tee -a "$OMF_RUN_LOG"
     local ret=${PIPESTATUS[0]}
 

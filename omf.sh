@@ -22,7 +22,7 @@ while [[ $# -gt 0 ]]; do
         -y|--yes|--assume-yes) OMF_ASSUME_YES="true"; shift;;
         -d|--debug) OMF_DEBUG="true"; shift;;
         -c|--config) OMF_CONFIG_FILE="$2"; shift 2;;
-        -h|--help) usage; exit 0;;
+        -h|--help) OMF_SHOW_HELP="true"; break;;
         --) shift; break;;
         -*) echo "未知全局选项: $1"; exit 1;;
         *) break;;
@@ -54,7 +54,7 @@ usage() {
 
 ╔══════════════════════════════════════════════════════════════╗
 ║     OMF - Oracle Management Framework v${OMF_VERSION}              ║
-║     Oracle 19c 全生命周期管理框架                           ║
+║     Oracle 数据库(CDB系列) 全生命周期管理框架                ║
 ╚══════════════════════════════════════════════════════════════╝
 
 用法: omf [options] <command> [subcommand] [options]
@@ -158,5 +158,11 @@ main() {
             exit 1;;
     esac
 }
+
+# 全局 -h/--help: 函数均已定义, 直接打印并退出
+if [ "${OMF_SHOW_HELP:-false}" = "true" ]; then
+    usage
+    exit 0
+fi
 
 main "$@"

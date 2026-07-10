@@ -54,25 +54,20 @@ chmod +x "${OMF_HOME}/omf.sh" "${OMF_HOME}/setup.sh" "${OMF_HOME}"/cmd/*.sh "${O
 log_info "已赋予脚本执行权限 (omf.sh/setup.sh/cmd/*.sh/lib/*.sh)"
 
 # 4. 建立全局命令软链
-#    遍历 PATH 中已有的可写目录, 选第一个建链, 保证 shell 一定能找到
-link_target=""
-for d in $(echo "$PATH" | tr ':' ' '); do
-    if [ -d "$d" ] && [ -w "$d" ]; then
-        link_target="$d/omf"
-        break
-    fi
-done
-# PATH 中无合适目录时, 退而创建 /usr/local/bin 并加入 PATH
-if [ -z "$link_target" ]; then
-    mkdir -p /usr/local/bin
-    link_target="/usr/local/bin/omf"
-    case ":$PATH:" in
-        *:/usr/local/bin:*) ;;
-        *) export PATH="/usr/local/bin:$PATH" ;;
-    esac
-fi
+#    优先写入 /usr/local/bin (绝大多数发行版默认在 PATH 中), 并持久化到
+#    /etc/profile.d, 保证新开 shell 自动可用, 避免再次出现 command not found
+link_target="/usr/local/bin/omf"
+mkdir -p /usr/local/bin
 ln -sf "${OMF_HOME}/omf.sh" "$link_target"
-log_info "已创建命令: omf -> ${OMF_HOME}/omf.sh ($link_target)"
+
+# 持久化 PATH (仅当 /usr/local/bin 不在 PATH 时)
+case ":$PATH:" in
+    *:/usr/local/bin:*) ;;
+    *) export PATH="/usr/local/bin:$PATH"
+       echo 'export PATH="/usr/local/bin:$PATH"' > /etc/profile.d/omf.sh
+       chmod +x /etc/profile.d/omf.sh
+       log_info "已将 /usr/local/bin 加入 /etc/profile.d/omf.sh (新 shell 自动生效)" ;;
+esac
 
 hash -r
 if command -v omf >/dev/null 2>&1; then

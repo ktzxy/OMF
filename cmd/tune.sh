@@ -291,16 +291,23 @@ tune_awr() {
     log_step "生成 AWR 报告 (最近 ${days} 天)"
 
     # 取最近两个快照 id (首尾) + dbid + inst_num
-    # 注意: heredoc 必须用 <<'SQL' (引号) 定界, 否则 as_oracle 内部 eval 会把 v$database/v$instance 的 $ 当 shell 变量展开成空, SQL 直接报错
-    local snaps
-    snaps=$(as_oracle "sqlplus -s / as sysdba <<'SQL'
+    # 用临时 SQL 文件 + sqlplus @file 执行, 彻底规避 as_oracle→oracle_su→su -c 链路里嵌套 heredoc 的 $ 定界/回显问题
+    # 临时文件放 /tmp (oracle 用户一定可读), 避免落在 /root 下因权限导致 sqlplus 读不到
+    local sql_file="/tmp/omf_awr_snaps_$$.sql"
+    cat > "$sql_file" <<EOF
 SET PAGES 0 FEEDBACK OFF HEAD OFF
 SELECT MIN(s.snap_id) || ' ' || MAX(s.snap_id) || ' ' ||
        d.dbid || ' ' || i.instance_number
 FROM dba_hist_snapshot s, v\$database d, v\$instance i
 WHERE s.begin_interval_time > SYSDATE - ${days};
 EXIT;
-SQL" 2>/dev/null | tr -d '\r' | awk 'NF>=4{print; exit}')
+EOF
+    chmod 644 "$sql_file" 2>/dev/null || true
+
+    local snaps
+    # 仅匹配 "数字 数字 数字 数字" 的结果行, 忽略任何 SQL 回显/报错文本
+    snaps=$(as_oracle "sqlplus -s / as sysdba @${sql_file}" 2>/dev/null | tr -d '\r' | awk '/^[[:space:]]*[0-9]+ [0-9]+ [0-9]+ [0-9]+[[:space:]]*$/{print; exit}')
+    rm -f "$sql_file" 2>/dev/null || true
 
     local begin end dbid inst
     begin=$(echo "$snaps" | awk '{print $1}')

@@ -179,8 +179,16 @@ echo \"select status from v\\\$instance;\" | sqlplus -s / as sysdba
 
     # 监听器
     echo "--- 监听器检查 ---"
-    if oracle_su "${OMF_CONFIG[ORACLE_HOME]}/bin/lsnrctl status" 2>/dev/null | grep -q "Uptime"; then
-        check_item "监听器 (${OMF_CONFIG[LISTENER_PORT]:-1521})" ok
+    local ls_out listen_port cfg_port
+    ls_out=$(oracle_su "${OMF_CONFIG[ORACLE_HOME]}/bin/lsnrctl status" 2>/dev/null)
+    if echo "$ls_out" | grep -q "Uptime"; then
+        listen_port=$(echo "$ls_out" | grep -i 'PROTOCOL=tcp' | grep -oE 'PORT=[0-9]+' | head -1 | cut -d= -f2)
+        cfg_port="${OMF_CONFIG[LISTENER_PORT]:-1521}"
+        if [ -n "$listen_port" ] && [ "$listen_port" != "$cfg_port" ]; then
+            check_item "监听器 (实际端口 ${listen_port} ≠ 配置 ${cfg_port}, 请 omf listener port 同步)" warn
+        else
+            check_item "监听器 (${cfg_port})" ok
+        fi
     else
         check_item "监听器 (${OMF_CONFIG[LISTENER_PORT]:-1521})" err
     fi
@@ -252,14 +260,23 @@ echo \"select log_mode from v\\\$database;\" | sqlplus -s / as sysdba | grep -i 
         check_item "CPU 负载 ($load / ${cpu_cores}核)" ok
     fi
 
-    # Alert 日志检查
+    # Alert 日志检查 (仅统计【本次实例启动以来】的 ORA- 错误, 避免建库历史错误干扰)
     echo "--- Alert 日志检查 ---"
     local alert_log="$(get_alert_log)"
     if [ -f "$alert_log" ]; then
-        local ora_errors
-        ora_errors=$(grep -c "ORA-" "$alert_log" 2>/dev/null || echo 0)
-        if [ "$ora_errors" -gt 0 ]; then
-            check_item "Alert 日志 (最近有 $ora_errors 个 ORA- 错误)" warn
+        local total since_start start_ln
+        total=$(grep -c "ORA-" "$alert_log" 2>/dev/null || echo 0)
+        # 取最后一次"库完全打开"的日志行号作为边界 (CDB OPEN / PDB 打开)
+        start_ln=$(grep -nE "ALTER DATABASE OPEN|Pluggable database .*opened read write|alter pluggable database .* open" "$alert_log" 2>/dev/null | tail -1 | cut -d: -f1)
+        if [ -n "$start_ln" ]; then
+            since_start=$(tail -n +"$start_ln" "$alert_log" | grep -c "ORA-" 2>/dev/null || echo 0)
+        else
+            since_start=$total
+        fi
+        if [ "$since_start" -gt 0 ]; then
+            check_item "Alert 日志 (本次启动以来 $since_start 个 ORA- 错误, 历史共 $total 个)" warn
+        elif [ "$total" -gt 0 ]; then
+            check_item "Alert 日志 (历史 $total 个 ORA-, 本次启动以来 0 个)" ok
         else
             check_item "Alert 日志" ok
         fi
@@ -405,6 +422,18 @@ check_alert() {
     echo ""
     echo "=== 最近 ORA- 错误 ==="
     grep "ORA-" "$alert_log" | tail -20 || echo "(无 ORA- 错误)"
+
+    echo ""
+    echo "=== 统计 ==="
+    local total since_start start_ln
+    total=$(grep -c "ORA-" "$alert_log" 2>/dev/null || echo 0)
+    start_ln=$(grep -nE "ALTER DATABASE OPEN|Pluggable database .*opened read write|alter pluggable database .* open" "$alert_log" 2>/dev/null | tail -1 | cut -d: -f1)
+    if [ -n "$start_ln" ]; then
+        since_start=$(tail -n +"$start_ln" "$alert_log" | grep -c "ORA-" 2>/dev/null || echo 0)
+    else
+        since_start=$total
+    fi
+    echo "历史 ORA- 错误: $total 个; 本次启动以来: $since_start 个"
 }
 
 #===============================================================================

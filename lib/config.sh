@@ -35,6 +35,7 @@ load_config() {
     OMF_CONFIG[ORACLE_ARCH]="/data/oracle/archivelog"
     OMF_CONFIG[ORACLE_FRA]="/data/oracle/fast_recovery"
     OMF_CONFIG[ORACLE_BACKUP]="/backup/oracle"
+    OMF_CONFIG[LISTENER_PORT]="${LISTENER_PORT:-1521}"
     OMF_CONFIG[CHARSET]="AL32UTF8"
     OMF_CONFIG[NLS_LANG]="AMERICAN_AMERICA.AL32UTF8"
 

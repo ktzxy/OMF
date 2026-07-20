@@ -298,7 +298,7 @@ RMANEOF" 2>&1) || true
             echo "  请先创建备份后再校验, 例如:"
             echo "    omf backup physical      # RMAN 物理全量备份"
             echo "    omf backup auto          # 按 BACKUP_MODE 配置执行"
-            exit 1
+            exit 2
         fi
 
         as_oracle "rman target / <<RMANEOF
@@ -363,7 +363,7 @@ RMANEOF" 2>&1) || true
         echo "  请先创建备份后再校验, 例如:"
         echo "    omf backup physical      # RMAN 物理全量备份"
         echo "    omf backup auto          # 按 BACKUP_MODE 配置执行"
-        exit 1
+        exit 2
     fi
 
     as_oracle "rman target / <<RMANEOF

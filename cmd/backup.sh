@@ -38,6 +38,17 @@ SQL
 " 2>&1 | tail -3
 }
 
+# RMAN 物理/增量/归档备份的前置条件: 数据库须处于 ARCHIVELOG 模式.
+# 若为 NOARCHIVELOG, 直接给出明确指引并退出, 避免让用户面对 RMAN-06149 错误栈.
+require_archivelog() {
+    local logmode
+    logmode=$(as_oracle "echo \"select log_mode from v\\\$database;\" | sqlplus -s / as sysdba" 2>/dev/null)
+    if echo "$logmode" | grep -qi 'NOARCHIVELOG'; then
+        log_error "数据库处于 NOARCHIVELOG 模式, 无法执行 RMAN 备份。请先开启归档模式: omf db archivelog enable"
+    fi
+    # 查询失败(既非 ARCHIVELOG 也非 NOARCHIVELOG)时不阻断, 交由 RMAN 自行报错
+}
+
 # 配置驱动的自动备份
 backup_auto() {
     local mode="${BACKUP_MODE:-both}"
@@ -100,6 +111,7 @@ EOF
 #===============================================================================
 backup_incremental() {
     require_db_user
+    require_archivelog
     ensure_backup_dirs
 
     local level="${1:-1}"
@@ -140,6 +152,7 @@ RMANEOF" 2>&1 | tail -3
 #===============================================================================
 backup_archive() {
     require_db_user
+    require_archivelog
     ensure_backup_dirs
 
     local ts=$(date '+%Y%m%d_%H%M%S')
@@ -163,6 +176,7 @@ RMANEOF" 2>&1 | tee "$log_file"
 #===============================================================================
 backup_physical() {
     require_db_user
+    require_archivelog
     ensure_backup_dirs
 
     local ts=$(date '+%Y%m%d_%H%M%S')

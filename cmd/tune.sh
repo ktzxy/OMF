@@ -42,11 +42,14 @@ cmd_tune() {
 tune_memory() {
     log_step "内存参数调优"
 
-    local total_mem
+    local total_mem oracle_mem sga_target pga_target
     total_mem=$(get_total_memory_mb)
-
-    local sga_target=$((total_mem * 75 / 100))
-    local pga_target=$((total_mem * 25 / 100))
+    # 复用 common.sh 的内存规划函数: 按 ORACLE_MEM_RATIO/SGA_RATIO 分配, 并为 OS 预留余量
+    # (避免旧逻辑 SGA 75% + PGA 25% = 100% 物理内存, 不留 OS 余量导致 OOM)
+    oracle_mem=$(omf_oracle_mem_mb)
+    sga_target=$(omf_sga_mb)
+    pga_target=$(( oracle_mem - sga_target ))
+    [ "$pga_target" -lt 512 ] && pga_target=512
 
     echo ""
     echo "=== 当前内存使用 ==="
@@ -83,9 +86,10 @@ SQL
 
     echo ""
     echo "=== 建议配置 ==="
-    echo "系统内存:  ${total_mem}MB"
-    echo "建议 SGA:  ${sga_target}MB"
-    echo "建议 PGA:  ${pga_target}MB"
+    echo "系统内存:    ${total_mem}MB"
+    echo "Oracle 可用: ${oracle_mem}MB (已为 OS 预留 $(( total_mem - oracle_mem ))MB)"
+    echo "建议 SGA:    ${sga_target}MB"
+    echo "建议 PGA:    ${pga_target}MB"
     echo ""
     echo "执行 'omf tune apply' 应用建议配置"
 }
@@ -127,10 +131,10 @@ SELECT COUNT(*) AS arch_count, ROUND(SUM(blocks*block_size)/1024/1024/1024,2) AS
 PROMPT
 PROMPT === 数据文件 IO 统计 (Top 10) ===
 SELECT * FROM (
-    SELECT file#, name, phyrds, phywrts, readtim, writetim
+    SELECT df.file#, df.name, fs.phyrds, fs.phywrts, fs.readtim, fs.writetim
     FROM v\$datafile df, v\$filestat fs
     WHERE df.file# = fs.file#
-    ORDER BY phyrds + phywrts DESC
+    ORDER BY fs.phyrds + fs.phywrts DESC
 ) WHERE ROWNUM <= 10;
 
 EXIT;
@@ -243,10 +247,12 @@ tune_apply() {
     [ "$scope" = "sga" ] || [ "$scope" = "pga" ] || [ "$scope" = "memory" ] || \
         log_error "无效 --scope: $scope (应为 memory|sga|pga)"
 
-    local total_mem
+    local total_mem oracle_mem sga_target pga_target
     total_mem=$(get_total_memory_mb)
-    local sga_target=$((total_mem * 75 / 100))
-    local pga_target=$((total_mem * 25 / 100))
+    oracle_mem=$(omf_oracle_mem_mb)
+    sga_target=$(omf_sga_mb)
+    pga_target=$(( oracle_mem - sga_target ))
+    [ "$pga_target" -lt 512 ] && pga_target=512
 
     local msg
     case "$scope" in
@@ -297,7 +303,7 @@ SQL" 2>/dev/null | tr -d '\r' | awk 'NF==2{print; exit}')
     end=$(echo "$snaps" | awk '{print $2}')
 
     if [ -z "$begin" ] || [ -z "$end" ] || [ "$begin" = "$end" ]; then
-        log_error "快照不足 (需要至少 2 个 AWR 快照, 当前: '${snaps}'), 请确认 AWR 已启用且采样正常"
+        log_error "快照不足 (需要至少 2 个 AWR 快照, 当前: '${snaps}'). 可能原因: 1) 库刚建, 默认 1 小时才采一个快照, 请稍后再试; 2) STATISTICS_LEVEL 非 TYPICAL/ALL; 3) 控制文件里快照已被清理. 可手动建快照: sqlplus / as sysdba -e \"EXEC DBMS_WORKLOAD_REPOSITORY.CREATE_SNAPSHOT;\" 然后间隔数分钟再建一个"
     fi
 
     local report="${out_dir}/awr_${begin}_${end}.html"

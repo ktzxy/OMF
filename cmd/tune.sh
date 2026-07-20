@@ -268,8 +268,14 @@ tune_apply() {
     [ "$scope" = "memory" ] && sets="ALTER SYSTEM SET sga_target=${sga_target}M SCOPE=SPFILE;
 ALTER SYSTEM SET pga_aggregate_target=${pga_target}M SCOPE=SPFILE;"
 
-    as_oracle "sqlplus -s / as sysdba <<SQL
-${sets}
+    # 直接用 oracle_su + 内联引号 heredoc (与 tune_session 一致的已验证写法), 不走 as_oracle 二次包装
+    # (嵌套 heredoc 在 su -c 链路里行为不可靠, 会导致 SQL 被回显/输出为空, apply 静默失败)
+    # ${sets} 用 $(echo ...) 在外层 shell 展开后注入 heredoc 体内
+    oracle_su "export ORACLE_SID=${OMF_CONFIG[ORACLE_SID]}; \
+export ORACLE_HOME=${OMF_CONFIG[ORACLE_HOME]}; \
+export PATH=\$ORACLE_HOME/bin:\$PATH; \
+sqlplus -s / as sysdba <<'SQL'
+$(echo "${sets}")
 SHUTDOWN IMMEDIATE;
 STARTUP;
 EXIT;
@@ -291,23 +297,27 @@ tune_awr() {
     log_step "生成 AWR 报告 (最近 ${days} 天)"
 
     # 取最近两个快照 id (首尾) + dbid + inst_num
-    # 用临时 SQL 文件 + sqlplus @file 执行, 彻底规避 as_oracle→oracle_su→su -c 链路里嵌套 heredoc 的 $ 定界/回显问题
-    # 临时文件放 /tmp (oracle 用户一定可读), 避免落在 /root 下因权限导致 sqlplus 读不到
-    local sql_file="/tmp/omf_awr_snaps_$$.sql"
-    cat > "$sql_file" <<EOF
-SET PAGES 0 FEEDBACK OFF HEAD OFF
+    # 直接用 oracle_su + 内联 heredoc (与 tune_session/tune_storage 一致的已验证可用写法),
+    # 不走 as_oracle 二次包装: 嵌套 heredoc 在 su -c 链路里行为不可靠, 会导致 SQL 被回显或输出为空
+    local where="SYSDATE - ${days}"
+    local raw snaps
+    # 先抓原始输出(raw), 再过滤; 解析为空时把 raw 写入调试日志, 便于定位 (ORA 报错 / 真无快照)
+    raw=$(oracle_su "export ORACLE_SID=${OMF_CONFIG[ORACLE_SID]}; \
+export ORACLE_HOME=${OMF_CONFIG[ORACLE_HOME]}; \
+export PATH=\$ORACLE_HOME/bin:\$PATH; \
+sqlplus -s / as sysdba <<'SQL'
+SET PAGES 0 FEEDBACK OFF HEADING OFF
 SELECT MIN(s.snap_id) || ' ' || MAX(s.snap_id) || ' ' ||
        d.dbid || ' ' || i.instance_number
 FROM dba_hist_snapshot s, v\$database d, v\$instance i
-WHERE s.begin_interval_time > SYSDATE - ${days};
+WHERE s.begin_interval_time > ${where};
 EXIT;
-EOF
-    chmod 644 "$sql_file" 2>/dev/null || true
-
-    local snaps
-    # 仅匹配 "数字 数字 数字 数字" 的结果行, 忽略任何 SQL 回显/报错文本
-    snaps=$(as_oracle "sqlplus -s / as sysdba @${sql_file}" 2>/dev/null | tr -d '\r' | awk '/^[[:space:]]*[0-9]+ [0-9]+ [0-9]+ [0-9]+[[:space:]]*$/{print; exit}')
-    rm -f "$sql_file" 2>/dev/null || true
+SQL" 2>&1)
+    snaps=$(echo "$raw" | tr -d '\r' | awk '/^[[:space:]]*[0-9]+ [0-9]+ [0-9]+ [0-9]+[[:space:]]*$/{print; exit}')
+    if [ -z "$snaps" ]; then
+        echo "$raw" | head -20 > "${out_dir}/.awr_snaps_debug.log" 2>/dev/null || true
+        log_debug "awr 快照查询原始输出已写入 ${out_dir}/.awr_snaps_debug.log"
+    fi
 
     local begin end dbid inst
     begin=$(echo "$snaps" | awk '{print $1}')
@@ -324,7 +334,10 @@ EOF
 
     # 直接调用实例级报告脚本 awrrpti.sql, 参数顺序严格为: dbid inst_num begin_snap end_snap report_name
     # 它不像 awrrpt.sql 那样经过 awrinput/awrinpnm 链式调用吞掉位置参数, 因此非交互不会卡在交互提示上
-    as_oracle "cd ${OMF_CONFIG[ORACLE_HOME]}/rdbms/admin && sqlplus -s / as sysdba @awrrpti.sql ${dbid} ${inst} ${begin} ${end} ${report}" 2>&1 | tail -8
+    oracle_su "export ORACLE_SID=${OMF_CONFIG[ORACLE_SID]}; \
+export ORACLE_HOME=${OMF_CONFIG[ORACLE_HOME]}; \
+export PATH=\$ORACLE_HOME/bin:\$PATH; \
+cd \${ORACLE_HOME}/rdbms/admin && sqlplus -s / as sysdba @awrrpti.sql ${dbid} ${inst} ${begin} ${end} ${report}" 2>&1 | tail -8
 
     if [ -f "$report" ] && [ -s "$report" ]; then
         log_info "AWR 报告已生成: $report"

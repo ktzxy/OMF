@@ -205,10 +205,11 @@ omf_sga_mb() {
     echo "$sga_mb"
 }
 
-# HugePages 数量 (2MB/页): 向上取整覆盖 SGA
+# HugePages 数量 (2MB/页): 覆盖 SGA, 仅留少量余量(约256MB+2页)
+# 注: 余量过大(如旧版 +1GB)会在小内存机器上过度预留, 挤占 PGA/OS 常规内存导致 OOM
 omf_hugepages_count() {
     local sga_mb; sga_mb=$(omf_sga_mb)
-    local hp=$(( (sga_mb + 2048 - 1) / 2 + 1 ))
+    local hp=$(( (sga_mb + 256) / 2 + 2 ))
     echo "$hp"
 }
 

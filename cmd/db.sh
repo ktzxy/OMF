@@ -61,6 +61,14 @@ db_create() {
     sga_mb=$(((sga_mb / align) * align))
     pga_mb=$(((pga_mb / align) * align))
 
+    # 防御: 确保 kernel.shmmax >= SGA, 否则 DBCA 报 DBT-11207 (SGA > shmmax)
+    local sga_bytes=$((sga_mb * 1024 * 1024))
+    local cur_shmmax; cur_shmmax=$(sysctl -n kernel.shmmax 2>/dev/null || echo 0)
+    if [ "${cur_shmmax:-0}" -lt "$sga_bytes" ]; then
+        sysctl -w "kernel.shmmax=$sga_bytes" >/dev/null 2>&1 || \
+            log_warn "无法设置 kernel.shmmax>=$sga_bytes (当前 $cur_shmmax), 若建库报 DBT-11207 请先 omf env kernel"
+    fi
+
     local fra_size_mb=${OMF_CONFIG[FRA_SIZE_MB]:-0}
     if [ "$fra_size_mb" -lt 20480 ]; then
         fra_size_mb=20480
@@ -99,7 +107,7 @@ db_create() {
     log_step "建库前磁盘预检"
     local -a db_disk_checks=(
         "${OMF_CONFIG[ORACLE_DATA_BASE]}:20480"
-        "${OMF_CONFIG[ORACLE_FRA]}:${fra_size_mb}:err"
+        "${OMF_CONFIG[ORACLE_FRA]}:${fra_size_mb}"
         "${OMF_CONFIG[ORACLE_BACKUP]}:20480"
     )
     for entry in "${db_disk_checks[@]}"; do
@@ -136,6 +144,16 @@ echo 'shutdown abort;' | sqlplus -s / as sysdba
     rm -f "${OMF_CONFIG[ORACLE_HOME]}/dbs/init${OMF_CONFIG[ORACLE_SID]}.ora"
     rm -f "${OMF_CONFIG[ORACLE_HOME]}/dbs/spfile${OMF_CONFIG[ORACLE_SID]}.ora"
     rm -f "${OMF_CONFIG[ORACLE_HOME]}/dbs/orapw${OMF_CONFIG[ORACLE_SID]}"
+
+    # 清理上次失败残留的 SID 级目录 (仅删本 SID 子目录, 避免误删整盘)
+    # 否则 DBCA 重跑会因"数据库已存在/数据文件冲突"再次失败
+    rm -rf "${OMF_CONFIG[ORACLE_DATA]}/${OMF_CONFIG[ORACLE_SID]}"
+    rm -rf "${OMF_CONFIG[ORACLE_FRA]}/${OMF_CONFIG[ORACLE_SID]}"
+    rm -rf "${OMF_CONFIG[ORACLE_BASE]}/admin/${OMF_CONFIG[ORACLE_SID]}"
+    rm -rf "${OMF_CONFIG[ORACLE_BASE]}/cfgtoollogs/dbca/${OMF_CONFIG[ORACLE_SID]}"
+    rm -rf "${OMF_CONFIG[ORACLE_BASE]}/diag/rdbms/${OMF_CONFIG[ORACLE_SID]}"
+    # 清理 /etc/oratab 中本 SID 行
+    [ -f /etc/oratab ] && sed -i "/^${OMF_CONFIG[ORACLE_SID]}:/d" /etc/oratab
 
     # DBCA 建库
     log_step "DBCA 创建数据库 (预计 15-30 分钟)..."

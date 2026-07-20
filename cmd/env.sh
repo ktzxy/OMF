@@ -103,7 +103,8 @@ PAMEOF
 env_kernel() {
     local sysctl_file="/etc/sysctl.d/99-oracle.conf"
     local total_mem; total_mem=$(get_total_memory_mb)
-    local shmmax=$((total_mem * 1024 * 1024 / 2))
+    # shmmax 必须 >= SGA, 故按整物理内存字节数设置 (SGA 通常 <= 内存, 留足余量避免 DBT-11207)
+    local shmmax=$((total_mem * 1024 * 1024))
     local shmall=$((shmmax / 4096))
 
     # HugePages / SGA 估算 (比例可配置, 见 conf)

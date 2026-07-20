@@ -123,6 +123,12 @@ omf_lib_present() {
     return 1
 }
 
+# libtirpc 在不同发行版 soname 不同: RHEL/CentOS7 为 libtirpc.so.1, Ubuntu/OL8 为 libtirpc.so.3
+# Oracle 19c 在各平台分别链接对应 soname, 任一存在即满足依赖 (避免 CentOS7 上误报缺失)
+omf_lib_tirpc_present() {
+    omf_lib_present "libtirpc.so.3" || omf_lib_present "libtirpc.so.1"
+}
+
 # ---- 以 oracle 用户执行命令 (兼容 root 调用与 oracle 直接调用) ----
 # 优先 runuser: root 切换免密码认证, 规避 su 在 Linux-PAM 1.4+ 下
 #   (Ubuntu 的 root 账户本身锁定, 导致 pam_rootok 对 root->oracle 也走认证并报

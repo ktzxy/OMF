@@ -27,6 +27,8 @@ cmd_status() {
     echo "──── 数据库 ────"
     if as_oracle "sqlplus -s / as sysdba <<'SQL'
 SET LINES 200 PAGES 0 FEEDBACK OFF
+WHENEVER SQLERROR EXIT SQL.SQLCODE
+WHENEVER OSERROR EXIT FAILURE
 SELECT '  实例: '||instance_name||'  '||status||'  启动于 '||TO_CHAR(startup_time,'YYYY-MM-DD HH24:MI') FROM v\$instance;
 SELECT '  数据库: '||name||'  '||open_mode||'  '||database_role||'  归档:'||log_mode FROM v\$database;
 SELECT '  PDB:  '||name||'  '||open_mode FROM v\$pdbs;

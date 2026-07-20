@@ -106,9 +106,13 @@ check_preflight() {
 
     # 5. 依赖库 (跨发行版, 用 ldconfig 探测, 不再依赖 rpm)
     echo "--- 依赖库 ---"
-    local missing=0
-    for lib in libaio.so.1 libnsl.so.1 libtirpc.so.3 libc.so.6 libstdc++.so.6 libelf.so.1; do
-        if ! omf_lib_present "$lib"; then
+    local missing=0 lib present
+    for lib in libaio.so.1 libnsl.so.1 libtirpc libc.so.6 libstdc++.so.6 libelf.so.1; do
+        case "$lib" in
+            libtirpc) omf_lib_tirpc_present && present=1 || present=0 ;;
+            *)        omf_lib_present "$lib" && present=1 || present=0 ;;
+        esac
+        if [ "$present" -eq 0 ]; then
             missing=$((missing+1)); echo "    ✗ 缺失: $lib"
         fi
     done
@@ -121,7 +125,8 @@ check_preflight() {
 
     # 7. 数据库连通性 (若已建库)
     echo "--- 数据库连通性 ---"
-    if as_oracle "echo 'SELECT 1 FROM dual;' | sqlplus -s / as sysdba" &>/dev/null; then
+    if as_oracle "echo 'WHENEVER SQLERROR EXIT SQL.SQLCODE
+SELECT 1 FROM dual;' | sqlplus -s / as sysdba" &>/dev/null; then
         ci "数据库可连接且 OPEN" ok
     else
         ci "数据库暂不可连接 (未建库或已停止, 可忽略)" warn

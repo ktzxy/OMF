@@ -463,12 +463,12 @@ env_check() {
     echo "SHMALL: $(sysctl -n kernel.shmall 2>/dev/null)"
     echo "FILE-MAX: $(sysctl -n fs.file-max 2>/dev/null)"
     echo ""; echo "=== 依赖库 (ldconfig) ==="
-    for lib in libaio.so.1 libnsl.so.1 libtirpc.so.3 libc.so.6 libstdc++.so.6 libelf.so.1; do
-        if omf_lib_present "$lib"; then
-            echo "✓ $lib"
-        else
-            echo "✗ $lib (缺失)"
-        fi
+    for lib in libaio.so.1 libnsl.so.1 libtirpc libc.so.6 libstdc++.so.6 libelf.so.1; do
+        case "$lib" in
+            libtirpc) omf_lib_tirpc_present && st="✓" || st="✗" ;;
+            *)        omf_lib_present "$lib" && st="✓" || st="✗" ;;
+        esac
+        if [ "$st" = "✓" ]; then echo "✓ $lib"; else echo "✗ $lib (缺失)"; fi
     done
     echo ""; echo "=== 磁盘空间 ==="; df -h / /data /backup 2>/dev/null
     echo ""; echo "=== 透明大页 ==="

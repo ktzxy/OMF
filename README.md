@@ -183,6 +183,57 @@ OMF 面向 **CDB 架构** 的 Oracle 数据库，当前支持：
 - **脚本 CRLF 报错 `bad interpreter`**：Windows 检出后脚本被转成 CRLF。仓库已用 `.gitattributes` 锁定 `*.sh` 为 LF；若手动改过，用 `dos2unix cmd/*.sh lib/*.sh omf.sh setup.sh` 修复。
 - **配置改了不生效（如 `HUGEPAGES_DEFER` 无效、内存仍被大页占满）**：框架只读取 `conf/omf.conf`，**不读 `conf/omf.conf.example`**（那是入库的脱敏模板）。确认改动落在正式文件：`grep -n HUGEPAGES_DEFER conf/omf.conf`；若文件不存在先用 `omf config init` 生成（含全部配置项）。用 `omf config set KEY VALUE` 也会自动写入正式文件。
 
+## 内存参数调优说明
+
+OMF 对 Oracle 内存采用**集中规划、为 OS 预留余量**的策略，避免把物理内存 100% 分给数据库导致 OS 无内存、实例起不来或 OOM。规划逻辑由 `lib/common.sh` 的 `omf_oracle_mem_mb()` / `omf_sga_mb()` / `omf_hugepages_count()` 实现，`omf tune memory` 与 `omf tune apply` 共用同一套口径。
+
+### 规划原理
+
+```
+物理内存 (MemTotal)
+  └─ Oracle 可用内存 = 物理内存 × ORACLE_MEM_RATIO%   (默认 80%, 下限 2048MB)
+       ├─ SGA 目标   = Oracle 可用 × SGA_RATIO%       (默认 75%)
+       └─ PGA 目标   = Oracle 可用 − SGA 目标         (下限 512MB)
+  └─ OS 预留        = 物理内存 − Oracle 可用          (即 物理内存 × (100%−ORACLE_MEM_RATIO%))
+```
+
+- SGA 还会被**钳制**为不超过 `物理内存 − HUGEPAGES_RESERVE_FREE_MB`（默认 2048MB），保证即使 SGA 拉满，常规内存也至少留 2GB 给 OS / PGA / 安装器，小内存机器不会被大页吃光。
+- HugePages 数量（2MB/页）= `(SGA_MB + 256) / 2 + 2`，仅覆盖 SGA 并留约 256MB 余量，**不过度预留**（旧版 +1GB 余量会在小内存机器上挤占常规内存导致 OOM）。
+
+### 相关配置项（`conf/omf.conf`）
+
+| 配置项 | 默认值 | 说明 |
+|--------|--------|------|
+| `ORACLE_MEM_RATIO` | `80` | Oracle 可用内存占物理内存百分比 |
+| `SGA_RATIO` | `75` | SGA 占 Oracle 可用内存百分比 |
+| `HUGEPAGES_RESERVE_FREE_MB` | `2048` | SGA 钳制上限预留（给 OS 的常规内存下限）|
+
+> 改这些值用 `omf config set ORACLE_MEM_RATIO 70` 等，写入的是正式 `conf/omf.conf`。
+
+### 常用命令
+
+```bash
+omf tune memory                       # 查看当前内存使用 + 建议配置 (含 OS 预留说明)
+omf tune apply --scope memory        # 同时调 SGA+PGA (写 SPFILE, 需重启实例生效)
+omf tune apply --scope sga           # 仅调 SGA
+omf tune apply --scope pga           # 仅调 PGA
+omf tune apply -y                   # 非交互自动确认 (危险操作, 仍会 SHUTDOWN/STARTUP)
+omf check preflight                  # 安装前预检: 内存下限 / HugePages 建议
+omf check all                       # 健康检查含内存项 (可用内存过低会 ✗)
+```
+
+### 注意事项
+
+- **务必为 OS 留余量**：旧版曾硬编码 `SGA=75% 物理 + PGA=25% 物理 = 100%`，不留 OS 空间，`omf tune apply` 会直接 OOM。现版本已修复，建议配置已含 OS 预留。
+- **不要贸然 `nr_hugepages=0`**：SGA 跑在大页上时，取消大页会让 SGA 无法分配、实例起不来。要调整请改 `ORACLE_MEM_RATIO`/`SGA_RATIO` 后让框架重新计算并 `omf tune apply`。
+- **`omf tune apply` 会重启数据库**（SHUTDOWN IMMEDIATE → STARTUP），生产环境务必在维护窗口执行，或加 `-y` 走自动化。
+- **AWR 报告需快照**：`omf tune awr` 依赖 `dba_hist_snapshot` 至少 2 个快照；库刚建或 `STATISTICS_LEVEL` 非 `TYPICAL/ALL` 时会报"快照不足"，可手动建快照后再生成：
+  ```sql
+  sqlplus / as sysdba -e "EXEC DBMS_WORKLOAD_REPOSITORY.CREATE_SNAPSHOT;"
+  # 间隔数分钟再建一个, 然后:
+  omf tune awr
+  ```
+
 ## 命令速查
 
 ### 环境管理 (`omf env`)

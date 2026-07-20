@@ -287,6 +287,20 @@ restore_rman() {
     # 仅校验: 不修改数据库, 检查备份集完整性
     if [ "$validate" -eq 1 ]; then
         log_step "校验备份可恢复性 (RESTORE VALIDATE)"
+
+        # 前置判断: 无任何 RMAN 备份集时, 直接提示并退出, 避免把 RMAN 错误栈暴露给用户
+        local rman_list
+        rman_list=$(as_oracle "rman target / <<RMANEOF
+LIST BACKUP SUMMARY;
+RMANEOF" 2>&1) || true
+        if ! echo "$rman_list" | grep -qiE "BS Key|List of Backup"; then
+            log_warn "无备份可校验: 未检测到任何 RMAN 备份集"
+            echo "  请先创建备份后再校验, 例如:"
+            echo "    omf backup physical      # RMAN 物理全量备份"
+            echo "    omf backup auto          # 按 BACKUP_MODE 配置执行"
+            exit 1
+        fi
+
         as_oracle "rman target / <<RMANEOF
 RESTORE DATABASE VALIDATE;
 RESTORE ARCHIVELOG ALL VALIDATE;
@@ -338,6 +352,19 @@ RMANEOF"
 backup_validate() {
     require_db_user
     log_step "备份可恢复性校验"
+
+    # 前置判断: 无任何 RMAN 备份集时, 直接提示并退出, 避免把 RMAN 错误栈暴露给用户
+    local rman_list
+    rman_list=$(as_oracle "rman target / <<RMANEOF
+LIST BACKUP SUMMARY;
+RMANEOF" 2>&1) || true
+    if ! echo "$rman_list" | grep -qiE "BS Key|List of Backup"; then
+        log_warn "无备份可校验: 未检测到任何 RMAN 备份集"
+        echo "  请先创建备份后再校验, 例如:"
+        echo "    omf backup physical      # RMAN 物理全量备份"
+        echo "    omf backup auto          # 按 BACKUP_MODE 配置执行"
+        exit 1
+    fi
 
     as_oracle "rman target / <<RMANEOF
 RESTORE DATABASE VALIDATE;

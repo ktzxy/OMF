@@ -309,7 +309,9 @@ SQL" 2>/dev/null | tr -d '\r' | awk 'NF==2{print; exit}')
     local report="${out_dir}/awr_${begin}_${end}.html"
     log_info "快照范围: ${begin} -> ${end}"
 
-    as_oracle "cd ${OMF_CONFIG[ORACLE_HOME]}/rdbms/admin && sqlplus -s / as sysdba @awrrpt.sql html ${begin} ${end} ${report}" 2>&1 | tail -5
+    # awrrpt.sql 需要 5 个位置参数: report_type num_days begin_snap end_snap report_name
+    # num_days=0 表示直接用 snap id 定位 (非交互标准写法); 原只传 3 个会导致 end_snap/report_name 交互等待而"卡死"
+    as_oracle "cd ${OMF_CONFIG[ORACLE_HOME]}/rdbms/admin && sqlplus -s / as sysdba @awrrpt.sql html 0 ${begin} ${end} ${report}" 2>&1 | tail -5
 
     if [ -f "$report" ] && [ -s "$report" ]; then
         log_info "AWR 报告已生成: $report"

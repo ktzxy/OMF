@@ -279,7 +279,7 @@ export ORACLE_SID=${OMF_CONFIG[ORACLE_SID]}
 export ORACLE_HOME=${OMF_CONFIG[ORACLE_HOME]}
 export PATH=\$ORACLE_HOME/bin:\$PATH
 
-sqlplus -s / as sysdba <<SQL
+sqlplus -s / as sysdba <<'SQL'
 SET PAGES 50 LINES 200
 PROMPT ===== 实例状态 =====
 SELECT instance_name, host_name, version, status, startup_time, ROUND(sysdate-startup_time) AS days_up FROM v\$instance;
@@ -346,7 +346,7 @@ export ORACLE_SID=${OMF_CONFIG[ORACLE_SID]}
 export ORACLE_HOME=${OMF_CONFIG[ORACLE_HOME]}
 export PATH=\$ORACLE_HOME/bin:\$PATH
 
-sqlplus -s / as sysdba <<SQL
+sqlplus -s / as sysdba <<'SQL'
 SET PAGES 50 LINES 200
 
 PROMPT ===== Top 等待事件 (最近1小时) =====

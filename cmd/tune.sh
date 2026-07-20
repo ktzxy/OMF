@@ -55,7 +55,7 @@ export ORACLE_SID=${OMF_CONFIG[ORACLE_SID]}
 export ORACLE_HOME=${OMF_CONFIG[ORACLE_HOME]}
 export PATH=\$ORACLE_HOME/bin:\$PATH
 
-sqlplus -s / as sysdba <<SQL
+sqlplus -s / as sysdba <<'SQL'
 SET PAGES 50
 PROMPT SGA 参数:
 SELECT name, ROUND(value/1024/1024,2) AS size_mb FROM v\$sga;
@@ -101,7 +101,7 @@ export ORACLE_SID=${OMF_CONFIG[ORACLE_SID]}
 export ORACLE_HOME=${OMF_CONFIG[ORACLE_HOME]}
 export PATH=\$ORACLE_HOME/bin:\$PATH
 
-sqlplus -s / as sysdba <<SQL
+sqlplus -s / as sysdba <<'SQL'
 SET PAGES 50
 
 PROMPT === 表空间使用情况 ===
@@ -149,7 +149,7 @@ export ORACLE_SID=${OMF_CONFIG[ORACLE_SID]}
 export ORACLE_HOME=${OMF_CONFIG[ORACLE_HOME]}
 export PATH=\$ORACLE_HOME/bin:\$PATH
 
-sqlplus -s / as sysdba <<SQL
+sqlplus -s / as sysdba <<'SQL'
 SET PAGES 50
 
 PROMPT === 当前会话数 ===
@@ -198,7 +198,7 @@ export ORACLE_SID=${OMF_CONFIG[ORACLE_SID]}
 export ORACLE_HOME=${OMF_CONFIG[ORACLE_HOME]}
 export PATH=\$ORACLE_HOME/bin:\$PATH
 
-sqlplus -s / as sysdba <<SQL
+sqlplus -s / as sysdba <<'SQL'
 SET PAGES 0 FEEDBACK OFF
 
 PROMPT === AWR 快照统计 ===

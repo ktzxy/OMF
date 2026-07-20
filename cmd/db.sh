@@ -227,7 +227,7 @@ export ORACLE_SID=${OMF_CONFIG[ORACLE_SID]}
 export ORACLE_HOME=${OMF_CONFIG[ORACLE_HOME]}
 export PATH=\$ORACLE_HOME/bin:\$PATH
 
-sqlplus -s / as sysdba <<SQL
+sqlplus -s / as sysdba <<'SQL'
 SET HEADING OFF
 SET FEEDBACK OFF
 
@@ -380,7 +380,7 @@ export ORACLE_SID=${OMF_CONFIG[ORACLE_SID]}
 export ORACLE_HOME=${OMF_CONFIG[ORACLE_HOME]}
 export PATH=\$ORACLE_HOME/bin:\$PATH
 
-sqlplus -S / as sysdba << SQL
+sqlplus -S / as sysdba << 'SQL'
 SET SERVEROUTPUT ON
 ALTER SYSTEM SET db_unique_name='${OMF_CONFIG[DB_UNIQUE_NAME_PRIMARY]}' SCOPE=SPFILE;
 
@@ -568,7 +568,7 @@ db_dg_validate() {
         return 0
     fi
     # 退化方案: 直接查视图
-    as_oracle "sqlplus -s / as sysdba <<SQL
+    as_oracle "sqlplus -s / as sysdba <<'SQL'
 SET LINES 200
 SELECT db_unique_name, database_role, open_mode, protection_mode FROM v\$database;
 SELECT dest_id, status, error FROM v\$archive_dest_status WHERE dest_id<=2;

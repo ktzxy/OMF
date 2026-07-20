@@ -62,6 +62,24 @@ mkdir -p /usr/local/bin
 rm -f "$link_target"
 ln -sf "${OMF_HOME}/omf.sh" "$link_target" || log_warn "软链创建失败, 可手动: ln -sfn ${OMF_HOME}/omf.sh $link_target"
 
+# 兜底: 若当前 shell 的 PATH 不含 /usr/local/bin (profile.d 仅对新登录 shell 生效),
+# 再链到一个已在 PATH 中的可写目录 (如 /usr/bin), 保证本次 shell 立即可用,
+# 不必重开终端或手动 export PATH
+if ! command -v omf >/dev/null 2>&1; then
+    linked=0
+    for d in $(echo "$PATH" | tr ':' ' '); do
+        if [ -d "$d" ] && [ -w "$d" ]; then
+            rm -f "$d/omf"
+            if ln -sf "${OMF_HOME}/omf.sh" "$d/omf" 2>/dev/null; then
+                log_info "已将 omf 软链到已在 PATH 的目录: $d/omf (当前 shell 立即可用)"
+                linked=1
+                break
+            fi
+        fi
+    done
+    [ "$linked" -eq 0 ] && log_warn "未在 PATH 中找到可写目录, 请手动: ln -sfn ${OMF_HOME}/omf.sh /usr/local/bin/omf ; export PATH=/usr/local/bin:\$PATH"
+fi
+
 # 持久化 PATH (仅当 /usr/local/bin 不在 PATH 时)
 case ":$PATH:" in
     *:/usr/local/bin:*) ;;

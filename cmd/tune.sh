@@ -286,7 +286,7 @@ SQL"
 #===============================================================================
 # 自动生成 AWR 报告 (非交互)
 # 用法: omf tune awr [days]
-#   取最近 days 天内的首尾两个快照, 调用 awrrpt.sql 生成 HTML 报告
+#   取最近 days 天内的首尾两个快照, 调用 DBMS_WORKLOAD_REPOSITORY.AWR_REPORT_HTML 生成 HTML 报告
 #===============================================================================
 tune_awr() {
     local days="${1:-1}"
@@ -330,18 +330,28 @@ SQL" 2>&1)
     fi
 
     local report="${out_dir}/awr_${begin}_${end}.html"
+    # oracle 可能无 /root 目录遍历权限, 故先让 oracle 把报告写到 /tmp, 再由 root 移入 out_dir
+    local tmp_report="/tmp/awr_${begin}_${end}_$$.html"
     log_info "快照范围: ${begin} -> ${end} (dbid=${dbid}, inst=${inst})"
 
-    # 直接调用实例级报告脚本 awrrpti.sql, 参数顺序严格为: dbid inst_num begin_snap end_snap report_name
-    # 它不像 awrrpt.sql 那样经过 awrinput/awrinpnm 链式调用吞掉位置参数, 因此非交互不会卡在交互提示上
+    # 完全非交互: 直接调用 DBMS_WORKLOAD_REPOSITORY.AWR_REPORT_HTML 取报告文本, SPOOL 写文件
+    # 不调用 awrrpt.sql/awrrpti.sql, 它们内部会交互式询问报告名, 导致非交互卡死
     oracle_su "export ORACLE_SID=${OMF_CONFIG[ORACLE_SID]}; \
 export ORACLE_HOME=${OMF_CONFIG[ORACLE_HOME]}; \
 export PATH=\$ORACLE_HOME/bin:\$PATH; \
-cd \${ORACLE_HOME}/rdbms/admin && sqlplus -s / as sysdba @awrrpti.sql ${dbid} ${inst} ${begin} ${end} ${report}" 2>&1 | tail -8
+sqlplus -s / as sysdba <<'SQL'
+SET ECHO OFF TERMOUT OFF FEEDBACK OFF HEADING OFF PAGES 0 LINESIZE 32767 LONG 1000000 LONGCHUNKSIZE 32767 TRIMSPOOL ON
+SPOOL ${tmp_report}
+SELECT output FROM TABLE(DBMS_WORKLOAD_REPOSITORY.AWR_REPORT_HTML(${dbid}, ${inst}, ${begin}, ${end}));
+SPOOL OFF
+EXIT;
+SQL" 2>&1 | tail -8
 
-    if [ -f "$report" ] && [ -s "$report" ]; then
+    if [ -f "$tmp_report" ] && [ -s "$tmp_report" ]; then
+        mv -f "$tmp_report" "$report"
+        chown oracle:oinstall "$report" 2>/dev/null || true
         log_info "AWR 报告已生成: $report"
     else
-        log_error "AWR 报告生成失败, 请检查: $report"
+        log_error "AWR 报告生成失败 (oracle 未写出 ${tmp_report}), 请检查快照/权限"
     fi
 }

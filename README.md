@@ -168,7 +168,7 @@ OMF 面向 **CDB 架构** 的 Oracle 数据库，当前支持：
 - **日志统一（消除两套分离）**：所有业务日志（install / netca / dbca / backup）与 clean cron 日志统一汇入 `logs/omf_<cmd>_<时间戳>.log`（`OMF_RUN_LOG`），不再散落 `/tmp`、`/var/log` 与 `ORACLE_BACKUP`；仅保留 `/tmp` 下一次性响应文件与 `sql` 每脚本独立 `.logs`（断点续跑回看）。
 - **self-update 完整性加固（Bug13）**：新增版本比较（相同版本跳过，`force` 强制）、可选 `OMF_UPDATE_SHA256` 完整性校验、覆盖失败/校验失败自动回滚、完成后报告真实新版本号；配置模板补充 `OMF_UPDATE_SHA256` 可选项。
 - **监控机器可读输出**：`omf check monitor [json|prom]` 输出 JSON（默认）或 Prometheus 格式，采集 `db_up` / 磁盘使用率 / 内存可用率 / Alert ORA- 错误数及 `status`，对接外部监控无需解析人类排版；每次运行自动持久化快照。
-- **AWR 自动报告**：`omf tune awr [days]` 非交互取最近快照首尾 ID，调用 `awrrpt.sql` 生成 HTML 报告到 `logs/awr/`。
+- **AWR 自动报告**：`omf tune awr [days]` 非交互取最近快照首尾 ID 及 `dbid`/`inst_num`，调用实例级 `awrrpti.sql` 生成 HTML 报告到 `logs/awr/`（`awrrpt.sql` 因链式吞参数会卡在交互提示，故不用）。
 - **每命令 `-h` 帮助**：`omf <cmd> -h`、`omf help <cmd>`、`omf -h` 全局总览均可用，并退出 0。
 - **DG 钱包免密**：见 v1.2（根因修复 `ps` 密码残留）。
 - **状态历史趋势**：`omf status history [N]` 读取 `check monitor` 持久化的 JSONL 快照，打印最近 N 次趋势（库存活 / 内存 / ORA 错误 / 状态 / 磁盘）。

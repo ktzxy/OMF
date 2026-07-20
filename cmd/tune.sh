@@ -290,28 +290,33 @@ tune_awr() {
 
     log_step "生成 AWR 报告 (最近 ${days} 天)"
 
-    # 取最近两个快照 id (首尾)
+    # 取最近两个快照 id (首尾) + dbid + inst_num
     local snaps
     snaps=$(as_oracle "sqlplus -s / as sysdba <<SQL
 SET PAGES 0 FEEDBACK OFF HEAD OFF
-SELECT MIN(snap_id) || ' ' || MAX(snap_id) FROM dba_hist_snapshot WHERE begin_interval_time > SYSDATE - ${days};
+SELECT MIN(s.snap_id) || ' ' || MAX(s.snap_id) || ' ' ||
+       d.dbid || ' ' || i.instance_number
+FROM dba_hist_snapshot s, v\$database d, v\$instance i
+WHERE s.begin_interval_time > SYSDATE - ${days};
 EXIT;
-SQL" 2>/dev/null | tr -d '\r' | awk 'NF==2{print; exit}')
+SQL" 2>/dev/null | tr -d '\r' | awk 'NF>=4{print; exit}')
 
-    local begin end
+    local begin end dbid inst
     begin=$(echo "$snaps" | awk '{print $1}')
     end=$(echo "$snaps" | awk '{print $2}')
+    dbid=$(echo "$snaps" | awk '{print $3}')
+    inst=$(echo "$snaps" | awk '{print $4}')
 
-    if [ -z "$begin" ] || [ -z "$end" ] || [ "$begin" = "$end" ]; then
+    if [ -z "$begin" ] || [ -z "$end" ] || [ "$begin" = "$end" ] || [ -z "$dbid" ] || [ -z "$inst" ]; then
         log_error "快照不足 (需要至少 2 个 AWR 快照, 当前: '${snaps}'). 可能原因: 1) 库刚建, 默认 1 小时才采一个快照, 请稍后再试; 2) STATISTICS_LEVEL 非 TYPICAL/ALL; 3) 控制文件里快照已被清理. 可手动建快照: sqlplus / as sysdba -e \"EXEC DBMS_WORKLOAD_REPOSITORY.CREATE_SNAPSHOT;\" 然后间隔数分钟再建一个"
     fi
 
     local report="${out_dir}/awr_${begin}_${end}.html"
-    log_info "快照范围: ${begin} -> ${end}"
+    log_info "快照范围: ${begin} -> ${end} (dbid=${dbid}, inst=${inst})"
 
-    # awrrpt.sql 需要 5 个位置参数: report_type num_days begin_snap end_snap report_name
-    # num_days=0 表示直接用 snap id 定位 (非交互标准写法); 原只传 3 个会导致 end_snap/report_name 交互等待而"卡死"
-    as_oracle "cd ${OMF_CONFIG[ORACLE_HOME]}/rdbms/admin && sqlplus -s / as sysdba @awrrpt.sql html 0 ${begin} ${end} ${report}" 2>&1 | tail -5
+    # 直接调用实例级报告脚本 awrrpti.sql, 参数顺序严格为: dbid inst_num begin_snap end_snap report_name
+    # 它不像 awrrpt.sql 那样经过 awrinput/awrinpnm 链式调用吞掉位置参数, 因此非交互不会卡在交互提示上
+    as_oracle "cd ${OMF_CONFIG[ORACLE_HOME]}/rdbms/admin && sqlplus -s / as sysdba @awrrpti.sql ${dbid} ${inst} ${begin} ${end} ${report}" 2>&1 | tail -8
 
     if [ -f "$report" ] && [ -s "$report" ]; then
         log_info "AWR 报告已生成: $report"

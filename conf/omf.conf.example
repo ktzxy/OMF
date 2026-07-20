@@ -52,6 +52,9 @@ NLS_LANG="AMERICAN_AMERICA.AL32UTF8"
 PROCESSES="1500"
 OPEN_CURSORS="1000"
 REDO_SIZE_MB="2048"
+# FRA (快速恢复区) 大小(MB). 注意: 若配置值超过 FRA 所在磁盘的可用空间,
+# omf db create 会自动下调到"可用空间 - 15GB(预留给数据文件+归档)"并告警, 避免 DBCA 报 DBT-06604 建库失败.
+# 生产环境建议将 /data/oracle 单独挂载到足够大的磁盘, 使此处 40GB 能真实生效.
 FRA_SIZE_MB="40960"
 FRA_SIZE_MB_MIN="20480"
 

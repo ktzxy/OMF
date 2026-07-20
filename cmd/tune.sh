@@ -308,7 +308,7 @@ export PATH=\$ORACLE_HOME/bin:\$PATH; \
 sqlplus -s / as sysdba <<'SQL'
 SET PAGES 0 FEEDBACK OFF HEADING OFF
 SELECT MIN(s.snap_id) || ' ' || MAX(s.snap_id) || ' ' ||
-       d.dbid || ' ' || i.instance_number
+       MAX(d.dbid) || ' ' || MAX(i.instance_number)
 FROM dba_hist_snapshot s, v\$database d, v\$instance i
 WHERE s.begin_interval_time > ${where};
 EXIT;

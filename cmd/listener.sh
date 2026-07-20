@@ -47,20 +47,29 @@ EXIT;
 SQL" 2>/dev/null
 }
 
-listener_start() {
+# 以 oracle 执行 lsnrctl 子命令, 捕获并打印输出, 返回退出码 (便于失败排查)
+listener_exec() {
+    local action="$1"
     set +e
-    oracle_su "export ORACLE_HOME=${OMF_CONFIG[ORACLE_HOME]}; export PATH=\$ORACLE_HOME/bin:\$PATH; lsnrctl start" 2>&1
+    local out
+    out=$(oracle_su "export ORACLE_HOME=${OMF_CONFIG[ORACLE_HOME]}; export PATH=\$ORACLE_HOME/bin:\$PATH; lsnrctl $action" 2>&1)
     local rc=$?
     set -e
+    [ -n "$out" ] && echo "$out"
     return $rc
 }
 
-listener_stop() {
-    set +e
-    oracle_su "export ORACLE_HOME=${OMF_CONFIG[ORACLE_HOME]}; export PATH=\$ORACLE_HOME/bin:\$PATH; lsnrctl stop" 2>&1
-    local rc=$?
-    set -e
-    return $rc
+listener_start() { listener_exec "start"; }
+listener_stop()  { listener_exec "stop"; }
+
+# 等待监听器就绪 (最多 ~6s), 避免 lsnrctl start 后台 fork 后的竞态
+listener_wait_up() {
+    local i
+    for i in 1 2 3 4 5 6; do
+        sleep 1
+        listener_running && return 0
+    done
+    return 1
 }
 
 # 防火墙: 开放新端口, 关闭旧端口 (firewalld 激活时)
@@ -100,10 +109,10 @@ cmd_listener() {
                 log_warn "监听器已在运行"
             else
                 listener_start
-                if listener_running; then
+                if listener_wait_up; then
                     log_info "监听器已启动, 端口: $(listener_port_listening)"
                 else
-                    log_error "监听器启动失败, 查看日志: omf log view listener"
+                    log_error "监听器启动失败, 请手动排查: su - oracle -c 'lsnrctl start'"
                     exit 1
                 fi
             fi
@@ -126,10 +135,10 @@ cmd_listener() {
             set -e
             sleep 2
             listener_start
-            if listener_running; then
+            if listener_wait_up; then
                 log_info "监听器已重启, 端口: $(listener_port_listening)"
             else
-                log_error "监听器重启失败, 查看日志: omf log view listener"
+                log_error "监听器重启失败, 请手动排查: su - oracle -c 'lsnrctl start'"
                 exit 1
             fi
             ;;
@@ -185,8 +194,12 @@ cmd_listener() {
             set -e
             sleep 2
             listener_start
-            if ! listener_running; then
-                log_error "监听器重启失败, 已备份原配置在 ${f}.bak.* , 查看: omf log view listener"
+            if ! listener_wait_up; then
+                log_error "监听器重启失败 (端口 ${newport}), 已备份原配置在 ${f}.bak.*"
+                log_error "请手动排查: su - oracle -c 'lsnrctl start'  (或检查 listener.ora 语法)"
+                echo "----- 当前 listener.ora -----"
+                cat "$f"
+                echo "-----------------------------"
                 exit 1
             fi
             log_info "监听器已在端口 ${newport} 上重启"

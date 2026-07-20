@@ -195,10 +195,17 @@ install_runtime_deps() {
     fi
 
     # 非致命依赖
+    # 注意: libxcrypt 在 CentOS7/RHEL7 等老版本仓库中不存在(libcrypt.so.1 由 glibc 自带),
+    # 直接 yum/dnf install 会报 'No package libxcrypt available' 的迷惑性警告。
+    # 故先查仓库是否真有该包, 没有则跳过, 避免无谓告警。
     for lib in libtirpc libxcrypt; do
         if ! ldconfig -p | grep -q "$lib"; then
-            yum install -y "$lib" "${lib}-devel" 2>/dev/null || \
-            dnf install -y "$lib" "${lib}-devel" 2>/dev/null || true
+            if yum -q list available "$lib" >/dev/null 2>&1 || dnf -q list available "$lib" >/dev/null 2>&1; then
+                yum install -y "$lib" "${lib}-devel" 2>/dev/null || \
+                dnf install -y "$lib" "${lib}-devel" 2>/dev/null || true
+            else
+                log_debug "仓库无 $lib 包 (如 CentOS7 的 libxcrypt), 跳过; libcrypt.so.1 通常由 glibc 提供"
+            fi
         fi
     done
 

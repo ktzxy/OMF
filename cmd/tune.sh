@@ -291,8 +291,9 @@ tune_awr() {
     log_step "生成 AWR 报告 (最近 ${days} 天)"
 
     # 取最近两个快照 id (首尾) + dbid + inst_num
+    # 注意: heredoc 必须用 <<'SQL' (引号) 定界, 否则 as_oracle 内部 eval 会把 v$database/v$instance 的 $ 当 shell 变量展开成空, SQL 直接报错
     local snaps
-    snaps=$(as_oracle "sqlplus -s / as sysdba <<SQL
+    snaps=$(as_oracle "sqlplus -s / as sysdba <<'SQL'
 SET PAGES 0 FEEDBACK OFF HEAD OFF
 SELECT MIN(s.snap_id) || ' ' || MAX(s.snap_id) || ' ' ||
        d.dbid || ' ' || i.instance_number
@@ -307,8 +308,8 @@ SQL" 2>/dev/null | tr -d '\r' | awk 'NF>=4{print; exit}')
     dbid=$(echo "$snaps" | awk '{print $3}')
     inst=$(echo "$snaps" | awk '{print $4}')
 
-    if [ -z "$begin" ] || [ -z "$end" ] || [ "$begin" = "$end" ] || [ -z "$dbid" ] || [ -z "$inst" ]; then
-        log_error "快照不足 (需要至少 2 个 AWR 快照, 当前: '${snaps}'). 可能原因: 1) 库刚建, 默认 1 小时才采一个快照, 请稍后再试; 2) STATISTICS_LEVEL 非 TYPICAL/ALL; 3) 控制文件里快照已被清理. 可手动建快照: sqlplus / as sysdba -e \"EXEC DBMS_WORKLOAD_REPOSITORY.CREATE_SNAPSHOT;\" 然后间隔数分钟再建一个"
+    if ! [[ "$begin" =~ ^[0-9]+$ ]] || ! [[ "$end" =~ ^[0-9]+$ ]] || [ "$begin" = "$end" ] || ! [[ "$dbid" =~ ^[0-9]+$ ]] || ! [[ "$inst" =~ ^[0-9]+$ ]]; then
+        log_error "快照不足或查询异常 (需要至少 2 个 AWR 快照, 当前解析: '${snaps}'). 可能原因: 1) 库刚建, 默认 1 小时才采一个快照, 请稍后再试; 2) STATISTICS_LEVEL 非 TYPICAL/ALL; 3) 控制文件里快照已被清理. 可手动建快照: sqlplus / as sysdba -e \"EXEC DBMS_WORKLOAD_REPOSITORY.CREATE_SNAPSHOT;\" 然后间隔数分钟再建一个"
     fi
 
     local report="${out_dir}/awr_${begin}_${end}.html"

@@ -266,6 +266,15 @@ OMF 面向 **CDB 架构** 的 Oracle 数据库，当前支持：
 | `omf check preflight` | 安装前预检 |
 | `omf check monitor [json|prom]` | 机器可读监控输出 (JSON/Prometheus, 自动持久化快照) |
 
+### 监听器管理 (`omf listener`)
+| 命令 | 说明 |
+|------|------|
+| `omf listener status` | 查看监听器运行状态与端口 |
+| `omf listener start` | 启动监听器 |
+| `omf listener stop` | 停止监听器 |
+| `omf listener restart` | 重启监听器 |
+| `omf listener port <新端口>` | 修改监听端口 (同步 listener.ora / tnsnames.ora / 防火墙 / 配置, 并重启) |
+
 ### 一键总览 / 自更新
 | 命令 | 说明 |
 |------|------|

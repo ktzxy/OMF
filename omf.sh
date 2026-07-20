@@ -72,6 +72,7 @@ usage() {
   tune       性能调优 (内存/存储/会话/分析)
   check      健康检查 (含 preflight 预检)
   status     一键总览 (库/监听/磁盘/备份/日志)
+  listener   监听器管理 (status/start/stop/restart/port)
   log        日志管理
   clean      定时清理
   config     配置管理
@@ -101,6 +102,7 @@ cmd_help() {
         sql)        echo "用法: omf sql {scan|run|init|status|rollback}";;
         tune)       echo "用法: omf tune {memory|storage|session|analyze|awr|apply}";;
         check)      echo "用法: omf check {all|db|disk|perf|alert|listener|preflight|monitor}";;
+        listener)   echo "用法: omf listener {status|start|stop|restart|port <新端口>}";;
         status)     echo "用法: omf status [history [N]]";;
         log)        echo "用法: omf log {view|tail|rotate|clean}";;
         clean)      echo "用法: omf clean {all|archive|schedule}";;
@@ -147,6 +149,7 @@ main() {
         sql)      source "${OMF_HOME}/cmd/sql.sh";      cmd_sql "$@";;
         tune)     source "${OMF_HOME}/cmd/tune.sh";     cmd_tune "$@";;
         check)    source "${OMF_HOME}/cmd/check.sh";    cmd_check "$@";;
+        listener)  source "${OMF_HOME}/cmd/listener.sh";  cmd_listener "$@";;
         status)   source "${OMF_HOME}/cmd/status.sh";   cmd_status "$@";;
         log)      source "${OMF_HOME}/cmd/log.sh";      cmd_log "$@";;
         clean)    source "${OMF_HOME}/cmd/clean.sh";    cmd_clean "$@";;

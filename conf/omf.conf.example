@@ -19,6 +19,8 @@ ORACLE_VERSION="19"
 ORACLE_ZIP=""
 ORACLE_SID="ARTERY"
 PDB_NAME="ARTERYPDB"
+# 监听器端口 (默认 1521); 用 omf listener port <新端口> 修改会同步写回此处
+LISTENER_PORT="1521"
 
 # ===== 内存规划 (用于 SGA / HugePages 估算) =====
 # Oracle 内存占物理内存百分比 (默认 80)

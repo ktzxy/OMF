@@ -67,6 +67,18 @@ db_create() {
         log_warn "FRA 已设为最低 20GB"
     fi
 
+    # 自适应: FRA 配置超过所在磁盘可用空间时自动下调, 避免 DBCA 报 DBT-06604
+    local fra_parent="${OMF_CONFIG[ORACLE_FRA]}"
+    while [ ! -d "$fra_parent" ] && [ "$fra_parent" != "/" ]; do fra_parent=$(dirname "$fra_parent"); done
+    local fra_free; fra_free=$(get_disk_free_mb "$fra_parent" 2>/dev/null || echo 0)
+    local fra_reserve=15360   # 预留给数据文件 + 归档日志的空间
+    local fra_max=$((fra_free - fra_reserve))
+    [ "$fra_max" -lt 20480 ] && fra_max=20480
+    if [ "$fra_size_mb" -gt "$fra_max" ]; then
+        log_warn "FRA 配置 ${fra_size_mb}MB 超过磁盘可用空间 (${fra_free}MB), 已自动下调为 ${fra_max}MB"
+        fra_size_mb=$fra_max
+    fi
+
     local total_gb=$((total_mem / 1024))
 
     # 显示配置确认
@@ -83,11 +95,11 @@ db_create() {
     echo "====================================="
     echo ""
 
-    # 建库前磁盘预检 (数据盘/FRA/备份盘 各需 ≥20GB)
+    # 建库前磁盘预检 (数据盘/备份盘 ≥20GB, FRA 需 ≥ 实际 FRA 配置大小)
     log_step "建库前磁盘预检"
     local -a db_disk_checks=(
         "${OMF_CONFIG[ORACLE_DATA_BASE]}:20480"
-        "${OMF_CONFIG[ORACLE_FRA]}:20480"
+        "${OMF_CONFIG[ORACLE_FRA]}:${fra_size_mb}:err"
         "${OMF_CONFIG[ORACLE_BACKUP]}:20480"
     )
     for entry in "${db_disk_checks[@]}"; do

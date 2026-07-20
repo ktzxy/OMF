@@ -265,11 +265,11 @@ echo \"select log_mode from v\\\$database;\" | sqlplus -s / as sysdba | grep -i 
     local alert_log="$(get_alert_log)"
     if [ -f "$alert_log" ]; then
         local total since_start start_ln
-        total=$(grep -c "ORA-" "$alert_log" 2>/dev/null || echo 0)
+        total=$(grep -c "ORA-" "$alert_log" 2>/dev/null || true)
         # 取最后一次"库完全打开"的日志行号作为边界 (CDB OPEN / PDB 打开)
         start_ln=$(grep -nE "ALTER DATABASE OPEN|Pluggable database .*opened read write|alter pluggable database .* open" "$alert_log" 2>/dev/null | tail -1 | cut -d: -f1)
         if [ -n "$start_ln" ]; then
-            since_start=$(tail -n +"$start_ln" "$alert_log" | grep -c "ORA-" 2>/dev/null || echo 0)
+            since_start=$(tail -n +"$start_ln" "$alert_log" | grep -c "ORA-" 2>/dev/null || true)
         else
             since_start=$total
         fi
@@ -426,10 +426,10 @@ check_alert() {
     echo ""
     echo "=== 统计 ==="
     local total since_start start_ln
-    total=$(grep -c "ORA-" "$alert_log" 2>/dev/null || echo 0)
+    total=$(grep -c "ORA-" "$alert_log" 2>/dev/null || true)
     start_ln=$(grep -nE "ALTER DATABASE OPEN|Pluggable database .*opened read write|alter pluggable database .* open" "$alert_log" 2>/dev/null | tail -1 | cut -d: -f1)
     if [ -n "$start_ln" ]; then
-        since_start=$(tail -n +"$start_ln" "$alert_log" | grep -c "ORA-" 2>/dev/null || echo 0)
+        since_start=$(tail -n +"$start_ln" "$alert_log" | grep -c "ORA-" 2>/dev/null || true)
     else
         since_start=$total
     fi
@@ -474,7 +474,7 @@ echo 'SELECT 1 FROM v\$instance;' | sqlplus -s / as sysdba" &>/dev/null; then
 
     # 3. Alert 日志 ORA- 错误数
     local alert_log="$(get_alert_log)"
-    [ -f "$alert_log" ] && ora_errors=$(grep -c "ORA-" "$alert_log" 2>/dev/null || echo 0)
+    [ -f "$alert_log" ] && ora_errors=$(grep -c "ORA-" "$alert_log" 2>/dev/null || true)
 
     # 4. 状态判定
     if [ "$db_up" -eq 0 ] || [ "$mem_free_pct" -lt 10 ]; then

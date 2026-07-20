@@ -297,7 +297,7 @@ export ORACLE_SID=${OMF_CONFIG[ORACLE_SID]}
 export ORACLE_HOME=${OMF_CONFIG[ORACLE_HOME]}
 export PATH=\$ORACLE_HOME/bin:\$PATH
 
-sqlplus -s / as sysdba <<SQL
+sqlplus -s / as sysdba <<'SQL'
 STARTUP;
 ALTER PLUGGABLE DATABASE ALL OPEN;
 EXIT;
@@ -318,7 +318,7 @@ export ORACLE_SID=${OMF_CONFIG[ORACLE_SID]}
 export ORACLE_HOME=${OMF_CONFIG[ORACLE_HOME]}
 export PATH=\$ORACLE_HOME/bin:\$PATH
 
-sqlplus -s / as sysdba <<SQL
+sqlplus -s / as sysdba <<'SQL'
 ALTER PLUGGABLE DATABASE ALL CLOSE IMMEDIATE;
 SHUTDOWN IMMEDIATE;
 EXIT;
@@ -340,7 +340,7 @@ db_pdb() {
 export ORACLE_SID=${OMF_CONFIG[ORACLE_SID]}
 export ORACLE_HOME=${OMF_CONFIG[ORACLE_HOME]}
 export PATH=\$ORACLE_HOME/bin:\$PATH
-sqlplus -s / as sysdba <<SQL
+sqlplus -s / as sysdba <<'SQL'
 ALTER PLUGGABLE DATABASE ${pdb} OPEN;
 EXIT;
 SQL
@@ -352,7 +352,7 @@ SQL
 export ORACLE_SID=${OMF_CONFIG[ORACLE_SID]}
 export ORACLE_HOME=${OMF_CONFIG[ORACLE_HOME]}
 export PATH=\$ORACLE_HOME/bin:\$PATH
-sqlplus -s / as sysdba <<SQL
+sqlplus -s / as sysdba <<'SQL'
 ALTER PLUGGABLE DATABASE ${pdb} CLOSE IMMEDIATE;
 EXIT;
 SQL
@@ -443,7 +443,7 @@ SQL
 export ORACLE_SID=${OMF_CONFIG[ORACLE_SID]}
 export ORACLE_HOME=${OMF_CONFIG[ORACLE_HOME]}
 export PATH=\$ORACLE_HOME/bin:\$PATH
-sqlplus -s / as sysdba <<SQL
+sqlplus -s / as sysdba <<'SQL'
 ALTER SYSTEM SET log_archive_dest_state_2=ENABLE SCOPE=BOTH;
 EXIT;
 SQL
@@ -530,7 +530,7 @@ EOF
 
     # 3. 启动到 nomount
     log_step "启动备库实例到 NOMOUNT..."
-    as_oracle "export ORACLE_SID=${stb_sid}; sqlplus -s / as sysdba <<SQL
+    as_oracle "export ORACLE_SID=${stb_sid}; sqlplus -s / as sysdba <<'SQL'
 STARTUP NOMOUNT PFILE='${pfile}';
 EXIT;
 SQL"

@@ -164,7 +164,7 @@ export ORACLE_SID=${OMF_CONFIG[ORACLE_SID]}
 export ORACLE_HOME=${OMF_CONFIG[ORACLE_HOME]}
 export PATH=\$ORACLE_HOME/bin:\$PATH
 
-sqlplus -s / as sysdba <<SQL
+sqlplus -s / as sysdba <<'SQL'
 PURGE DBA_RECYCLEBIN;
 EXIT;
 SQL

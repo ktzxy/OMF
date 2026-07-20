@@ -29,7 +29,7 @@ ensure_dump_dir() {
     ensure_backup_dirs
     as_oracle "
 export ORACLE_SID=${ORACLE_SID}
-sqlplus -s / as sysdba <<SQL
+sqlplus -s / as sysdba <<'SQL'
 WHENEVER SQLERROR CONTINUE
 CREATE OR REPLACE DIRECTORY OMF_DUMP AS '${ORACLE_BACKUP}/dump';
 GRANT READ, WRITE ON DIRECTORY OMF_DUMP TO system;

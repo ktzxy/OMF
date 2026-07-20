@@ -29,9 +29,7 @@ cmd_log() {
 }
 
 # 获取日志文件路径
-get_alert_log() {
-    echo "${OMF_CONFIG[ORACLE_BASE]}/diag/rdbms/${OMF_CONFIG[ORACLE_SID]}/${OMF_CONFIG[ORACLE_SID]}/trace/alert_${OMF_CONFIG[ORACLE_SID]}.log"
-}
+# get_alert_log() 已统一在 lib/common.sh 实现 (兼容 19c 文本/XML 及大小写变体)
 
 get_listener_log() {
     echo "${OMF_CONFIG[ORACLE_BASE]}/diag/tnslsnr/$(hostname)/listener/alert/log.xml"

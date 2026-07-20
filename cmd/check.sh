@@ -180,9 +180,9 @@ echo \"select status from v\\\$instance;\" | sqlplus -s / as sysdba
     # 监听器
     echo "--- 监听器检查 ---"
     if oracle_su "${OMF_CONFIG[ORACLE_HOME]}/bin/lsnrctl status" 2>/dev/null | grep -q "Uptime"; then
-        check_item "监听器 (1521)" ok
+        check_item "监听器 (${OMF_CONFIG[LISTENER_PORT]:-1521})" ok
     else
-        check_item "监听器 (1521)" err
+        check_item "监听器 (${OMF_CONFIG[LISTENER_PORT]:-1521})" err
     fi
 
     # 归档模式
@@ -221,17 +221,23 @@ echo \"select log_mode from v\\\$database;\" | sqlplus -s / as sysdba | grep -i 
 
     # 内存
     echo "--- 内存检查 ---"
-    local mem_free
+    local mem_free mem_total mem_pct hp_total hp_free hp_free_mb page_kb hp_info
     mem_free=$(awk '/MemAvailable/ {print int($2/1024)}' /proc/meminfo)
-    local mem_total
     mem_total=$(get_total_memory_mb)
-    local mem_pct=$((mem_free * 100 / mem_total))
+    mem_pct=$((mem_free * 100 / mem_total))
+    # 大页状态: SGA 走大页时, 常规内存被隔离给 SGA, 属预期, 仅作提示
+    hp_total=$(awk '/HugePages_Total/ {print int($2)}' /proc/meminfo)
+    hp_free=$(awk '/HugePages_Free/ {print int($2)}' /proc/meminfo)
+    page_kb=$(awk '/Hugepagesize/ {print int($2)}' /proc/meminfo)
+    hp_free_mb=$(( hp_free * page_kb / 1024 ))
+    hp_info=""
+    [ "$hp_total" -gt 0 ] && hp_info=" (大页 ${hp_total}页, 空闲${hp_free_mb}MB)"
     if [ "$mem_pct" -lt 10 ]; then
-        check_item "可用内存 (${mem_free}MB/${mem_total}MB)" err
+        check_item "可用内存 (${mem_free}MB/${mem_total}MB)${hp_info}" err
     elif [ "$mem_pct" -lt 20 ]; then
-        check_item "可用内存 (${mem_free}MB/${mem_total}MB)" warn
+        check_item "可用内存 (${mem_free}MB/${mem_total}MB)${hp_info}" warn
     else
-        check_item "可用内存 (${mem_free}MB/${mem_total}MB)" ok
+        check_item "可用内存 (${mem_free}MB/${mem_total}MB)${hp_info}" ok
     fi
 
     # CPU
@@ -248,7 +254,7 @@ echo \"select log_mode from v\\\$database;\" | sqlplus -s / as sysdba | grep -i 
 
     # Alert 日志检查
     echo "--- Alert 日志检查 ---"
-    local alert_log="${OMF_CONFIG[ORACLE_BASE]}/diag/rdbms/${OMF_CONFIG[ORACLE_SID]}/${OMF_CONFIG[ORACLE_SID]}/trace/alert_${OMF_CONFIG[ORACLE_SID]}.log"
+    local alert_log="$(get_alert_log)"
     if [ -f "$alert_log" ]; then
         local ora_errors
         ora_errors=$(grep -c "ORA-" "$alert_log" 2>/dev/null || echo 0)
@@ -327,13 +333,13 @@ check_disk() {
 
     echo "=== Oracle 目录磁盘使用 ==="
     if [ -d "${OMF_CONFIG[ORACLE_DATA_BASE]}" ]; then
-        du -sh "${OMF_CONFIG[ORACLE_DATA_BASE]}"/* 2>/dev/null
+        ( shopt -s nullglob; du -sh "${OMF_CONFIG[ORACLE_DATA_BASE]}"/* 2>/dev/null ) || true
     fi
     echo ""
 
     echo "=== 备份目录磁盘使用 ==="
     if [ -d "${OMF_CONFIG[ORACLE_BACKUP]}" ]; then
-        du -sh "${OMF_CONFIG[ORACLE_BACKUP]}"/* 2>/dev/null
+        ( shopt -s nullglob; du -sh "${OMF_CONFIG[ORACLE_BACKUP]}"/* 2>/dev/null ) || true
     fi
 }
 
@@ -351,7 +357,7 @@ SET PAGES 50 LINES 200
 
 PROMPT ===== Top 等待事件 (最近1小时) =====
 SELECT event, total_waits, time_waited_micro/1000000 AS waited_sec,
-       average_wait_micro/1000 AS avg_ms
+       time_waited_micro/NULLIF(total_waits,0)/1000 AS avg_ms
 FROM v\$system_event
 WHERE wait_class != 'Idle' AND time_waited_micro > 0
 ORDER BY time_waited_micro DESC
@@ -382,7 +388,7 @@ SQL
 #===============================================================================
 check_alert() {
     local lines="${1:-200}"
-    local alert_log="${OMF_CONFIG[ORACLE_BASE]}/diag/rdbms/${OMF_CONFIG[ORACLE_SID]}/${OMF_CONFIG[ORACLE_SID]}/trace/alert_${OMF_CONFIG[ORACLE_SID]}.log"
+    local alert_log="$(get_alert_log)"
 
     if [ ! -f "$alert_log" ]; then
         log_error "Alert 日志不存在: $alert_log"
@@ -438,7 +444,7 @@ echo 'SELECT 1 FROM v\$instance;' | sqlplus -s / as sysdba" &>/dev/null; then
     [ "${mem_total:-0}" -gt 0 ] && mem_free_pct=$((mem_free * 100 / mem_total))
 
     # 3. Alert 日志 ORA- 错误数
-    local alert_log="${OMF_CONFIG[ORACLE_BASE]}/diag/rdbms/${OMF_CONFIG[ORACLE_SID]}/${OMF_CONFIG[ORACLE_SID]}/trace/alert_${OMF_CONFIG[ORACLE_SID]}.log"
+    local alert_log="$(get_alert_log)"
     [ -f "$alert_log" ] && ora_errors=$(grep -c "ORA-" "$alert_log" 2>/dev/null || echo 0)
 
     # 4. 状态判定

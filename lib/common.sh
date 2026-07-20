@@ -267,3 +267,21 @@ ensure_backup_dirs() {
              "${base}/controlfile" "${base}/spfile" "${base}/dump"
     chown -R oracle:oinstall "$base" 2>/dev/null || true
 }
+
+# ---- 查找 Alert 日志路径 (兼容 19c 文本/XML 及大小写变体) ----
+get_alert_log() {
+    local sid="${OMF_CONFIG[ORACLE_SID]}"
+    local base="${OMF_CONFIG[ORACLE_BASE]}"
+    local f
+    # 1) 常见文本 alert 日志
+    f="${base}/diag/rdbms/${sid}/${sid}/trace/alert_${sid}.log"
+    [ -f "$f" ] && { echo "$f"; return; }
+    # 2) 大小写/变体: 动态查找文本 alert 日志
+    f=$(find "${base}/diag/rdbms" -type f -name "alert_${sid}.log" 2>/dev/null | head -1)
+    [ -n "$f" ] && { echo "$f"; return; }
+    # 3) XML 格式 alert (19c 默认)
+    f=$(find "${base}/diag/rdbms" -type f -name "log.xml" -path "*alert*" 2>/dev/null | head -1)
+    [ -n "$f" ] && { echo "$f"; return; }
+    # 4) 回退原始假设路径
+    echo "${base}/diag/rdbms/${sid}/${sid}/trace/alert_${sid}.log"
+}

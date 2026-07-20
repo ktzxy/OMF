@@ -65,7 +65,8 @@ SQL" 2>/dev/null); then
 
     echo "──── 备份概览 ────"
     local dmp_cnt
-    dmp_cnt=$(ls -1 "${ORACLE_BACKUP}/dump/"*.dmp 2>/dev/null | wc -l)
+    # 无 dump 目录或目录内无 .dmp 时, ls 返回 2, pipefail 会让整句非零; ||true 防止 set -e 中断 (这是 omf status 在备份概览段崩溃的根因)
+    dmp_cnt=$(ls -1 "${ORACLE_BACKUP}/dump/"*.dmp 2>/dev/null | wc -l || true)
     echo "  逻辑备份(dmp)文件数: ${dmp_cnt}"
     as_oracle "rman target / <<'RMANEOF' 2>/dev/null
 LIST BACKUP SUMMARY;

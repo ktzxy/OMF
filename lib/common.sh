@@ -150,19 +150,25 @@ oracle_su() {
 
 as_oracle() {
     local script="$1"
+    # 环境变量为空时回退到 OMF_CONFIG (omf.sh 入口不会把 ORACLE_HOME 等注入 shell,
+    # 在全新终端直接跑 omf tune apply/awr 时环境变量为空, 否则 sqlplus 找不到导致静默失败)
+    local sid="${ORACLE_SID:-${OMF_CONFIG[ORACLE_SID]:-ARTERY}}"
+    local home="${ORACLE_HOME:-${OMF_CONFIG[ORACLE_HOME]}}"
+    local base="${ORACLE_BASE:-${OMF_CONFIG[ORACLE_BASE]}}"
+    local nls="${NLS_LANG:-AMERICAN_AMERICA.AL32UTF8}"
     if [ "$(id -u)" -eq 0 ]; then
-        oracle_su "export ORACLE_SID=${ORACLE_SID:-ARTERY}; \
-export ORACLE_HOME=${ORACLE_HOME}; \
-export ORACLE_BASE=${ORACLE_BASE}; \
+        oracle_su "export ORACLE_SID=${sid}; \
+export ORACLE_HOME=${home}; \
+export ORACLE_BASE=${base}; \
 export PATH=\$ORACLE_HOME/bin:\$PATH; \
-export NLS_LANG=${NLS_LANG:-AMERICAN_AMERICA.AL32UTF8}; \
+export NLS_LANG=${nls}; \
 $script"
     elif [ "$(whoami)" = "oracle" ]; then
-        export ORACLE_SID="${ORACLE_SID:-ARTERY}"
-        export ORACLE_HOME="${ORACLE_HOME}"
-        export ORACLE_BASE="${ORACLE_BASE}"
-        export PATH="$ORACLE_HOME/bin:$PATH"
-        export NLS_LANG="${NLS_LANG:-AMERICAN_AMERICA.AL32UTF8}"
+        export ORACLE_SID="${sid}"
+        export ORACLE_HOME="${home}"
+        export ORACLE_BASE="${base}"
+        export PATH="$home/bin:$PATH"
+        export NLS_LANG="${nls}"
         eval "$script"
     else
         log_error "需要 root 或 oracle 用户执行"

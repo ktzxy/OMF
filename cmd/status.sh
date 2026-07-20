@@ -26,8 +26,9 @@ cmd_status() {
 
     echo "──── 数据库 ────"
     # 捕获输出: sqlplus 的 ORA- 报错在 stdout, 仅成功时回显, 失败则只显示干净提示
+    # 注意: 赋值放在 if 条件内, 避免 set -e 下 as_oracle 非0退出导致整脚本中断
     local db_out
-    db_out=$(as_oracle "sqlplus -s / as sysdba <<'SQL'
+    if db_out=$(as_oracle "sqlplus -s / as sysdba <<'SQL'
 SET LINES 200 PAGES 0 FEEDBACK OFF
 WHENEVER SQLERROR EXIT SQL.SQLCODE
 WHENEVER OSERROR EXIT FAILURE
@@ -35,9 +36,12 @@ SELECT '  实例: '||instance_name||'  '||status||'  启动于 '||TO_CHAR(startu
 SELECT '  数据库: '||name||'  '||open_mode||'  '||database_role||'  归档:'||log_mode FROM v\$database;
 SELECT '  PDB:  '||name||'  '||open_mode FROM v\$pdbs;
 EXIT;
-SQL" 2>/dev/null)
-    if [ $? -eq 0 ] && [ -n "$db_out" ]; then
-        echo "$db_out"
+SQL" 2>/dev/null); then
+        if [ -n "$db_out" ]; then
+            echo "$db_out"
+        else
+            echo "  数据库未运行或无法连接"
+        fi
     else
         echo "  数据库未运行或无法连接"
     fi

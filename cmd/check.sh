@@ -477,9 +477,17 @@ echo 'SELECT 1 FROM v\$instance;' | sqlplus -s / as sysdba" &>/dev/null; then
     mem_free=$(( mem_free + hp_free * page_kb / 1024 ))
     [ "${mem_total:-0}" -gt 0 ] && mem_free_pct=$((mem_free * 100 / mem_total))
 
-    # 3. Alert 日志 ORA- 错误数
+    # 3. Alert 日志 ORA- 错误数 (仅计本次启动以来, 与 check alert 口径一致, 避免历史错误致监控持续 warn)
     local alert_log="$(get_alert_log)"
-    [ -f "$alert_log" ] && ora_errors=$(grep -c "ORA-" "$alert_log" 2>/dev/null || true)
+    if [ -f "$alert_log" ]; then
+        local start_ln
+        start_ln=$(grep -nE "ALTER DATABASE OPEN|Pluggable database .*opened read write|alter pluggable database .* open" "$alert_log" 2>/dev/null | tail -1 | cut -d: -f1)
+        if [ -n "$start_ln" ]; then
+            ora_errors=$(tail -n +"$start_ln" "$alert_log" | grep -c "ORA-" 2>/dev/null || true)
+        else
+            ora_errors=$(grep -c "ORA-" "$alert_log" 2>/dev/null || true)
+        fi
+    fi
 
     # 4. 状态判定
     if [ "$db_up" -eq 0 ] || [ "$mem_free_pct" -lt 10 ]; then

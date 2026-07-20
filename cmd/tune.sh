@@ -210,7 +210,7 @@ SELECT 'Snapshot count: ' || COUNT(*) FROM dba_hist_snapshot;
 
 PROMPT
 PROMPT === 最近 AWR 报告建议 ===
-SELECT 'Use: @?\rdbms\admin\awrrpt.sql to generate AWR report' FROM dual;
+SELECT 'Use: omf tune awr [days] to generate AWR report' FROM dual;
 
 PROMPT
 PROMPT === 自动内存建议 ===
@@ -223,8 +223,9 @@ EXIT;
 SQL
 "
     echo ""
-    echo "生成 AWR 报告:"
-    echo "  oracle_su 'cd \$ORACLE_HOME/rdbms/admin && sqlplus / as sysdba @awrrpt.sql'"
+    echo "生成 AWR 报告 (非交互, 调用 DBMS_WORKLOAD_REPOSITORY.AWR_REPORT_HTML):"
+    echo "  omf tune awr            # 生成最近 1 天 AWR 报告"
+    echo "  omf tune awr 3         # 生成最近 3 天 AWR 报告"
 }
 
 #===============================================================================

@@ -232,12 +232,14 @@ echo \"select log_mode from v\\\$database;\" | sqlplus -s / as sysdba | grep -i 
     local mem_free mem_total mem_pct hp_total hp_free hp_free_mb page_kb hp_info
     mem_free=$(awk '/MemAvailable/ {print int($2/1024)}' /proc/meminfo)
     mem_total=$(get_total_memory_mb)
-    mem_pct=$((mem_free * 100 / mem_total))
     # 大页状态: SGA 走大页时, 常规内存被隔离给 SGA, 属预期, 仅作提示
     hp_total=$(awk '/HugePages_Total/ {print int($2)}' /proc/meminfo)
     hp_free=$(awk '/HugePages_Free/ {print int($2)}' /proc/meminfo)
     page_kb=$(awk '/Hugepagesize/ {print int($2)}' /proc/meminfo)
     hp_free_mb=$(( hp_free * page_kb / 1024 ))
+    # 空闲大页可被释放回 OS, 计入可用内存; 否则 SGA 跑在大页时 MemAvailable 不含大页会误报内存不足
+    mem_free=$(( mem_free + hp_free_mb ))
+    mem_pct=$((mem_free * 100 / mem_total))
     hp_info=""
     [ "$hp_total" -gt 0 ] && hp_info=" (大页 ${hp_total}页, 空闲${hp_free_mb}MB)"
     if [ "$mem_pct" -lt 10 ]; then
@@ -466,10 +468,13 @@ echo 'SELECT 1 FROM v\$instance;' | sqlplus -s / as sysdba" &>/dev/null; then
         db_up=1
     fi
 
-    # 2. 内存可用率
-    local mem_free mem_total
+    # 2. 内存可用率 (空闲大页计入可用, 避免 SGA 走大页时误报)
+    local mem_free mem_total hp_free page_kb
     mem_free=$(awk '/MemAvailable/ {print int($2/1024)}' /proc/meminfo)
     mem_total=$(get_total_memory_mb)
+    hp_free=$(awk '/HugePages_Free/ {print int($2)}' /proc/meminfo)
+    page_kb=$(awk '/Hugepagesize/ {print int($2)}' /proc/meminfo)
+    mem_free=$(( mem_free + hp_free * page_kb / 1024 ))
     [ "${mem_total:-0}" -gt 0 ] && mem_free_pct=$((mem_free * 100 / mem_total))
 
     # 3. Alert 日志 ORA- 错误数

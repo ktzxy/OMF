@@ -401,11 +401,25 @@ EOF
     chown oracle:oinstall "$parfile" 2>/dev/null || true
     chmod 600 "$parfile"
     set +e
-    as_oracle "impdp parfile=${parfile}" 2>&1 | tee "${ORACLE_BACKUP}/dump/restore_$(date +%Y%m%d_%H%M%S).log"
+    local restore_log="${ORACLE_BACKUP}/dump/restore_$(date +%Y%m%d_%H%M%S).log"
+    as_oracle "impdp parfile=${parfile}" 2>&1 | tee "$restore_log"
     local rc=${PIPESTATUS[0]}
     set -e
     rm -f "$parfile"
-    [ "$rc" -eq 0 ] && log_info "逻辑恢复完成 (PDB=${pdb})" || log_error "逻辑恢复失败, 查看上方日志"
+
+    if [ "$rc" -eq 0 ]; then
+        log_info "逻辑恢复完成 (PDB=${pdb})"
+    else
+        # impdp 把"对象已存在"(ORA-31684)也计入 error, 但属非致命, 不影响数据导入
+        # 若日志中除 ORA-31684 外无其他 ORA- 错误, 视为恢复成功(仅告警)
+        local fatal
+        fatal=$(grep -E "ORA-[0-9]{5}" "$restore_log" | grep -v "ORA-31684" | head -1)
+        if [ -z "$fatal" ]; then
+            log_info "逻辑恢复完成 (PDB=${pdb}), 仅存在'对象已存在'(ORA-31684)提示, 不影响数据"
+        else
+            log_error "逻辑恢复失败, 查看日志: $restore_log"
+        fi
+    fi
 }
 
 # 物理恢复 (RMAN): 支持 SCN / 时间点 不完全恢复, 或完全恢复

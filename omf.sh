@@ -98,7 +98,7 @@ cmd_help() {
         env)        echo "用法: omf env {prepare|user|kernel|deps|dirs|vars|firewall|all}";;
         install)    echo "用法: omf install {software|listener|check} [zip路径] [EE|SE]";;
         db)         echo "用法: omf db {create|start|stop|restart|status|pdb|dg|archivelog}";;
-        backup)     echo "用法: omf backup {logical|physical|incremental|archive|auto|schedule|list|cleanup}";;
+        backup)     echo "用法: omf backup {logical|physical|incremental|archive|auto|schedule|list|validate|restore} [--all|--root|--pdb a,b]";;
         sql)        echo "用法: omf sql {scan|run|init|status|rollback}";;
         tune)       echo "用法: omf tune {memory|storage|session|analyze|awr|apply}";;
         check)      echo "用法: omf check {all|db|disk|perf|alert|listener|preflight|monitor}";;

@@ -20,7 +20,7 @@ cmd_backup() {
         list)          backup_list "$@";;
         validate)      backup_validate "$@";;
         restore)       backup_restore "$@";;
-        *) echo "用法: omf backup {auto|full|physical|incr|archive|schedule|list|validate|restore}"; exit 1;;
+        *) echo "用法: omf backup {auto|full|physical|incr|archive|schedule|list|validate|restore} [--all|--root|--pdb a,b]"; exit 1;;
     esac
 }
 
@@ -49,6 +49,35 @@ require_archivelog() {
     # 查询失败(既非 ARCHIVELOG 也非 NOARCHIVELOG)时不阻断, 交由 RMAN 自行报错
 }
 
+# 解析范围参数 (--all / --root / --pdb <name[,name2]>), 设置全局变量:
+#   SCOPE_MODE : all | root | pdb | ""(未指定, 由调用方决定默认)
+#   SCOPE_PDBS : 逗号分隔的 PDB 名 (仅 pdb 模式)
+#   SCOPE_REST : 去除范围参数后的剩余参数 (供调用方继续解析 --scn/--time 等)
+parse_scope() {
+    SCOPE_MODE=""
+    SCOPE_PDBS=""
+    local rest=()
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --all)  SCOPE_MODE="all"; shift;;
+            --root) SCOPE_MODE="root"; shift;;
+            --pdb)  SCOPE_MODE="pdb"; SCOPE_PDBS="${2:-}"; shift 2;;
+            *)      rest+=("$1"); shift;;
+        esac
+    done
+    SCOPE_REST=("${rest[@]}")
+}
+
+# 根据 SCOPE_MODE/SCOPE_PDBS 输出 RMAN 对象表达式 (DATABASE / DATABASE ROOT / PLUGGABLE DATABASE x,y)
+# 供 BACKUP/RESTORE/RECOVER/VALIDATE 拼接使用
+scope_clause() {
+    case "${SCOPE_MODE:-all}" in
+        root) echo "DATABASE ROOT";;
+        pdb)  echo "PLUGGABLE DATABASE ${SCOPE_PDBS}";;
+        all|"") echo "DATABASE";;
+    esac
+}
+
 # 配置驱动的自动备份
 backup_auto() {
     local mode="${BACKUP_MODE:-both}"
@@ -62,23 +91,60 @@ backup_auto() {
 }
 
 #===============================================================================
-# 逻辑备份 (expdp 全库) -> 落盘到 ${ORACLE_BACKUP}/dump
+# 逻辑备份 (expdp) -> 落盘到 ${ORACLE_BACKUP}/dump
+#   默认: 仅配置 PDB_NAME;  --all: 所有 PDB 各导一份;  --pdb a,b: 指定 PDB;  --root: CDB$ROOT
 #===============================================================================
 backup_logical() {
     require_db_user
+    parse_scope "$@"
     ensure_dump_dir
 
+    local log_file="$OMF_RUN_LOG"
+    local pdbs=()
+    case "${SCOPE_MODE:-single}" in
+        all)
+            log_step "解析所有 PDB 列表"
+            mapfile -t pdbs < <(as_oracle "echo \"set pagesize 0 feedback off heading off; select name from v\\\\\$pdbs;\" | sqlplus -s / as sysdba" 2>/dev/null \
+                | sed 's/[[:space:]]//g' | grep -v '^$')
+            [ "${#pdbs[@]}" -gt 0 ] || log_error "未查询到任何 PDB, 请确认数据库已打开"
+            ;;
+        root)
+            pdbs=("CDB\$ROOT")
+            ;;
+        pdb)
+            local IFS=','; read -r -a pdbs <<< "$SCOPE_PDBS"
+            ;;
+        single|"")
+            pdbs=("$PDB_NAME")
+            ;;
+    esac
+
+    for pdb in "${pdbs[@]}"; do
+        backup_logical_one "$pdb" "$log_file"
+    done
+    backup_cleanup "dump" "${BACKUP_RETENTION_DAYS}"
+}
+
+# 单个 PDB/CDB$ROOT 的 expdp 全库导出
+backup_logical_one() {
+    local pdb="$1"; local log_file="$2"
     local ts=$(date '+%Y%m%d_%H%M%S')
     local dump_dir="${ORACLE_BACKUP}/dump"
-    local parfile="/tmp/omf_expdp_${ts}.par"
-    local log_file="$OMF_RUN_LOG"
+    local parfile="/tmp/omf_expdp_${pdb}_${ts}.par"
+
+    local connect
+    if [ "$pdb" = "CDB\$ROOT" ]; then
+        connect="system/${SYSTEM_PASSWORD}"
+    else
+        connect="system/${SYSTEM_PASSWORD}@${pdb}"
+    fi
 
     # 用 parfile 避免密码出现在 ps
     cat > "$parfile" << EOF
-USERID=system/${SYSTEM_PASSWORD}@${PDB_NAME}
+USERID=${connect}
 DIRECTORY=OMF_DUMP
-DUMPFILE=full_${ts}_%U.dmp
-LOGFILE=full_${ts}.log
+DUMPFILE=full_${pdb}_${ts}_%U.dmp
+LOGFILE=full_${pdb}_${ts}.log
 FULL=Y
 COMPRESSION=${BACKUP_COMPRESSION}
 PARALLEL=${BACKUP_PARALLEL}
@@ -88,7 +154,7 @@ EOF
     chown oracle:oinstall "$parfile" 2>/dev/null || true
     chmod 600 "$parfile"
 
-    log_step "逻辑全量备份开始 (expdp) -> ${dump_dir}"
+    log_step "逻辑全量备份开始 (expdp -> PDB=${pdb}) -> ${dump_dir}"
     set +e
     as_oracle "expdp parfile=${parfile}" 2>&1 | tee -a "$log_file"
     local rc=${PIPESTATUS[0]}
@@ -98,11 +164,10 @@ EOF
     rm -f "$parfile"
 
     if [ "$rc" -eq 0 ] && grep -qi "successfully completed" "$log_file"; then
-        log_info "逻辑全量备份完成: ${dump_dir}/full_${ts}_*.dmp"
-        backup_cleanup "dump" "${BACKUP_RETENTION_DAYS}"
+        log_info "逻辑全量备份完成 (PDB=${pdb}): ${dump_dir}/full_${pdb}_${ts}_*.dmp"
     else
-        send_notification "OMF 逻辑备份失败" "日志: $log_file"
-        log_error "逻辑备份失败, 查看日志: $log_file"
+        send_notification "OMF 逻辑备份失败 (PDB=${pdb})" "日志: $log_file"
+        log_error "逻辑备份失败 (PDB=${pdb}), 查看日志: $log_file"
     fi
 }
 
@@ -111,15 +176,18 @@ EOF
 #===============================================================================
 backup_incremental() {
     require_db_user
+    parse_scope "$@"
+    [ -z "$SCOPE_MODE" ] && SCOPE_MODE="all"   # 物理默认整 CDB
     require_archivelog
     ensure_backup_dirs
 
-    local level="${1:-1}"
+    local level="${SCOPE_REST[0]:-1}"
     local ts=$(date '+%Y%m%d_%H%M%S')
     local backup_dir="${ORACLE_BACKUP}/incremental"
     local log_file="$OMF_RUN_LOG"
+    local sc=$(scope_clause)
 
-    log_step "RMAN 增量备份 (Level $level)"
+    log_step "RMAN 增量备份 (Level $level, scope=${SCOPE_MODE})"
     set +e
     as_oracle "rman target / <<RMANEOF
 CONFIGURE BACKUP OPTIMIZATION ON;
@@ -127,7 +195,7 @@ CONFIGURE RETENTION POLICY TO RECOVERY WINDOW OF ${BACKUP_RETENTION_DAYS} DAYS;
 CONFIGURE DEVICE TYPE DISK PARALLELISM ${BACKUP_PARALLEL};
 CONFIGURE CHANNEL DEVICE TYPE DISK FORMAT '${backup_dir}/%d_%T_%s_%p';
 RUN {
-    BACKUP INCREMENTAL LEVEL ${level} DATABASE PLUS ARCHIVELOG;
+    BACKUP INCREMENTAL LEVEL ${level} ${sc} PLUS ARCHIVELOG;
     BACKUP CURRENT CONTROLFILE FORMAT '${ORACLE_BACKUP}/controlfile/controlfile_%d_%T_%s';
     BACKUP SPFILE FORMAT '${ORACLE_BACKUP}/spfile/spfile_%d_%T_%s';
 }
@@ -152,17 +220,20 @@ RMANEOF" 2>&1 | tail -3
 #===============================================================================
 backup_archive() {
     require_db_user
+    parse_scope "$@"
     require_archivelog
     ensure_backup_dirs
 
     local ts=$(date '+%Y%m%d_%H%M%S')
     local backup_dir="${ORACLE_BACKUP}/archive"
     local log_file="$OMF_RUN_LOG"
+    local arch_clause="ARCHIVELOG ALL"
+    [ "$SCOPE_MODE" = "pdb" ] && arch_clause="ARCHIVELOG FOR PLUGGABLE DATABASE ${SCOPE_PDBS}"
 
-    log_step "归档日志备份"
+    log_step "归档日志备份 (scope=${SCOPE_MODE:-all})"
     set +e
     as_oracle "rman target / <<RMANEOF
-BACKUP ARCHIVELOG ALL FORMAT '${backup_dir}/arch_%d_%T_%s_%p';
+BACKUP ${arch_clause} FORMAT '${backup_dir}/arch_%d_%T_%s_%p';
 RMANEOF" 2>&1 | tee "$log_file"
     local rc=${PIPESTATUS[0]}
     set -e
@@ -176,21 +247,24 @@ RMANEOF" 2>&1 | tee "$log_file"
 #===============================================================================
 backup_physical() {
     require_db_user
+    parse_scope "$@"
+    [ -z "$SCOPE_MODE" ] && SCOPE_MODE="all"   # 物理默认整 CDB
     require_archivelog
     ensure_backup_dirs
 
     local ts=$(date '+%Y%m%d_%H%M%S')
     local backup_dir="${ORACLE_BACKUP}/full"
     local log_file="$OMF_RUN_LOG"
+    local sc=$(scope_clause)
 
-    log_step "RMAN 物理全量备份"
+    log_step "RMAN 物理全量备份 (scope=${SCOPE_MODE})"
     set +e
     as_oracle "rman target / <<RMANEOF
 CONFIGURE RETENTION POLICY TO RECOVERY WINDOW OF ${BACKUP_RETENTION_DAYS} DAYS;
 CONFIGURE DEVICE TYPE DISK PARALLELISM ${BACKUP_PARALLEL};
 CONFIGURE CHANNEL DEVICE TYPE DISK FORMAT '${backup_dir}/%d_%T_%s_%p';
 RUN {
-    BACKUP AS COMPRESSED BACKUPSET DATABASE PLUS ARCHIVELOG;
+    BACKUP AS COMPRESSED BACKUPSET ${sc} PLUS ARCHIVELOG;
     BACKUP CURRENT CONTROLFILE FORMAT '${ORACLE_BACKUP}/controlfile/controlfile_%d_%T_%s';
     BACKUP SPFILE FORMAT '${ORACLE_BACKUP}/spfile/spfile_%d_%T_%s';
 }
@@ -246,30 +320,47 @@ backup_restore() {
     fi
     if [ -z "$arg" ]; then
         echo "用法:"
-        echo "  omf backup restore <dumpfile>                                 逻辑恢复(impdp)"
-        echo "  omf backup restore --rman [--scn <SCN>] [--time 'YYYY-MM-DD HH24:MI:SS']  物理恢复"
-        echo "  omf backup restore --rman --validate                          校验备份可恢复性"
+        echo "  omf backup restore <dumpfile> [--pdb <PDB>]                  逻辑恢复(impdp)"
+        echo "  omf backup restore --rman [--all|--root|--pdb a,b] [--scn <SCN>] [--time 'YYYY-MM-DD HH24:MI:SS']  物理恢复"
+        echo "  omf backup restore --rman [--all|--root|--pdb a,b] --validate 校验备份可恢复性"
         echo ""
         echo "可用逻辑备份:"
         ls -1 "${ORACLE_BACKUP}/dump/"*.dmp 2>/dev/null || echo "(无)"
         exit 1
     fi
-    restore_logical "$arg"
+    restore_logical "$@"
 }
 
 # 逻辑恢复 (impdp 全库 REPLACE)
+#   用法: omf backup restore <dump> [--pdb <name>]
+#   默认恢复到配置 PDB_NAME; --pdb 指定恢复到目标 PDB
 restore_logical() {
-    local dump_file="$1"
+    local dump_arg="" pdb=""
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --pdb) pdb="$2"; shift 2;;
+            *)     dump_arg="$1"; shift;;
+        esac
+    done
+    local dump_file="$dump_arg"
     [ -f "$dump_file" ] || dump_file="${ORACLE_BACKUP}/dump/$(basename "$dump_file")"
     [ -f "$dump_file" ] || log_error "备份文件不存在: $dump_file"
+    [ -z "$pdb" ] && pdb="$PDB_NAME"
 
-    confirm "确认逻辑恢复 ${dump_file}? 这将覆盖现有数据!"
-    log_step "开始逻辑恢复: $dump_file"
+    confirm "确认逻辑恢复 ${dump_file} -> PDB=${pdb}? 这将覆盖现有数据!"
+    log_step "开始逻辑恢复: $dump_file -> PDB=${pdb}"
     ensure_dump_dir
+
+    local connect
+    if [ "$pdb" = "CDB\$ROOT" ]; then
+        connect="system/${SYSTEM_PASSWORD}"
+    else
+        connect="system/${SYSTEM_PASSWORD}@${pdb}"
+    fi
 
     local parfile="/tmp/omf_impdp.par"
     cat > "$parfile" << EOF
-USERID=system/${SYSTEM_PASSWORD}@${PDB_NAME}
+USERID=${connect}
 DIRECTORY=OMF_DUMP
 DUMPFILE=$(basename "$dump_file")
 FULL=Y
@@ -282,25 +373,30 @@ EOF
     local rc=${PIPESTATUS[0]}
     set -e
     rm -f "$parfile"
-    [ "$rc" -eq 0 ] && log_info "逻辑恢复完成" || log_error "逻辑恢复失败, 查看上方日志"
+    [ "$rc" -eq 0 ] && log_info "逻辑恢复完成 (PDB=${pdb})" || log_error "逻辑恢复失败, 查看上方日志"
 }
 
 # 物理恢复 (RMAN): 支持 SCN / 时间点 不完全恢复, 或完全恢复
 restore_rman() {
     require_db_user
+    parse_scope "$@"
+    [ -z "$SCOPE_MODE" ] && SCOPE_MODE="all"
+    local sc=$(scope_clause)
+
     local scn="" rman_time="" validate=0
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-            --scn)        scn="$2"; shift 2;;
-            --time|--until-time) rman_time="$2"; shift 2;;
-            --validate)   validate=1; shift;;
-            *) shift;;
+    local i=0
+    while [[ $i -lt ${#SCOPE_REST[@]} ]]; do
+        case "${SCOPE_REST[$i]}" in
+            --scn)        scn="${SCOPE_REST[$((i+1))]}"; i=$((i+2));;
+            --time|--until-time) rman_time="${SCOPE_REST[$((i+1))]}"; i=$((i+2));;
+            --validate)   validate=1; i=$((i+1));;
+            *)            i=$((i+1));;
         esac
     done
 
     # 仅校验: 不修改数据库, 检查备份集完整性
     if [ "$validate" -eq 1 ]; then
-        log_step "校验备份可恢复性 (RESTORE VALIDATE)"
+        log_step "校验备份可恢复性 (RESTORE VALIDATE, scope=${SCOPE_MODE})"
 
         # 前置判断: 无任何 RMAN 备份集时, 直接提示并退出, 避免把 RMAN 错误栈暴露给用户
         local rman_list
@@ -316,7 +412,7 @@ RMANEOF" 2>&1) || true
         fi
 
         as_oracle "rman target / <<RMANEOF
-RESTORE DATABASE VALIDATE;
+RESTORE ${sc} VALIDATE;
 RESTORE ARCHIVELOG ALL VALIDATE;
 RMANEOF"
         return 0
@@ -329,11 +425,19 @@ RMANEOF"
         until_clause="SET UNTIL TIME \"TO_DATE('$rman_time','YYYY-MM-DD HH24:MI:SS')\";"
     fi
 
+    # PDB 级恢复需先将目标 PDB 置于 MOUNT
+    local pre_sql=""
+    if [ "$SCOPE_MODE" = "pdb" ]; then
+        pre_sql="sql 'alter pluggable database ${SCOPE_PDBS} close immediate';
+    sql 'alter pluggable database ${SCOPE_PDBS} mount';"
+    fi
+
     if [ -z "$until_clause" ]; then
         log_warn "未指定 --scn/--time, 将执行【完全恢复】到最新归档 (不 OPEN RESETLOGS)"
     else
         log_warn "将执行【不完全恢复】${until_clause}"
     fi
+    log_warn "恢复范围: ${SCOPE_MODE}$([ "$SCOPE_MODE" = "pdb" ] && echo " (${SCOPE_PDBS})")"
 
     confirm "确认执行物理恢复? 这将用备份覆盖当前数据文件!"
 
@@ -341,16 +445,19 @@ RMANEOF"
     set +e
     as_oracle "rman target / <<RMANEOF
 RUN {
+    ${pre_sql}
     ${until_clause}
-    RESTORE DATABASE;
-    RECOVER DATABASE;
+    RESTORE ${sc};
+    RECOVER ${sc};
 }
 RMANEOF"
     local rc=$?
     set -e
 
     if [ "$rc" -eq 0 ]; then
-        if [ -n "$until_clause" ]; then
+        if [ "$SCOPE_MODE" = "pdb" ]; then
+            log_info "PDB 恢复完成. 打开 PDB: ALTER PLUGGABLE DATABASE ${SCOPE_PDBS} OPEN;"
+        elif [ -n "$until_clause" ]; then
             log_info "不完全恢复完成. 需以 RESETLOGS 打开: ALTER DATABASE OPEN RESETLOGS;"
         else
             log_info "完全恢复完成. 可直接 ALTER DATABASE OPEN; (或 STARTUP)"
@@ -365,7 +472,10 @@ RMANEOF"
 #===============================================================================
 backup_validate() {
     require_db_user
-    log_step "备份可恢复性校验"
+    parse_scope "$@"
+    [ -z "$SCOPE_MODE" ] && SCOPE_MODE="all"
+    local sc=$(scope_clause)
+    log_step "备份可恢复性校验 (scope=${SCOPE_MODE})"
 
     # 前置判断: 无任何 RMAN 备份集时, 直接提示并退出, 避免把 RMAN 错误栈暴露给用户
     local rman_list
@@ -381,7 +491,7 @@ RMANEOF" 2>&1) || true
     fi
 
     as_oracle "rman target / <<RMANEOF
-RESTORE DATABASE VALIDATE;
+RESTORE ${sc} VALIDATE;
 RESTORE ARCHIVELOG ALL VALIDATE;
 RMANEOF"
 

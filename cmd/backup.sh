@@ -33,9 +33,18 @@ sqlplus -s / as sysdba <<'SQL'
 WHENEVER SQLERROR CONTINUE
 CREATE OR REPLACE DIRECTORY OMF_DUMP AS '${ORACLE_BACKUP}/dump';
 GRANT READ, WRITE ON DIRECTORY OMF_DUMP TO system;
+-- 目录对象按容器隔离, 在每个已打开的 PDB 中也创建 OMF_DUMP
+BEGIN
+    FOR r IN (SELECT name FROM v\$pdbs WHERE open_mode = 'READ WRITE') LOOP
+        EXECUTE IMMEDIATE 'ALTER SESSION SET CONTAINER=' || r.name;
+        EXECUTE IMMEDIATE 'CREATE OR REPLACE DIRECTORY OMF_DUMP AS ''${ORACLE_BACKUP}/dump''';
+        EXECUTE IMMEDIATE 'GRANT READ, WRITE ON DIRECTORY OMF_DUMP TO system';
+    END LOOP;
+END;
+/
 EXIT;
 SQL
-" 2>&1 | tail -3
+" 2>&1 | tail -5
 }
 
 # RMAN 物理/增量/归档备份的前置条件: 数据库须处于 ARCHIVELOG 模式.
@@ -136,12 +145,14 @@ backup_logical_one() {
     if [ "$pdb" = "CDB\$ROOT" ]; then
         connect="system/${SYSTEM_PASSWORD}"
     else
-        connect="system/${SYSTEM_PASSWORD}@${pdb}"
+        # EZCONNECT: 不依赖 tnsnames 别名, 直接连 PDB 服务名
+        connect="system/${SYSTEM_PASSWORD}@//localhost:${LISTENER_PORT}/${pdb}"
     fi
 
-    # 用 parfile 避免密码出现在 ps
+    # 用 parfile 避免密码出现在 ps; 密码含 #/! 等特殊字符时须用双引号包裹 USERID,
+    # 否则 Data Pump 会把 # 当作注释导致密码被截断 (ORA-01017)
     cat > "$parfile" << EOF
-USERID=${connect}
+USERID="${connect}"
 DIRECTORY=OMF_DUMP
 DUMPFILE=full_${pdb}_${ts}_%U.dmp
 LOGFILE=full_${pdb}_${ts}.log
@@ -355,12 +366,12 @@ restore_logical() {
     if [ "$pdb" = "CDB\$ROOT" ]; then
         connect="system/${SYSTEM_PASSWORD}"
     else
-        connect="system/${SYSTEM_PASSWORD}@${pdb}"
+        connect="system/${SYSTEM_PASSWORD}@//localhost:${LISTENER_PORT}/${pdb}"
     fi
 
     local parfile="/tmp/omf_impdp.par"
     cat > "$parfile" << EOF
-USERID=${connect}
+USERID="${connect}"
 DIRECTORY=OMF_DUMP
 DUMPFILE=$(basename "$dump_file")
 FULL=Y

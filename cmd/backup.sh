@@ -413,7 +413,9 @@ EOF
         # impdp 把"对象已存在"(ORA-31684)也计入 error, 但属非致命, 不影响数据导入
         # 若日志中除 ORA-31684 外无其他 ORA- 错误, 视为恢复成功(仅告警)
         local fatal
-        fatal=$(grep -E "ORA-[0-9]{5}" "$restore_log" | grep -v "ORA-31684" | head -1)
+        # 注意: 当日志全是 ORA-31684 时, grep -v 排除后管道返回非0, 在 set -e 下会误杀脚本,
+        # 故加 || true 保证赋值语句始终成功
+        fatal=$(grep -E "ORA-[0-9]{5}" "$restore_log" 2>/dev/null | grep -v "ORA-31684" | head -1) || true
         if [ -z "$fatal" ]; then
             log_info "逻辑恢复完成 (PDB=${pdb}), 仅存在'对象已存在'(ORA-31684)提示, 不影响数据"
         else

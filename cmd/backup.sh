@@ -354,8 +354,28 @@ restore_logical() {
         esac
     done
     local dump_file="$dump_arg"
-    [ -f "$dump_file" ] || dump_file="${ORACLE_BACKUP}/dump/$(basename "$dump_file")"
-    [ -f "$dump_file" ] || log_error "备份文件不存在: $dump_file"
+    local dump_basename="$(basename "$dump_arg")"
+
+    # %U 是 Data Pump 并行分片通配符, 磁盘上无真实文件, 跳过存在性检查
+    if [[ "$dump_basename" != *%U* ]]; then
+        [ -f "$dump_file" ] || dump_file="${ORACLE_BACKUP}/dump/${dump_basename}"
+        [ -f "$dump_file" ] || log_error "备份文件不存在: $dump_file"
+    fi
+
+    # 自动处理并行分片: 传任意一个具体分片(如 _01.dmp)时, 若同批次存在多个分片,
+    # 自动改写为 %U 形式, 让 impdp 读入完整备份集, 避免只恢复单个分片导致数据不全
+    if [[ "$dump_basename" != *%U* ]]; then
+        local prefix="${dump_basename%_[0-9]*.dmp}"
+        if [ "$prefix" != "$dump_basename" ]; then
+            local shards
+            shards=$(ls -1 "${ORACLE_BACKUP}/dump/${prefix}"_*.dmp 2>/dev/null | wc -l)
+            if [ "$shards" -gt 1 ]; then
+                dump_basename="${prefix}_%U.dmp"
+                log_info "检测到 ${shards} 个并行分片, 自动改用 %U 形式: ${dump_basename}"
+            fi
+        fi
+    fi
+
     [ -z "$pdb" ] && pdb="$PDB_NAME"
 
     confirm "确认逻辑恢复 ${dump_file} -> PDB=${pdb}? 这将覆盖现有数据!"
@@ -373,7 +393,7 @@ restore_logical() {
     cat > "$parfile" << EOF
 USERID="${connect}"
 DIRECTORY=OMF_DUMP
-DUMPFILE=$(basename "$dump_file")
+DUMPFILE=${dump_basename}
 FULL=Y
 TABLE_EXISTS_ACTION=REPLACE
 PARALLEL=${BACKUP_PARALLEL}

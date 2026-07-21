@@ -398,6 +398,7 @@ FULL=Y
 TABLE_EXISTS_ACTION=REPLACE
 PARALLEL=${BACKUP_PARALLEL}
 EOF
+    chown oracle:oinstall "$parfile" 2>/dev/null || true
     chmod 600 "$parfile"
     set +e
     as_oracle "impdp parfile=${parfile}" 2>&1 | tee "${ORACLE_BACKUP}/dump/restore_$(date +%Y%m%d_%H%M%S).log"

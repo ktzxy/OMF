@@ -117,7 +117,18 @@ backup_logical() {
             mapfile -t pdbs < <(as_oracle "echo \"set pagesize 0 feedback off heading off
 select name from v\\\$pdbs;\" | sqlplus -s / as sysdba" 2>/dev/null \
                 | sed 's/[[:space:]]//g' | grep -v '^$')
-            [ "${#pdbs[@]}" -gt 0 ] || log_error "未查询到任何 PDB, 请确认数据库已打开"
+            # 过滤只读种子 PDB (PDB$SEED): 非业务数据, 其服务通常不向监听器注册,
+            # 逻辑备份无意义且必现 ORA-12514, 直接排除避免拖垮整个 --all
+            local _f=()
+            for _p in "${pdbs[@]}"; do
+                if [ "$_p" = "PDB\$SEED" ]; then
+                    log_info "跳过种子 PDB ($_p), 无需逻辑备份"
+                else
+                    _f+=("$_p")
+                fi
+            done
+            pdbs=("${_f[@]}")
+            [ "${#pdbs[@]}" -gt 0 ] || log_error "未查询到任何 PDB(已排除种子 PDB\$SEED), 请确认业务 PDB 已打开"
             ;;
         root)
             pdbs=("CDB\$ROOT")

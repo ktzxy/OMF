@@ -113,6 +113,7 @@ sql_execute_inline() {
         echo "EXIT"
     } > "$wrapper"
     chmod 600 "$wrapper"
+    chown oracle:oinstall "$wrapper" 2>/dev/null || true
 
     set +e
     as_oracle "sqlplus -s / as sysdba @${wrapper}" 2>&1 | tee "$log_file"
@@ -198,6 +199,8 @@ sql_execute_one() {
         echo "EXIT"
     } > "$wrapper"
     chmod 600 "$wrapper"
+    # oracle 经 runuser 执行, 需能读此 wrapper (含 DEFINE 变量, 仅 oracle 可读, 与 .sql 同口径)
+    chown oracle:oinstall "$wrapper" 2>/dev/null || true
 
     set +e
     as_oracle "sqlplus -s / as sysdba @${wrapper}" 2>&1 | tee "$log_file"

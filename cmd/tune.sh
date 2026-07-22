@@ -311,7 +311,8 @@ SET PAGES 0 FEEDBACK OFF HEADING OFF
 SELECT MIN(s.snap_id) || ' ' || MAX(s.snap_id) || ' ' ||
        MAX(d.dbid) || ' ' || MAX(i.instance_number)
 FROM dba_hist_snapshot s, v\$database d, v\$instance i
-WHERE s.begin_interval_time > ${where};
+WHERE s.begin_interval_time >= (SELECT startup_time FROM v\$instance)
+  AND s.begin_interval_time > ${where};
 EXIT;
 SQL" 2>&1)
     snaps=$(echo "$raw" | tr -d '\r' | awk '/^[[:space:]]*[0-9]+ [0-9]+ [0-9]+ [0-9]+[[:space:]]*$/{print; exit}')
@@ -348,11 +349,13 @@ SPOOL OFF
 EXIT;
 SQL" 2>&1 | tail -8
 
-    if [ -f "$tmp_report" ] && [ -s "$tmp_report" ]; then
+    # 校验: 文件存在且非空, 且内容确为 AWR HTML (排除 ORA- 报错被 SPOOL 误记为成功)
+    if [ -f "$tmp_report" ] && [ -s "$tmp_report" ] && ! grep -qi 'ORA-\|ERROR at line' "$tmp_report"; then
         mv -f "$tmp_report" "$report"
         chown oracle:oinstall "$report" 2>/dev/null || true
         log_info "AWR 报告已生成: $report"
     else
-        log_error "AWR 报告生成失败 (oracle 未写出 ${tmp_report}), 请检查快照/权限"
+        { echo "=== AWR 生成失败, ${tmp_report} 内容(若有) ==="; [ -f "$tmp_report" ] && tail -15 "$tmp_report"; } >> "${out_dir}/.awr_error.log" 2>/dev/null || true
+        log_error "AWR 报告生成失败 (快照区间可能跨越实例重启 ORA-20019, 或快照/权限不足). 可改用更小 days, 或等产生更多快照后再试"
     fi
 }

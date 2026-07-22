@@ -38,8 +38,16 @@ HUGEPAGES_DEFER="false"
 ORACLE_PASSWORD="${ORACLE_PASSWORD:-ChangeMe_123}"
 SYSTEM_PASSWORD="${SYSTEM_PASSWORD:-ChangeMe_123}"
 PDB_PASSWORD="${PDB_PASSWORD:-ChangeMe_123}"
-APP_USER="dherp"
-APP_PASSWORD="${APP_PASSWORD:-ChangeMe_123}"
+
+# ===== 应用模式 / 初始化脚本 (omf sql init 使用) =====
+# 以下三项可选: 注释即沿用 lib/config.sh 默认值, 取消注释即可覆盖。
+#   APP_USER       应用用户名 / 模式名 (Oracle 中 模式 = 用户, 改它即同时改用户名与模式名)
+#   APP_PASSWORD   应用用户密码
+#   APP_TABLESPACE 表空间名 (可与用户名不同)
+# 数据文件路径由 ORACLE_DATA + ORACLE_SID 推导, 例如: ${ORACLE_DATA}/${ORACLE_SID}/data00.dbf
+# APP_USER="dherp"
+# APP_PASSWORD="${APP_PASSWORD:-ChangeMe_123}"
+# APP_TABLESPACE="${APP_TABLESPACE:-dherp}"
 
 # ===== 存储路径 =====
 ORACLE_DATA_BASE="/data/oracle"

@@ -69,12 +69,69 @@ sql_scan() {
 #===============================================================================
 sql_run() {
     local script="$1"
-    [ -z "$script" ] && { echo "用法: omf sql run <script> | --all"; exit 1; }
+    [ -z "$script" ] && { echo "用法: omf sql run <file.sql|内联SQL> | --all"; exit 1; }
     [ "$script" = "--all" ] && { sql_execute_all; return; }
-    [ -f "$script" ] || script="${SQL_INIT_DIR}/$script"
-    [ -f "$script" ] || log_error "脚本不存在: $script"
-    sql_preflight
-    sql_execute_one "$script"
+
+    # 1) 文件优先: 直接路径 或 ${SQL_INIT_DIR} 下的脚本
+    local file="$script"
+    [ -f "$file" ] || file="${SQL_INIT_DIR}/$script"
+    if [ -f "$file" ]; then
+        sql_preflight
+        sql_execute_one "$file"
+        return
+    fi
+
+    # 2) 否则判定为内联 SQL (含空格或常见 SQL 关键字), 避免把拼错的文件名误当 SQL 执行
+    if [[ "$script" =~ [[:space:]] ]] || [[ "$script" =~ (^|[[:space:];])(SELECT|INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|BEGIN|DECLARE|GRANT|REVOKE|MERGE|WITH|EXPLAIN|SET|SHOW|CALL|EXEC) ]]; then
+        log_step "执行内联 SQL"
+        sql_preflight
+        sql_execute_inline "$script"
+        return
+    fi
+
+    log_error "脚本不存在: $script"
+}
+
+# 执行内联 SQL (与 sql_execute_one 等价, 但 SQL 文本来自命令行而非文件)
+sql_execute_inline() {
+    local sql="$1"
+    local log_dir="${OMF_HOME}/sql/.logs"
+    mkdir -p "$log_dir"
+    local log_file="${log_dir}/inline_$(date '+%Y%m%d_%H%M%S').log"
+
+    local wrapper; wrapper=$(mktemp /tmp/omf_sql_XXXXXX.sql)
+    {
+        echo "WHENEVER SQLERROR EXIT SQL.SQLCODE ROLLBACK"
+        echo "WHENEVER OSERROR  EXIT FAILURE ROLLBACK"
+        echo "DEFINE PDB_NAME     = '${PDB_NAME}'"
+        echo "DEFINE ORACLE_SID   = '${ORACLE_SID}'"
+        echo "DEFINE APP_USER     = '${APP_USER}'"
+        echo "DEFINE APP_PASSWORD = '${APP_PASSWORD}'"
+        echo "DEFINE ORACLE_DATA  = '${ORACLE_DATA}'"
+        echo "SET ECHO ON"
+        printf '%s\n' "$sql"
+        echo "EXIT"
+    } > "$wrapper"
+    chmod 600 "$wrapper"
+
+    set +e
+    as_oracle "sqlplus -s / as sysdba @${wrapper}" 2>&1 | tee "$log_file"
+    local rc=${PIPESTATUS[0]}
+    set -e
+    rm -f "$wrapper"
+
+    # 三重检测: 退出码 / ORA- / SP2-/PLS-/TNS- 错误码
+    local has_err=0
+    [ "$rc" -ne 0 ] && has_err=1
+    grep -Eq "ORA-[0-9]{4,}|SP2-[0-9]+|PLS-[0-9]+|TNS-[0-9]+" "$log_file" && has_err=1
+    if [ "$has_err" -eq 1 ]; then
+        log_warn "内联 SQL 包含错误, 请检查日志: $log_file"
+        grep -E "ORA-[0-9]{4,}|SP2-[0-9]+|PLS-[0-9]+|TNS-[0-9]+" "$log_file" | head -10
+        return 1
+    fi
+
+    log_info "执行成功"
+    return 0
 }
 
 sql_init() {

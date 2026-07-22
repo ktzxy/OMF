@@ -92,7 +92,8 @@ _clean_preview() {
 _clean_archive_preview() {
     local mode="$1" days="$2" warn="$3"
     local sql_out
-    sql_out=$(as_oracle "echo \"set pagesize 0 feedback off heading off; SELECT TO_CHAR(completion_time,'YYYY-MM-DD')||'|'||ROUND(SYSDATE-completion_time,1) FROM v\\\\\$archived_log ORDER BY completion_time;\" | sqlplus -s / as sysdba" 2>/dev/null)
+    sql_out=$(as_oracle "echo \"set pagesize 0 feedback off heading off
+SELECT TO_CHAR(completion_time,'YYYY-MM-DD')||'|'||ROUND(SYSDATE-completion_time,1) FROM v\\\\\$archived_log ORDER BY completion_time;\" | sqlplus -s / as sysdba" 2>/dev/null)
     if [ -z "$sql_out" ]; then
         echo "  (无法连接数据库 / 不在归档模式, 跳过归档预览)"
         return
@@ -338,14 +339,17 @@ clean_all() {
     clean_audit
     clean_archive
 
-    # 清理监听器日志
-    if [ -f "${OMF_CONFIG[ORACLE_BASE]}/diag/tnslsnr/$(hostname)/listener/trace/listener.log" ]; then
-        > "${OMF_CONFIG[ORACLE_BASE]}/diag/tnslsnr/$(hostname)/listener/trace/listener.log"
-        log_info "监听器日志已清空"
-    fi
+    if [ "${CLEAN_PREVIEW:-false}" = "true" ]; then
+        echo -e "[预览] 以下将在正式清理时执行: 清空监听器日志, 清空数据库回收站 (PURGE DBA_RECYCLEBIN)"
+    else
+        # 清理监听器日志
+        if [ -f "${OMF_CONFIG[ORACLE_BASE]}/diag/tnslsnr/$(hostname)/listener/trace/listener.log" ]; then
+            > "${OMF_CONFIG[ORACLE_BASE]}/diag/tnslsnr/$(hostname)/listener/trace/listener.log"
+            log_info "监听器日志已清空"
+        fi
 
-    # 清理回收站
-    oracle_su "
+        # 清理回收站
+        oracle_su "
 export ORACLE_SID=${OMF_CONFIG[ORACLE_SID]}
 export ORACLE_HOME=${OMF_CONFIG[ORACLE_HOME]}
 export PATH=\$ORACLE_HOME/bin:\$PATH
@@ -355,7 +359,8 @@ PURGE DBA_RECYCLEBIN;
 EXIT;
 SQL
 " 2>/dev/null
-    log_info "回收站已清空"
+        log_info "回收站已清空"
+    fi
 
     echo ""
     log_info "全面清理完成!"

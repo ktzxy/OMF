@@ -12,6 +12,9 @@ cmd_config() {
         show)
             show_config
             ;;
+        get)
+            get_config "$@"
+            ;;
         set)
             set_config "$@"
             ;;
@@ -25,7 +28,7 @@ cmd_config() {
             init_config "$@"
             ;;
         *)
-            echo "用法: omf config {show|set|list|validate|init}"
+            echo "用法: omf config {get|set|list|validate|show|init}"
             exit 1
             ;;
     esac
@@ -45,6 +48,24 @@ list_config() {
         esac
         printf "  %-35s = %s\n" "$key" "$val"
     done
+}
+
+#===============================================================================
+# 读取单个配置项
+#===============================================================================
+get_config() {
+    local key="$1"
+    if [ -z "$key" ]; then
+        echo "用法: omf config get <KEY>"
+        echo "示例: omf config get ORACLE_BACKUP"
+        exit 1
+    fi
+    if [ -n "${OMF_CONFIG[$key]+x}" ]; then
+        echo "${OMF_CONFIG[$key]}"
+    else
+        echo "未配置: $key" >&2
+        exit 1
+    fi
 }
 
 #===============================================================================

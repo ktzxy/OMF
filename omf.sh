@@ -105,7 +105,7 @@ cmd_help() {
         listener)   echo "用法: omf listener {status|start|stop|restart|port <新端口>}";;
         status)     echo "用法: omf status [history [N]]";;
         log)        echo "用法: omf log {view|tail|rotate|clean}";;
-        clean)      echo "用法: omf clean {logs|trace|audit|archive|backup|all|schedule} [-d 天数 | --all]";;
+        clean)      echo "用法: omf clean {logs|trace|audit|archive|backup|all|schedule} [-d 天数 | --all] [-p|--preview]";;
         config)     echo "用法: omf config {get|set|list|validate|show}";;
         self-update) echo "用法: omf self-update [version|force]";;
         *)          usage;;

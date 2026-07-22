@@ -186,6 +186,11 @@ sql_execute_one() {
 
     # 注入 DEFINE, 使脚本中的 &PDB_NAME/&ORACLE_SID/&APP_USER/&APP_PASSWORD
     # 等非交互变量自动替换, 避免 sqlplus 卡在交互输入
+    #
+    # 关键: 不用 "@${script}" 引用原始脚本, 而是由 root 读取脚本内容直接嵌入 wrapper。
+    # 原因: 脚本常位于 /root/OMF/sql/... 下, 而 oracle 经 runuser 无权进入 /root (默认 700),
+    #       sqlplus 打开 @文件 时会报 "O/S Message: Permission denied"。
+    #       内联到 /tmp 的 wrapper (已 chown oracle) 后, oracle 只需读该 wrapper 即可。
     local wrapper; wrapper=$(mktemp /tmp/omf_sql_XXXXXX.sql)
     {
         echo "WHENEVER SQLERROR EXIT SQL.SQLCODE ROLLBACK"
@@ -195,11 +200,13 @@ sql_execute_one() {
         echo "DEFINE APP_USER     = '${APP_USER}'"
         echo "DEFINE APP_PASSWORD = '${APP_PASSWORD}'"
         echo "DEFINE ORACLE_DATA  = '${ORACLE_DATA}'"
-        echo "@${script}"
+        echo "SET ECHO ON"
+        cat "$script"
+        echo ""
         echo "EXIT"
     } > "$wrapper"
     chmod 600 "$wrapper"
-    # oracle 经 runuser 执行, 需能读此 wrapper (含 DEFINE 变量, 仅 oracle 可读, 与 .sql 同口径)
+    # oracle 经 runuser 执行, 需能读此 wrapper (含脚本内容与 DEFINE 变量)
     chown oracle:oinstall "$wrapper" 2>/dev/null || true
 
     set +e

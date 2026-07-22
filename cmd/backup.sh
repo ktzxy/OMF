@@ -360,14 +360,18 @@ RMANEOF" 2>/dev/null || echo "  (无 RMAN 备份)"
         # 即将过期分析: 直接查控制文件中的备份集完成时间
         echo ""; echo "  -- 即将过期分析 (基于 V\$BACKUP_SET) --"
         local sql_out
-        sql_out=$(as_oracle "echo \"set pagesize 0 feedback off heading off
-SELECT TO_CHAR(completion_time,'YYYY-MM-DD')||'|'||ROUND(SYSDATE-completion_time,1) FROM v\\\\\$backup_set ORDER BY completion_time;\" | sqlplus -s / as sysdba" 2>/dev/null)
+        sql_out=$(as_oracle "sqlplus -s / as sysdba <<'SQL'
+SET PAGESIZE 0 FEEDBACK OFF HEADING OFF
+SELECT TO_CHAR(completion_time,'YYYY-MM-DD')||'|'||ROUND(SYSDATE-completion_time,1) FROM v\\\$backup_set ORDER BY completion_time;
+SQL" 2>/dev/null)
         if [ -z "$sql_out" ]; then
             echo "  (无法连接数据库, 跳过 RMAN 过期分析)"
         else
             local total=0 expired=0 soon=0 line ct age rem tag
             while IFS= read -r line; do
                 [ -z "$line" ] && continue
+                # 跳过 SQL*Plus 报错/标题行 (不含 '|' 分隔符)
+                [[ "$line" == *"|"* ]] || continue
                 ct="${line%%|*}"; age="${line##*|}"
                 # age 为小数, 用 awk 做减法得到整数剩余天数
                 rem=$(awk "BEGIN{printf \"%d\", $retention - $age}" 2>/dev/null) || rem=0

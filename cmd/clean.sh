@@ -92,8 +92,10 @@ _clean_preview() {
 _clean_archive_preview() {
     local mode="$1" days="$2" warn="$3"
     local sql_out
-    sql_out=$(as_oracle "echo \"set pagesize 0 feedback off heading off
-SELECT TO_CHAR(completion_time,'YYYY-MM-DD')||'|'||ROUND(SYSDATE-completion_time,1) FROM v\\\\\$archived_log ORDER BY completion_time;\" | sqlplus -s / as sysdba" 2>/dev/null)
+    sql_out=$(as_oracle "sqlplus -s / as sysdba <<'SQL'
+SET PAGESIZE 0 FEEDBACK OFF HEADING OFF
+SELECT TO_CHAR(completion_time,'YYYY-MM-DD')||'|'||ROUND(SYSDATE-completion_time,1) FROM v\\\$archived_log ORDER BY completion_time;
+SQL" 2>/dev/null)
     if [ -z "$sql_out" ]; then
         echo "  (无法连接数据库 / 不在归档模式, 跳过归档预览)"
         return
@@ -101,6 +103,8 @@ SELECT TO_CHAR(completion_time,'YYYY-MM-DD')||'|'||ROUND(SYSDATE-completion_time
     local total=0 to_del=0 soon=0 line ct age rem tag
     while IFS= read -r line; do
         [ -z "$line" ] && continue
+        # 跳过 SQL*Plus 报错/标题行 (不含 '|' 分隔符)
+        [[ "$line" == *"|"* ]] || continue
         ct="${line%%|*}"; age="${line##*|}"
         rem=$(awk "BEGIN{printf \"%d\", $days - $age}" 2>/dev/null) || rem=0
         [ -z "$rem" ] && rem=0

@@ -68,9 +68,19 @@ SQL" 2>/dev/null); then
     # 无 dump 目录或目录内无 .dmp 时, ls 返回 2, pipefail 会让整句非零; ||true 防止 set -e 中断 (这是 omf status 在备份概览段崩溃的根因)
     dmp_cnt=$(ls -1 "${ORACLE_BACKUP}/dump/"*.dmp 2>/dev/null | wc -l || true)
     echo "  逻辑备份(dmp)文件数: ${dmp_cnt}"
-    as_oracle "rman target / <<'RMANEOF' 2>/dev/null
+    # RMAN LIST BACKUP SUMMARY 的 LV 列为单字母 (A=归档/F=全量/I=增量), 并不含 Full/Incr/Arch 字样,
+    # 原 grep 模式匹配不到 -> 误报"无 RMAN 备份记录". 改为按 Key 行(行首为数字)计数判断.
+    local rman_out rman_cnt
+    rman_out=$(as_oracle "rman target / <<'RMANEOF' 2>/dev/null
 LIST BACKUP SUMMARY;
-RMANEOF" 2>/dev/null | grep -E "Full|Incr|Arch" | head -6 || echo "  (无 RMAN 备份记录)"
+RMANEOF" 2>/dev/null)
+    rman_cnt=$(echo "$rman_out" | grep -cE '^[[:space:]]*[0-9]+' || true)
+    if [ "$rman_cnt" -gt 0 ]; then
+        echo "  RMAN 备份记录数: ${rman_cnt}"
+        echo "$rman_out" | grep -E '^[[:space:]]*[0-9]+' | tail -3 | sed 's/^/    /'
+    else
+        echo "  (无 RMAN 备份记录)"
+    fi
 
     echo ""
     echo "──── 最近运行日志 ────"

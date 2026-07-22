@@ -141,7 +141,10 @@ backup_logical_one() {
     local pdb="$1"; local log_file="$2"
     local ts=$(date '+%Y%m%d_%H%M%S')
     local dump_dir="${ORACLE_BACKUP}/dump"
-    local parfile="/tmp/omf_expdp_${pdb}_${ts}.par"
+    # 注意: parfile 路径不能含 PDB 名, 因为 PDB 名可能含 '$' (如 PDB$SEED/CDB$ROOT),
+    # 该路径经 as_oracle 多层双引号链后在 oracle 层 '$SEED' 会被当变量展开成空, 导致 LRM-00109.
+    # 改用 ts+PID 保证唯一且无 '$'; parfile 内部 DUMPFILE/USERID 仍用 ${pdb} (由 expdp 直接读取, 不经 shell).
+    local parfile="/tmp/omf_expdp_${ts}_$$.par"
 
     local connect
     if [ "$pdb" = "CDB\$ROOT" ]; then

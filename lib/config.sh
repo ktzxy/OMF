@@ -61,6 +61,7 @@ load_config() {
     # 备份策略 (逻辑/物理/两者, 全量/增量 由 BACKUP_MODE 控制)
     OMF_CONFIG[BACKUP_MODE]="${BACKUP_MODE:-both}"   # logical | physical | both
     OMF_CONFIG[BACKUP_RETENTION_DAYS]="30"
+    OMF_CONFIG[BACKUP_WARN_DAYS]=""   # 即将过期高亮阈值(天); 留空=保留期的1/5(钳制2~7天)
     OMF_CONFIG[BACKUP_COMPRESSION]="ALL"
     OMF_CONFIG[BACKUP_PARALLEL]="4"
 

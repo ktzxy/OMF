@@ -69,6 +69,8 @@ STANDBY_SID="${STANDBY_SID:-ARTERY}"
 # ===== 备份策略 =====
 BACKUP_MODE="both"
 BACKUP_RETENTION_DAYS="30"
+# 即将过期高亮阈值(天): 留空则按保留期的 1/5 自动计算(钳制 2~7 天); 设置后固定按该值
+BACKUP_WARN_DAYS=""
 BACKUP_COMPRESSION="ALL"
 BACKUP_PARALLEL="4"
 

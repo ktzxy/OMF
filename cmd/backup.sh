@@ -132,7 +132,7 @@ backup_logical() {
     for pdb in "${pdbs[@]}"; do
         backup_logical_one "$pdb" "$log_file"
     done
-    backup_cleanup "dump" "${BACKUP_RETENTION_DAYS}"
+    backup_cleanup_disks "dump" "${BACKUP_RETENTION_DAYS}"
 }
 
 # 单个 PDB/CDB$ROOT 的 expdp 全库导出
@@ -289,7 +289,7 @@ RMANEOF" 2>&1 | tee "$log_file"
         as_oracle "rman target / <<RMANEOF
 DELETE NOPROMPT OBSOLETE;
 RMANEOF" 2>&1 | tail -3
-        backup_cleanup "full" "${BACKUP_RETENTION_DAYS}"
+        backup_cleanup_disks "full" "${BACKUP_RETENTION_DAYS}"
     else
         send_notification "OMF 物理备份失败" "日志: $log_file"
         log_error "RMAN 物理备份失败 (已保留旧备), 查看: $log_file"
@@ -297,23 +297,93 @@ RMANEOF" 2>&1 | tail -3
 }
 
 #===============================================================================
-# 备份列表
+# 备份列表 (含按保留天数高亮的"即将过期"提示)
+#   omf backup list [all|expdp|rman]
+#   保留期: BACKUP_RETENTION_DAYS (默认 30); 即将过期阈值: BACKUP_WARN_DAYS
+#     (留空则取保留期的 1/5, 钳制在 2~7 天)
 #===============================================================================
 backup_list() {
     local type="${1:-all}"
+    local retention="${BACKUP_RETENTION_DAYS:-30}"
+    # 即将过期阈值: 优先 BACKUP_WARN_DAYS, 否则按保留期的 1/5 (钳制 2~7 天)
+    local warn_days="${BACKUP_WARN_DAYS:-}"
+    if [ -z "$warn_days" ]; then
+        warn_days=$(( retention / 5 ))
+        [ "$warn_days" -lt 2 ] && warn_days=2
+        [ "$warn_days" -gt 7 ] && warn_days=7
+    fi
+    local now_ts; now_ts=$(date +%s)
+
+    # 计算文件 mtime 距今天数 -> _age
+    local _age=0
+    _file_age_days() {
+        local m; m=$(stat -c %Y "$1" 2>/dev/null) || { _age=0; return; }
+        _age=$(( (now_ts - m) / 86400 ))
+    }
+    # 按剩余天数输出带色标签 (剩余<=0 红, <=warn 黄, 否则绿)
+    _retain_tag() {
+        local rem="$1"
+        if [ "$rem" -le 0 ]; then
+            echo -e "${RED}已过期(将清理)${NC}"
+        elif [ "$rem" -le "$warn_days" ]; then
+            echo -e "${YELLOW}即将过期(剩${rem}天)${NC}"
+        else
+            echo -e "${GREEN}正常(剩${rem}天)${NC}"
+        fi
+    }
+
     echo ""
     echo "========== 备份文件列表 =========="
+    echo -e "保留策略: ${BOLD}BACKUP_RETENTION_DAYS=${retention} 天${NC}  |  即将过期: 剩余 ≤ ${warn_days} 天标黄, ≤ 0 天标红"
+
     if [ "$type" = "all" ] || [ "$type" = "expdp" ]; then
-        echo ""; echo "[Expdp 备份]"
-        ls -lht "${ORACLE_BACKUP}/dump/"*.dmp 2>/dev/null || echo '(空)'
+        echo ""; echo "[Expdp 逻辑备份] (${ORACLE_BACKUP}/dump)"
+        local any=0 f_name
+        shopt -s nullglob
+        for f in "${ORACLE_BACKUP}/dump/"*.dmp; do
+            any=1
+            _file_age_days "$f"
+            local rem=$(( retention - _age ))
+            f_name="$(basename "$f")"
+            printf "  %-46s %6s天前  %s\n" "$f_name" "$_age" "$(_retain_tag "$rem")"
+        done
+        shopt -u nullglob
+        [ "$any" -eq 0 ] && echo "  (空)"
     fi
+
     if [ "$type" = "all" ] || [ "$type" = "rman" ]; then
-        echo ""; echo "[RMAN 备份]"
+        echo ""; echo "[RMAN 备份集]"
         as_oracle "rman target / <<RMANEOF
 LIST BACKUP SUMMARY;
-RMANEOF" 2>/dev/null || echo "(无 RMAN 备份)"
+RMANEOF" 2>/dev/null || echo "  (无 RMAN 备份)"
+
+        # 即将过期分析: 直接查控制文件中的备份集完成时间
+        echo ""; echo "  -- 即将过期分析 (基于 V\$BACKUP_SET) --"
+        local sql_out
+        sql_out=$(as_oracle "echo \"set pagesize 0 feedback off heading off; SELECT TO_CHAR(completion_time,'YYYY-MM-DD')||'|'||ROUND(SYSDATE-completion_time,1) FROM v\\\\\$backup_set ORDER BY completion_time;\" | sqlplus -s / as sysdba" 2>/dev/null)
+        if [ -z "$sql_out" ]; then
+            echo "  (无法连接数据库, 跳过 RMAN 过期分析)"
+        else
+            local total=0 expired=0 soon=0 line ct age rem tag
+            while IFS= read -r line; do
+                [ -z "$line" ] && continue
+                ct="${line%%|*}"; age="${line##*|}"
+                # age 为小数, 用 awk 做减法得到整数剩余天数
+                rem=$(awk "BEGIN{printf \"%d\", $retention - $age}" 2>/dev/null) || rem=0
+                [ -z "$rem" ] && rem=0
+                total=$((total+1))
+                if [ "$rem" -le 0 ]; then expired=$((expired+1)); fi
+                if [ "$rem" -le "$warn_days" ]; then
+                    soon=$((soon+1))
+                    tag=$(_retain_tag "$rem")
+                    printf "    %s  年龄%s天  %s\n" "$ct" "$age" "$tag"
+                fi
+            done <<< "$sql_out"
+            echo -e "  备份集总数: ${total}  |  已过期(将清理): ${RED}${expired}${NC}  |  即将过期(≤${warn_days}天): ${YELLOW}${soon}${NC}"
+        fi
     fi
-    echo ""; echo "[备份目录]"
+
+    echo ""; echo "[备份目录占用]"
     du -sh "${ORACLE_BACKUP}"/* 2>/dev/null || echo "(空)"
 }
 
@@ -550,9 +620,11 @@ RMANEOF"
 }
 
 #===============================================================================
-# 清理过期备份
+# 内部清理: 删除指定子目录下 N 天前的 .dmp/.log (无交互确认, 供备份后自动清理)
+# 注意: 与 lib/common.sh 的 backup_cleanup (支持 --all/-d 的交互式清理) 区分,
+#       本函数仅作备份成功后的"顺手清旧"使用, 不会被 omf backup cleanup 调用.
 #===============================================================================
-backup_cleanup() {
+backup_cleanup_disks() {
     local type="${1:-dump}"
     local days="${2:-30}"
     log_debug "清理 ${days} 天前的 ${type} 备份"

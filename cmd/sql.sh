@@ -113,6 +113,8 @@ sql_execute_inline() {
         echo "DEFINE ORACLE_DUMP_DIR = '${ORACLE_DUMP_DIR}'"
         echo "SET SERVEROUTPUT ON"
         echo "SET ECHO ON"
+        # 自动切到应用 PDB: 以 / as sysdba 连入 CDB$ROOT, 操作 PDB 内对象前先切容器。
+        echo "ALTER SESSION SET CONTAINER = ${PDB_NAME};"
         # SQL*Plus 仅当 ';' 位于行尾时才视为语句结束符; 内联 SQL 常把多条语句写在同一行,
         # 导致 ';' 后若紧跟下一条语句会被整体当作一条语句解析 -> ORA-00922。
         # 这里把语句结束处的 ';' 之后强制换行, 让每条语句独占一行。
@@ -321,6 +323,9 @@ sql_execute_one() {
         echo "DEFINE ORACLE_DUMP_DIR = '${ORACLE_DUMP_DIR}'"
         echo "SET SERVEROUTPUT ON"
         echo "SET ECHO ON"
+        # 自动切到应用 PDB: 脚本以 / as sysdba 连入 CDB$ROOT, 在 PDB 内创建对象前必须先切容器。
+        # 注入到开头, 使 patch/upgrade/custom/init 脚本无需在文件开头手写 ALTER SESSION SET CONTAINER。
+        echo "ALTER SESSION SET CONTAINER = ${PDB_NAME};"
         cat "$script"
         echo ""
         echo "EXIT"

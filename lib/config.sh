@@ -44,6 +44,7 @@ load_config() {
     OMF_CONFIG[PDB_PASSWORD]="${PDB_PASSWORD:-Qiyuan!960#123}"
     OMF_CONFIG[APP_USER]="${APP_USER:-dherp}"
     OMF_CONFIG[APP_PASSWORD]="${APP_PASSWORD:-dherp_skzy}"
+    OMF_CONFIG[APP_TABLESPACE]="${APP_TABLESPACE:-dherp}"
 
     OMF_CONFIG[PROCESSES]="1500"
     OMF_CONFIG[OPEN_CURSORS]="1000"
@@ -129,6 +130,7 @@ show_config() {
     echo "  PDB_NAME:       ${OMF_CONFIG[PDB_NAME]}"
     echo "  CHARSET:        ${OMF_CONFIG[CHARSET]}"
     echo "  APP_USER:       ${OMF_CONFIG[APP_USER]}"
+    echo "  APP_TABLESPACE: ${OMF_CONFIG[APP_TABLESPACE]}"
     echo ""
     echo "[路径配置]"
     echo "  ORACLE_BASE:    ${OMF_CONFIG[ORACLE_BASE]}"

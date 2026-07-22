@@ -332,30 +332,35 @@ SQL" 2>&1)
     fi
 
     local report="${out_dir}/awr_${begin}_${end}.html"
-    # oracle 可能无 /root 目录遍历权限, 故先让 oracle 把报告写到 /tmp, 再由 root 移入 out_dir
-    local tmp_report="/tmp/awr_${begin}_${end}_$$.html"
     log_info "快照范围: ${begin} -> ${end} (dbid=${dbid}, inst=${inst})"
 
-    # 完全非交互: 直接调用 DBMS_WORKLOAD_REPOSITORY.AWR_REPORT_HTML 取报告文本, SPOOL 写文件
-    # 不调用 awrrpt.sql/awrrpti.sql, 它们内部会交互式询问报告名, 导致非交互卡死
+    # 完全非交互: 直接调用 DBMS_WORKLOAD_REPOSITORY.AWR_REPORT_HTML 取报告文本.
+    # 不调用 awrrpt.sql/awrrpti.sql (交互式询问报告名, 非交互会卡死).
+    # 做法: oracle 侧 sqlplus 把 HTML 直接输出到 stdout, 由 root 侧重定向写入报告文件,
+    #   不再让 oracle 直接 SPOOL 写 /tmp(实测 SPOOL 写文件会失败, 报告内容反而落到 stdout 致校验失败).
+    #   这种 "oracle 输出 -> root 重定向" 套路与上方快照查询 raw=$(oracle_su ...) 已被验证可用.
+    # 校验以 "正文含 <html 且 End of Report" 为准: AWR 报告正文可能含 ORA- 字样(如 Alerts 段),
+    #   故不能再用 "排除 ORA-" 作为成功判定, 否则会误杀正常报告.
+    local sql_err="${out_dir}/.awr_sqlplus_${begin}_${end}.log"
     oracle_su "export ORACLE_SID=${OMF_CONFIG[ORACLE_SID]}; \
 export ORACLE_HOME=${OMF_CONFIG[ORACLE_HOME]}; \
 export PATH=\$ORACLE_HOME/bin:\$PATH; \
 sqlplus -s / as sysdba <<'SQL'
-SET ECHO OFF TERMOUT OFF FEEDBACK OFF HEADING OFF PAGES 0 LINESIZE 32767 LONG 1000000 LONGCHUNKSIZE 32767 TRIMSPOOL ON
-SPOOL ${tmp_report}
+SET ECHO OFF TERMOUT ON FEEDBACK OFF HEADING OFF PAGES 0 LINESIZE 32767 LONG 1000000 LONGCHUNKSIZE 32767 TRIMOUT ON
 SELECT output FROM TABLE(DBMS_WORKLOAD_REPOSITORY.AWR_REPORT_HTML(${dbid}, ${inst}, ${begin}, ${end}));
-SPOOL OFF
 EXIT;
-SQL" 2>&1 | tail -8
+SQL" > "$report" 2>"$sql_err"
 
-    # 校验: 文件存在且非空, 且内容确为 AWR HTML (排除 ORA- 报错被 SPOOL 误记为成功)
-    if [ -f "$tmp_report" ] && [ -s "$tmp_report" ] && ! grep -qi 'ORA-\|ERROR at line' "$tmp_report"; then
-        mv -f "$tmp_report" "$report"
+    # 校验: 文件存在且非空, 正文确为 AWR HTML (含 <html 与 End of Report)
+    if [ -s "$report" ] && grep -qi '<html' "$report" && grep -qi 'End of Report' "$report"; then
         chown oracle:oinstall "$report" 2>/dev/null || true
         log_info "AWR 报告已生成: $report"
     else
-        { echo "=== AWR 生成失败, ${tmp_report} 内容(若有) ==="; [ -f "$tmp_report" ] && tail -15 "$tmp_report"; } >> "${out_dir}/.awr_error.log" 2>/dev/null || true
-        log_error "AWR 报告生成失败 (快照区间可能跨越实例重启 ORA-20019, 或快照/权限不足). 可改用更小 days, 或等产生更多快照后再试"
+        local reason=""
+        if [ -s "$sql_err" ]; then
+            reason=$(grep -iE 'ORA-[0-9]+|ERROR' "$sql_err" | head -3 | tr '\n' ' ')
+        fi
+        { echo "=== AWR 生成失败, sqlplus 错误(若有) ==="; [ -s "$sql_err" ] && tail -20 "$sql_err"; } >> "${out_dir}/.awr_error.log" 2>/dev/null || true
+        log_error "AWR 报告生成失败${reason:+ ($reason)}. 可改用更小 days, 或等产生更多快照后再试; 错误详情见 ${out_dir}/.awr_error.log"
     fi
 }

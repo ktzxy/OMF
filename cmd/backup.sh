@@ -371,6 +371,8 @@ SELECT TO_CHAR(completion_time,'YYYY-MM-DD')||'|'||ROUND(SYSDATE-completion_time
                 # 跳过 SQL*Plus 报错/标题行 (不含 '|' 分隔符)
                 [[ "$line" == *"|"* ]] || continue
                 ct="${line%%|*}"; age="${line##*|}"
+                # 规范化年龄: 去前导空格, 补前导零 (如 .1 -> 0.1)
+                age=$(printf '%.1f' "$age" 2>/dev/null || echo "$age")
                 # age 为小数, 用 awk 做减法得到整数剩余天数
                 rem=$(awk "BEGIN{printf \"%d\", $retention - $age}" 2>/dev/null) || rem=0
                 [ -z "$rem" ] && rem=0

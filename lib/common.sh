@@ -329,9 +329,10 @@ backup_cleanup() {
         find "${base}/dump" -name "*.dmp" -delete 2>/dev/null || true
         find "${base}/dump" -name "*.log" -delete 2>/dev/null || true
     else
+        # 注意: find -mtime +N 实际删 (N+1) 天前, 故用 +(days-1) 实现"保留 days 天"
         log_step "清理 ${days} 天前的 dump 文件: ${base}/dump"
-        find "${base}/dump" -name "*.dmp" -mtime "+${days}" -delete 2>/dev/null || true
-        find "${base}/dump" -name "*.log" -mtime "+${days}" -delete 2>/dev/null || true
+        find "${base}/dump" -name "*.dmp" -mtime "+$((days-1))" -delete 2>/dev/null || true
+        find "${base}/dump" -name "*.log" -mtime "+$((days-1))" -delete 2>/dev/null || true
     fi
 
     # 2) 物理备份目录兜底清理 (RMAN 已删的不会重复; 仅清孤儿文件)
@@ -340,7 +341,7 @@ backup_cleanup() {
         if [ "$all" = "true" ]; then
             find "${base}/${d}" -type f -delete 2>/dev/null || true
         else
-            find "${base}/${d}" -type f -mtime "+${days}" -delete 2>/dev/null || true
+            find "${base}/${d}" -type f -mtime "+$((days-1))" -delete 2>/dev/null || true
         fi
     done
 

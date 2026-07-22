@@ -627,9 +627,10 @@ RMANEOF"
 backup_cleanup_disks() {
     local type="${1:-dump}"
     local days="${2:-30}"
+    # 注意: find -mtime +N 实际删 (N+1) 天前, 故用 +(days-1) 实现"保留 days 天"
     log_debug "清理 ${days} 天前的 ${type} 备份"
-    find "${ORACLE_BACKUP}/${type}" -name "*.dmp" -mtime "+${days}" -delete 2>/dev/null || true
-    find "${ORACLE_BACKUP}/${type}" -name "*.log" -mtime "+${days}" -delete 2>/dev/null || true
+    find "${ORACLE_BACKUP}/${type}" -name "*.dmp" -mtime "+$((days-1))" -delete 2>/dev/null || true
+    find "${ORACLE_BACKUP}/${type}" -name "*.log" -mtime "+$((days-1))" -delete 2>/dev/null || true
 }
 
 #===============================================================================

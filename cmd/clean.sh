@@ -159,10 +159,10 @@ clean_logs() {
         "/tmp|dbca_*"
     confirm "确认清理 ${days} 天前的日志文件?"
     log_step "清理 ${days} 天前的日志文件"
-    find "${OMF_HOME}/logs" -name "*.log" -mtime "+${days}" -delete 2>/dev/null || true
-    find "${OMF_CONFIG[ORACLE_BASE]}/diag/rdbms" -name "alert_*.bak" -mtime "+${days}" -delete 2>/dev/null || true
-    find /tmp -name "oracle_install*" -mtime "+${days}" -delete 2>/dev/null || true
-    find /tmp -name "dbca_*" -mtime "+${days}" -delete 2>/dev/null || true
+        find "${OMF_HOME}/logs" -name "*.log" -mtime "+$((days-1))" -delete 2>/dev/null || true
+        find "${OMF_CONFIG[ORACLE_BASE]}/diag/rdbms" -name "alert_*.bak" -mtime "+$((days-1))" -delete 2>/dev/null || true
+        find /tmp -name "oracle_install*" -mtime "+$((days-1))" -delete 2>/dev/null || true
+        find /tmp -name "dbca_*" -mtime "+$((days-1))" -delete 2>/dev/null || true
     log_info "日志清理完成 (${days} 天前)"
 }
 
@@ -207,9 +207,9 @@ clean_trace() {
                 "${trace_dir}|cdmp_*"
             confirm "确认清理 ${days} 天前的 trace 文件?"
             log_step "清理 ${days} 天前的 trace 文件"
-            find "$trace_dir" -name "*.trc" -mtime "+${days}" -delete 2>/dev/null || true
-            find "$trace_dir" -name "*.trm" -mtime "+${days}" -delete 2>/dev/null || true
-            find "$trace_dir" -name "cdmp_*" -mtime "+${days}" -exec rm -rf {} \; 2>/dev/null || true
+            find "$trace_dir" -name "*.trc" -mtime "+$((days-1))" -delete 2>/dev/null || true
+            find "$trace_dir" -name "*.trm" -mtime "+$((days-1))" -delete 2>/dev/null || true
+            find "$trace_dir" -name "cdmp_*" -mtime "+$((days-1))" -exec rm -rf {} \; 2>/dev/null || true
         fi
         local after_size
         after_size=$(du -sh "$trace_dir" 2>/dev/null | cut -f1)
@@ -254,8 +254,8 @@ clean_audit() {
             "${xml_audit_dir}|*.xml"
         confirm "确认清理 ${days} 天前的审计文件?"
         log_step "清理 ${days} 天前的审计文件"
-        [ -d "$audit_dir" ] && find "$audit_dir" -name "*.aud" -mtime "+${days}" -delete 2>/dev/null || true
-        [ -d "$xml_audit_dir" ] && find "$xml_audit_dir" -name "*.xml" -mtime "+${days}" -delete 2>/dev/null || true
+        [ -d "$audit_dir" ] && find "$audit_dir" -name "*.aud" -mtime "+$((days-1))" -delete 2>/dev/null || true
+        [ -d "$xml_audit_dir" ] && find "$xml_audit_dir" -name "*.xml" -mtime "+$((days-1))" -delete 2>/dev/null || true
         log_info "审计文件清理完成 (${days} 天前)"
     fi
 }

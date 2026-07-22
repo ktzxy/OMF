@@ -147,6 +147,8 @@ log_rotate() {
 #===============================================================================
 log_clean() {
     local days="${1:-${OMF_CONFIG[LOG_RETENTION_DAYS]}}"
+    # 注意: find -mtime +N 实际删 (N+1) 天前, 故用 +(days-1) 实现"保留 days 天"
+    local mtime_arg=$((days-1))
 
     log_step "清理 ${days} 天前的日志"
 
@@ -154,15 +156,15 @@ log_clean() {
     local alert_log
     alert_log=$(get_alert_log)
     if [ -f "$alert_log" ]; then
-        find "$(dirname "$alert_log")" -name "alert_*.bak" -mtime "+${days}" -delete 2>/dev/null || true
+        find "$(dirname "$alert_log")" -name "alert_*.bak" -mtime "+${mtime_arg}" -delete 2>/dev/null || true
     fi
 
     # Trace 文件
     local trace_dir
     trace_dir=$(get_trace_dir)
     if [ -d "$trace_dir" ]; then
-        find "$trace_dir" -name "*.trc" -mtime "+${days}" -delete 2>/dev/null || true
-        find "$trace_dir" -name "*.trm" -mtime "+${days}" -delete 2>/dev/null || true
+        find "$trace_dir" -name "*.trc" -mtime "+${mtime_arg}" -delete 2>/dev/null || true
+        find "$trace_dir" -name "*.trm" -mtime "+${mtime_arg}" -delete 2>/dev/null || true
         log_info "已清理 trace 文件"
     fi
 
@@ -170,13 +172,13 @@ log_clean() {
     local audit_dir
     audit_dir=$(get_audit_dir)
     if [ -d "$audit_dir" ]; then
-        find "$audit_dir" -name "*.aud" -mtime "+${OMF_CONFIG[AUDIT_RETENTION_DAYS]}" -delete 2>/dev/null || true
+        find "$audit_dir" -name "*.aud" -mtime "+$((${OMF_CONFIG[AUDIT_RETENTION_DAYS]}-1))" -delete 2>/dev/null || true
         log_info "已清理审计文件"
     fi
 
     # OMF 自身日志
     if [ -d "${OMF_HOME}/logs" ]; then
-        find "${OMF_HOME}/logs" -name "*.log" -mtime "+${days}" -delete 2>/dev/null || true
+        find "${OMF_HOME}/logs" -name "*.log" -mtime "+${mtime_arg}" -delete 2>/dev/null || true
     fi
 
     log_info "日志清理完成"

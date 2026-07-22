@@ -403,3 +403,108 @@ sql/custom/     → omf sql run --all   # 自定义
 ```
 
 已执行的脚本记录在 `sql/.executed/` 下，不会重复执行。
+
+## SQL 初始化与数据导入指南
+
+`omf sql init` 通过 `sql/init/01_create_app_schema.sql` 为后续数据导入准备**目标模式**。
+在 Oracle 中「模式 = 用户」，创建用户即创建其模式，因此只需配置 `APP_USER` 一处。
+
+### 1. 初始化脚本做了什么
+
+| 步骤 | 动作 | 幂等 |
+|------|------|------|
+| 1 | `ALTER SESSION SET CONTAINER = &PDB_NAME` 切到目标 PDB（PDB 须 OPEN） | — |
+| 2 | 建表空间 `&APP_TABLESPACE`（11 个 1G 数据文件，路径 `&ORACLE_DATA/&ORACLE_SID/dataNN.dbf`，自动扩展） | 吞 `ORA-01543` |
+| 3 | 建用户 `&APP_USER`（默认表空间 `&APP_TABLESPACE`，配额 UNLIMITED） | 吞 `ORA-01920` |
+| 4 | 授权 `CONNECT/RESOURCE` + `CREATE SESSION/TABLE/VIEW/SEQUENCE/PROCEDURE/TRIGGER/SYNONYM/UNLIMITED TABLESPACE` | 可重复 |
+| 5 | 建目录对象 `oracle_dumps`（路径 `/data/oracle/oracle_dumps`，硬编码）并 `GRANT READ, WRITE` 给 `&APP_USER` | `CREATE OR REPLACE` |
+
+**可配置项**（在 `conf/omf.conf` 修改，无需改脚本）：`APP_USER` / `APP_PASSWORD` / `APP_TABLESPACE`（默认 `dherp` / `dherp_skzy` / `dherp`），数据文件路径由 `ORACLE_DATA` + `ORACLE_SID` 推导。
+
+### 2. 执行初始化
+
+```bash
+omf sql init                 # 扫描 init 并执行 (交互确认)
+omf sql status               # 查看执行记录 (成功 1 失败 0)
+```
+
+如需重跑：`omf sql rollback 01_create_app_schema.sql` 清记录后再次 `omf sql init`（脚本幂等，重跑安全）。
+
+### 3. 初始化验证清单（已验证通过）
+
+以下命令先切到 PDB 再查，否则在 `CDB$ROOT` 查不到 PDB 对象会 `no rows`。
+`omf sql run` 支持一行内用 `;` 分隔多条语句（框架已按行尾分号自动换行）。
+
+```bash
+# 表空间
+omf sql run 'ALTER SESSION SET CONTAINER = ARTERYPDB;
+SELECT tablespace_name, status FROM dba_tablespaces WHERE tablespace_name='\''DHERP'\'';'
+# → DHERP  ONLINE
+
+# 用户与默认表空间
+omf sql run 'ALTER SESSION SET CONTAINER = ARTERYPDB;
+SELECT username, default_tablespace FROM dba_users WHERE username='\''DHERP'\'';'
+# → DHERP  DHERP
+
+# 系统权限 (应 8 项)
+omf sql run 'ALTER SESSION SET CONTAINER = ARTERYPDB;
+SELECT privilege FROM dba_sys_privs WHERE grantee='\''DHERP'\'' ORDER BY 1;'
+# → CREATE PROCEDURE/SEQUENCE/SESSION/SYNONYM/TABLE/TRIGGER/VIEW + UNLIMITED TABLESPACE
+
+# 角色
+omf sql run 'ALTER SESSION SET CONTAINER = ARTERYPDB;
+SELECT granted_role FROM dba_role_privs WHERE grantee='\''DHERP'\'';'
+# → RESOURCE  CONNECT
+
+# 表空间配额 (MAX_BYTES=-1 表示无限制)
+omf sql run 'ALTER SESSION SET CONTAINER = ARTERYPDB;
+SELECT tablespace_name, max_bytes FROM dba_ts_quotas WHERE username='\''DHERP'\'';'
+# → DHERP  -1
+
+# 目录对象与授权
+omf sql run 'ALTER SESSION SET CONTAINER = ARTERYPDB;
+SELECT directory_name, directory_path FROM all_directories WHERE directory_name='\''ORACLE_DUMPS'\'';'
+# → ORACLE_DUMPS  /data/oracle/oracle_dumps
+omf sql run 'ALTER SESSION SET CONTAINER = ARTERYPDB;
+SELECT privilege FROM dba_tab_privs WHERE grantee='\''DHERP'\'' AND table_name='\''ORACLE_DUMPS'\'';'
+# → READ  WRITE
+
+# 连通性 + 建表冒烟测试 (用实际端口; 本环境监听 1522, 默认 1521)
+omf sql run 'CONNECT dherp/"dherp_skzy"@//localhost:1522/ARTERYPDB;
+CREATE TABLE smoke_t(id NUMBER);
+DROP TABLE smoke_t;'
+# → Table created.  Table dropped.
+```
+
+> 冒烟测试同时验证了：密码正确、EZCONNECT 到 PDB 连通、建表/删表权限齐备。
+> 连接串端口取 `conf/omf.conf` 的 `LISTENER_PORT`（默认 `1521`）。
+
+### 4. 数据导入（impdp 到 DHERP 模式）
+
+```bash
+# 1. 把 dump 放到目录对象对应的 OS 路径, 并确保属主为 oracle
+cp your_dump.dmp /data/oracle/oracle_dumps/
+chown oracle:oinstall /data/oracle/oracle_dumps/your_dump.dmp
+
+# 2. 用 parfile 避免密码出现在 ps
+cat > /tmp/imp.par <<'EOF'
+userid=dherp/dherp_skzy@//localhost:1522/ARTERYPDB
+directory=oracle_dumps
+dumpfile=your_dump.dmp
+logfile=imp_yourdump.log
+remap_schema=SOURCE_SCHEMA:dherp     # 源模式名与目标 dherp 不同时才需要
+transform=oid:n
+EOF
+
+# 3. 以 oracle 用户执行
+runuser -u oracle -- impdp parfile=/tmp/imp.par
+```
+
+- 目录路径 `/data/oracle/oracle_dumps` 在脚本中**硬编码**，修改需编辑 `sql/init/01_create_app_schema.sql` 的第 87 行。
+- 若用 `sqlldr` / 普通 SQL 入库，连接串同样用 `dherp/dherp_skzy@//localhost:1522/ARTERYPDB`。
+
+### 5. 注意事项
+
+- **已移除 `ANY` 权限**：标准化时去掉了 `CREATE ANY PROCEDURE` / `EXECUTE ANY PROCEDURE` 等过宽权限。若导入 dump 含**跨模式建对象**或需这类权限，导入会报权限不足，届时按需单独补授。
+- **目录 OS 权限**：`oracle_dumps` 指向的 `/data/oracle/oracle_dumps` 须 `oracle:oinstall` 可读写，否则 impdp 报 `ORA-27037` / ` permission denied`。确认：`ls -ld /data/oracle/oracle_dumps`。
+- **PDB 须 OPEN**：初始化与查询前确保 `omf db pdb open` 已使 `ARTERYPDB` 处于 READ WRITE。

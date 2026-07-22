@@ -1,0 +1,35 @@
+#===============================================================================
+# OMF 数据泵导入模板 (手动高级用法)
+#   复制本文件并按需修改, 然后以 oracle 用户执行:
+#     runuser -u oracle -- impdp parfile=本文件
+#
+#   对应的一键命令: omf sql import <dumpfile> [--remap 源模式[:目标模式]]
+#   本模板与一键命令等价, 仅用于需要微调参数(并行度/替换策略等)的场景。
+#===============================================================================
+
+# 连接串: 用户/密码@//主机:监听端口/服务名(PDB)
+#   端口取 LISTENER_PORT (默认 1521); 密码含特殊字符时用双引号包裹
+userid=dherp/"dherp_skzy"@//localhost:1521/ARTERYPDB
+
+# 目录对象 (由 omf sql init 创建, 指向 OS 路径 ORACLE_DUMP_DIR)
+directory=oracle_dumps
+
+# dump 文件名 (须已放在 ORACLE_DUMP_DIR 目录下)
+dumpfile=dherp_202606290300.dmp
+
+# 导入日志 (写在 ORACLE_DUMP_DIR 下, oracle 可写)
+logfile=dherp_202606290300.dmp.imp.log
+
+# 跨版本导入时去掉 OID, 避免 OID 冲突
+transform=oid:n
+
+# ---- 以下为常用可选参数, 按需取消注释 ----
+# 若 dump 源模式名与主库 APP_USER 不同, 改成实际源模式:
+# remap_schema=源模式:dherp
+# 表已存在时的处理: replace=删后重建 / append=追加 / skip=跳过
+# table_exists_action=replace
+# 并行度 (大库可提速, 需与 dump 时 parallel 匹配或更小)
+# parallel=4
+# 仅导入结构或仅数据:
+# content=metadata_only
+# content=data_only

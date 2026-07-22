@@ -84,7 +84,9 @@ GRANT CREATE SYNONYM        TO &APP_USER;
 GRANT UNLIMITED TABLESPACE  TO &APP_USER;
 
 -- 4) 创建目录对象 (幂等: CREATE OR REPLACE), 供数据泵等导入工具使用
-CREATE OR REPLACE DIRECTORY oracle_dumps AS '/data/oracle/oracle_dumps';
+--    路径来自 &ORACLE_DUMP_DIR (由框架注入, 默认 /data/oracle/oracle_dumps,
+--    对应的 OS 目录由 omf sql init 自动创建并 chown oracle)
+CREATE OR REPLACE DIRECTORY oracle_dumps AS '&ORACLE_DUMP_DIR';
 GRANT READ, WRITE ON DIRECTORY oracle_dumps TO &APP_USER;
 
 PROMPT ==========================================

@@ -55,6 +55,8 @@ ORACLE_DATA="/data/oracle/oradata"
 ORACLE_ARCH="/data/oracle/archivelog"
 ORACLE_FRA="/data/oracle/fast_recovery"
 ORACLE_BACKUP="/backup/oracle"
+# 数据泵导入目录 (impdp 的 DIRECTORY 对象指向的 OS 路径; omf sql init 会自动建好)
+ORACLE_DUMP_DIR="/data/oracle/oracle_dumps"
 
 # ===== 数据库参数 =====
 CHARSET="AL32UTF8"

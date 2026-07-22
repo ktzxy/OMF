@@ -11,6 +11,7 @@ cmd_sql() {
     case "$subcmd" in
         scan)     sql_scan "$@";;
         run)      sql_run "$@";;
+        import)    sql_import "$@";;
         init)     sql_init "$@";;
         status)   sql_status "$@";;
         rollback) sql_rollback "$@";;
@@ -109,6 +110,7 @@ sql_execute_inline() {
         echo "DEFINE APP_PASSWORD = '${APP_PASSWORD}'"
         echo "DEFINE APP_TABLESPACE = '${APP_TABLESPACE}'"
         echo "DEFINE ORACLE_DATA  = '${ORACLE_DATA}'"
+        echo "DEFINE ORACLE_DUMP_DIR = '${ORACLE_DUMP_DIR}'"
         echo "SET SERVEROUTPUT ON"
         echo "SET ECHO ON"
         # SQL*Plus 仅当 ';' 位于行尾时才视为语句结束符; 内联 SQL 常把多条语句写在同一行,
@@ -143,10 +145,119 @@ sql_execute_inline() {
 
 sql_init() {
     log_step "初始化基线数据"
+    # 预建数据泵目录 (Oracle DIRECTORY 对象指向的 OS 路径), 确保 impdp 可直接使用。
+    # 否则 omf sql import 会因 OS 目录不存在而报 ORA-27037 / permission denied。
+    mkdir -p "$ORACLE_DUMP_DIR"
+    chown "${ORACLE_USER}:${ORACLE_GROUP}" "$ORACLE_DUMP_DIR" 2>/dev/null || true
+    chmod 750 "$ORACLE_DUMP_DIR"
+    log_info "数据泵目录已就绪: $ORACLE_DUMP_DIR (属主 ${ORACLE_USER}:${ORACLE_GROUP})"
     sql_scan
     confirm "确认执行所有初始化脚本?"
     sql_preflight
     sql_execute_all
+}
+
+#===============================================================================
+# 数据泵导入 (impdp) 到应用模式
+#   用法: omf sql import <dumpfile> [--remap 源模式[:目标模式]] [--check]
+#   说明:
+#     - dumpfile 可为绝对路径(自动拷入数据泵目录)或仅文件名(须已在目录中)
+#     - 不指定 --remap 时, 假定 dump 中的模式名 == APP_USER (导入到该模式)
+#     - --check: 仅抽取 DDL 预览源模式名, 不真正导入, 用于"未知模式名"场景
+#     - 导入后自动按对象类型统计该模式的对象数做校验
+#===============================================================================
+sql_import() {
+    local dumpfile="" remap="" check_only=0
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --remap) remap="${2:-}"; shift 2;;
+            --check)  check_only=1; shift;;
+            -*) log_error "未知选项: $1"; return 1;;
+            *)  [ -z "$dumpfile" ] && dumpfile="$1"; shift;;
+        esac
+    done
+    [ -z "$dumpfile" ] && { echo "用法: omf sql import <dumpfile> [--remap 源模式[:目标模式]] [--check]"; exit 1; }
+
+    # 确保 OS 层数据泵目录存在且属主 oracle
+    mkdir -p "$ORACLE_DUMP_DIR"
+    chown "${ORACLE_USER}:${ORACLE_GROUP}" "$ORACLE_DUMP_DIR" 2>/dev/null || true
+    chmod 750 "$ORACLE_DUMP_DIR"
+
+    # 定位 dump 文件
+    local base dmp
+    base="$(basename "$dumpfile")"
+    if [ -f "$dumpfile" ]; then
+        if [ "$(dirname "$dumpfile")" != "$ORACLE_DUMP_DIR" ]; then
+            cp -f "$dumpfile" "${ORACLE_DUMP_DIR}/${base}"
+            chown "${ORACLE_USER}:${ORACLE_GROUP}" "${ORACLE_DUMP_DIR}/${base}" 2>/dev/null || true
+            log_info "已拷入数据泵目录: ${ORACLE_DUMP_DIR}/${base}"
+        fi
+    elif [ -f "${ORACLE_DUMP_DIR}/${base}" ]; then
+        : # 已在目录中
+    else
+        log_error "找不到 dump 文件: $dumpfile (或 ${ORACLE_DUMP_DIR}/${base})"
+        return 1
+    fi
+    dmp="${ORACLE_DUMP_DIR}/${base}"
+
+    # 组装 parfile
+    local parfile; parfile="$(mktemp /tmp/omf_imp_XXXXXX.par)"
+    {
+        echo "userid=${APP_USER}/\"${APP_PASSWORD}\"@//localhost:${LISTENER_PORT}/${PDB_NAME}"
+        echo "directory=oracle_dumps"
+        echo "dumpfile=${base}"
+        echo "logfile=${base}.imp.log"
+        echo "transform=oid:n"
+        if [ -n "$remap" ]; then
+            local src_schema dst_schema
+            src_schema="${remap%%:*}"
+            dst_schema="${remap##*:}"
+            [ "$dst_schema" = "$src_schema" ] && dst_schema="${APP_USER}"
+            echo "remap_schema=${src_schema}:${dst_schema}"
+        fi
+    } > "$parfile"
+    chmod 644 "$parfile"
+    chown "${ORACLE_USER}:${ORACLE_GROUP}" "$parfile" 2>/dev/null || true
+
+    if [ "$check_only" -eq 1 ]; then
+        log_step "抽取 dump DDL 预览源模式名 (不真正导入)"
+        local sqlfile; sqlfile="$(mktemp /tmp/omf_imp_XXXXXX.sql)"
+        local chk; chk="$(mktemp /tmp/omf_imp_XXXXXX.par)"
+        # 单独写一份不含 logfile 的 parfile (避免 logfile + nologfile 冲突)
+        {
+            echo "userid=${APP_USER}/\"${APP_PASSWORD}\"@//localhost:${LISTENER_PORT}/${PDB_NAME}"
+            echo "directory=oracle_dumps"
+            echo "dumpfile=${base}"
+            echo "sqlfile=${sqlfile}"
+            echo "nologfile"
+            echo "transform=oid:n"
+            if [ -n "$remap" ]; then
+                local src_schema dst_schema
+                src_schema="${remap%%:*}"
+                dst_schema="${remap##*:}"
+                [ "$dst_schema" = "$src_schema" ] && dst_schema="${APP_USER}"
+                echo "remap_schema=${src_schema}:${dst_schema}"
+            fi
+        } > "$chk"
+        chmod 644 "$chk"
+        chown "${ORACLE_USER}:${ORACLE_GROUP}" "$chk" 2>/dev/null || true
+        as_oracle "impdp parfile=${chk}" 2>&1 | tee -a "${OMF_HOME}/sql/.logs/imp_check_$(date '+%Y%m%d_%H%M%S').log"
+        echo ""
+        echo "=== dump 中的模式/用户 (如需改名, 用 --remap 源模式[:目标模式]) ==="
+        grep -iE "CREATE USER|schema|REMAP" "$sqlfile" 2>/dev/null | head -20 || echo "(未能提取, 可手动: impdp ... sqlfile= 查看)"
+        rm -f "$chk" "$sqlfile" "$parfile"
+        return 0
+    fi
+
+    log_step "开始导入: ${base} -> 模式 ${APP_USER}@${PDB_NAME}"
+    local log_dir="${OMF_HOME}/sql/.logs"; mkdir -p "$log_dir"
+    as_oracle "impdp parfile=${parfile}" 2>&1 | tee "${log_dir}/imp_$(date '+%Y%m%d_%H%M%S').log"
+    rm -f "$parfile"
+
+    # 导入后校验: 按对象类型统计该模式对象数
+    log_step "导入后校验 (模式 ${APP_USER} 对象统计)"
+    sql_execute_inline "ALTER SESSION SET CONTAINER = ${PDB_NAME};
+SELECT object_type, COUNT(*) FROM dba_objects WHERE owner='${APP_USER}' GROUP BY object_type ORDER BY 1;"
 }
 
 #===============================================================================
@@ -207,6 +318,7 @@ sql_execute_one() {
         echo "DEFINE APP_PASSWORD = '${APP_PASSWORD}'"
         echo "DEFINE APP_TABLESPACE = '${APP_TABLESPACE}'"
         echo "DEFINE ORACLE_DATA  = '${ORACLE_DATA}'"
+        echo "DEFINE ORACLE_DUMP_DIR = '${ORACLE_DUMP_DIR}'"
         echo "SET SERVEROUTPUT ON"
         echo "SET ECHO ON"
         cat "$script"

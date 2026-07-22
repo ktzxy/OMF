@@ -291,3 +291,93 @@ get_alert_log() {
     # 4) 回退原始假设路径
     echo "${base}/diag/rdbms/${sid}/${sid}/trace/alert_${sid}.log"
 }
+
+#===============================================================================
+# 备份清理 (被 omf backup cleanup 与 omf clean backup 共用)
+# 两种模式:
+#   --all        删除【全部】备份 (RMAN 备份集/镜像副本 + 所有 dump/物理文件), 需确认
+#   -d N         删除 N 天前完成的备份 (默认 BACKUP_RETENTION_DAYS, 回退 30)
+# 注: "-d N" 这里的 N 天前 = 当前日期往前 N 天 (find -mtime +N / RMAN SYSDATE-N)
+#===============================================================================
+backup_cleanup() {
+    local all="false" days=""
+    # 优先解析本次传入的 -d/--all, 否则用 cmd_clean 注入的全局变量, 再回退配置
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -d|--days) days="$2"; shift 2;;
+            --all|-a|--force) all="true"; shift;;
+            -y|--yes) shift;;
+            *) shift;;
+        esac
+    done
+    [ -z "$days" ] && days="${CLEAN_DAYS:-${OMF_CONFIG[BACKUP_RETENTION_DAYS]:-30}}"
+    [ "$all" = "true" ] || all="${CLEAN_ALL:-false}"
+
+    local base="${ORACLE_BACKUP:-/backup/oracle}"
+    local sid="${OMF_CONFIG[ORACLE_SID]:-ARTERY}"
+
+    if [ "$all" = "true" ]; then
+        confirm "确认清理【全部】备份? 此操作不可恢复, 将删除所有 RMAN 备份集与 dump/物理文件!"
+    else
+        confirm "确认清理 ${days} 天前的备份 (RMAN 备份集 + dump 文件)?"
+    fi
+
+    # 1) 逻辑备份 (dump) 文件: 直接按 mtime 删除
+    if [ "$all" = "true" ]; then
+        log_step "清理全部 dump 文件: ${base}/dump"
+        find "${base}/dump" -name "*.dmp" -delete 2>/dev/null || true
+        find "${base}/dump" -name "*.log" -delete 2>/dev/null || true
+    else
+        log_step "清理 ${days} 天前的 dump 文件: ${base}/dump"
+        find "${base}/dump" -name "*.dmp" -mtime "+${days}" -delete 2>/dev/null || true
+        find "${base}/dump" -name "*.log" -mtime "+${days}" -delete 2>/dev/null || true
+    fi
+
+    # 2) 物理备份目录兜底清理 (RMAN 已删的不会重复; 仅清孤儿文件)
+    for d in full incremental controlfile spfile; do
+        [ -d "${base}/${d}" ] || continue
+        if [ "$all" = "true" ]; then
+            find "${base}/${d}" -type f -delete 2>/dev/null || true
+        else
+            find "${base}/${d}" -type f -mtime "+${days}" -delete 2>/dev/null || true
+        fi
+    done
+
+    # 3) RMAN 元数据清理 (需数据库运行且归档模式)
+    local arch_on
+    arch_on=$(oracle_su "
+export ORACLE_SID=${sid}
+export ORACLE_HOME=${OMF_CONFIG[ORACLE_HOME]}
+export PATH=\$ORACLE_HOME/bin:\$PATH
+echo \"select log_mode from v\\\$database;\" | sqlplus -s / as sysdba | grep -i 'ARCHIVELOG'
+" 2>/dev/null)
+
+    if [ -n "$arch_on" ]; then
+        if [ "$all" = "true" ]; then
+            log_step "RMAN: 删除全部备份集与镜像副本"
+            oracle_su "
+export ORACLE_SID=${sid}
+export ORACLE_HOME=${OMF_CONFIG[ORACLE_HOME]}
+export PATH=\$ORACLE_HOME/bin:\$PATH
+rman target / <<RMANEOF
+DELETE NOPROMPT BACKUP;
+DELETE NOPROMPT COPY;
+RMANEOF
+" 2>&1 | tail -15
+        else
+            log_step "RMAN: 删除 ${days} 天前完成的备份集"
+            oracle_su "
+export ORACLE_SID=${sid}
+export ORACLE_HOME=${OMF_CONFIG[ORACLE_HOME]}
+export PATH=\$ORACLE_HOME/bin:\$PATH
+rman target / <<RMANEOF
+DELETE NOPROMPT BACKUP COMPLETED BEFORE 'SYSDATE-${days}';
+RMANEOF
+" 2>&1 | tail -15
+        fi
+    else
+        log_warn "数据库未运行或非归档模式, 跳过 RMAN 元数据清理 (仅清理磁盘文件)"
+    fi
+
+    log_info "备份清理完成"
+}

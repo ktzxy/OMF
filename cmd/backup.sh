@@ -20,7 +20,8 @@ cmd_backup() {
         list)          backup_list "$@";;
         validate)      backup_validate "$@";;
         restore)       backup_restore "$@";;
-        *) echo "用法: omf backup {auto|full|physical|incr|archive|schedule|list|validate|restore} [--all|--root|--pdb a,b]"; exit 1;;
+        cleanup)       backup_cleanup "$@";;
+        *) echo "用法: omf backup {auto|full|physical|incr|archive|schedule|list|validate|restore|cleanup} [-d 天数 | --all] [--all|--root|--pdb a,b]"; exit 1;;
     esac
 }
 

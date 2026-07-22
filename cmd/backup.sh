@@ -114,7 +114,8 @@ backup_logical() {
     case "${SCOPE_MODE:-single}" in
         all)
             log_step "解析所有 PDB 列表"
-            mapfile -t pdbs < <(as_oracle "echo \"set pagesize 0 feedback off heading off\nselect name from v\\\$pdbs;\" | sqlplus -s / as sysdba" 2>/dev/null \
+            mapfile -t pdbs < <(as_oracle "echo \"set pagesize 0 feedback off heading off
+select name from v\\\$pdbs;\" | sqlplus -s / as sysdba" 2>/dev/null \
                 | sed 's/[[:space:]]//g' | grep -v '^$')
             [ "${#pdbs[@]}" -gt 0 ] || log_error "未查询到任何 PDB, 请确认数据库已打开"
             ;;

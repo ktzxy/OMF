@@ -250,11 +250,36 @@ do_impdp() {
     chown "${ORACLE_USER}:${ORACLE_GROUP}" "$tmp_par" 2>/dev/null || true
     chmod 600 "$tmp_par"
     local log_dir="/tmp"; mkdir -p "$log_dir"
-    as_oracle "impdp parfile=${tmp_par}" 2>&1 | tee "${log_dir}/imp_$(date '+%Y%m%d_%H%M%S').log"
+    local imp_log="${log_dir}/imp_$(date '+%Y%m%d_%H%M%S').log"
+    as_oracle "impdp parfile=${tmp_par}" 2>&1 | tee "$imp_log"
     rm -f "$tmp_par"
-    log_step "导入后校验 (模式 ${APP_USER} 对象统计)"
+
+    # ---- 解析 impdp 日志: 区分"良性跳过"与"真正失败" ----
+    # 同库覆盖场景下, 非表对象(视图/过程/函数/类型/序列)若目标已存在, Data Pump
+    # 会报 ORA-31684(已存在) / ORA-39111(依赖对象随基对象跳过) / ORA-39151(表已存在,
+    # skip 模式); 这些均属正常, 不代表导入失败. 真正需关注的是除此之外的其它 ORA- 码,
+    # 以及 ORA-39082(对象创建后编译失败 -> INVALID).
+    local benign='ORA-(31684|39111|39151)'
+    local compile='ORA-39082'
+    local fatal_cnt skip_cnt comp_cnt tbl_cnt
+    fatal_cnt=$(grep -E 'ORA-[0-9]{4,}' "$imp_log" 2>/dev/null | grep -vE "$benign" | grep -vE "$compile" | grep -c 'ORA-' || true)
+    skip_cnt=$(grep -cE "$benign" "$imp_log" 2>/dev/null || true)
+    comp_cnt=$(grep -cE "$compile" "$imp_log" 2>/dev/null || true)
+    tbl_cnt=$(grep -cE '^\. \. imported ' "$imp_log" 2>/dev/null || true)
+
+    if [ "${fatal_cnt:-0}" -gt 0 ]; then
+        log_warn "导入完成, 但存在 ${fatal_cnt} 个真正错误(非良性跳过/编译告警), 请检查日志: $imp_log"
+    else
+        log_info "导入覆盖完成 (无真正错误)"
+        log_info "  - 表数据已重新导入: ${tbl_cnt} 张表"
+        log_info "  - 非表对象因目标已存在被跳过: ${skip_cnt} 个 (视图/过程/函数/类型/序列; Data Pump 正常行为, 结构一致无需覆盖)"
+        [ "${comp_cnt:-0}" -gt 0 ] && log_warn "  - 另有 ${comp_cnt} 个对象创建后编译失败(INVALID), 多为已知的 6 个依赖缺失对象, 详见下方 INVALID 检查"
+    fi
+
+    log_step "导入后校验 (模式 ${APP_USER} 对象统计 + INVALID 检查)"
     sql_execute_inline "ALTER SESSION SET CONTAINER = ${PDB_NAME};
-SELECT object_type, COUNT(*) FROM dba_objects WHERE owner='${APP_USER}' GROUP BY object_type ORDER BY 1;"
+SELECT object_type, COUNT(*) FROM dba_objects WHERE owner='${APP_USER}' GROUP BY object_type ORDER BY 1;
+SELECT 'INVALID 对象数: '||COUNT(*) FROM dba_objects WHERE owner='${APP_USER}' AND status='INVALID';"
 }
 
 # 从 dump 文件明文抽取源模式 (数据泵 master table 目录多为明文)

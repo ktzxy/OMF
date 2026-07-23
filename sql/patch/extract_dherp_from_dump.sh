@@ -15,20 +15,24 @@
 #   自身提供 —— 若正式库完整, 覆盖源码 + 重编译即可全部生效。
 #   注: 之前 dba_dependencies 返回 0 行属正常 (只记对象级依赖, 不含列级), 不影响本方案。
 #
-# 用法 (在数据库服务器上, 以可连 / as sysdba 的用户, 如 oracle 执行):
+# 重要: 本脚本须以 root 运行 (或已是 oracle 用户)。root 下会:
+#   1) 以 root 身份读取 /root/OMF 下(700)的 .dump 并提取到 /tmp 临时文件
+#   2) chown oracle:oinstall + chmod 644 后, 用 runuser -l oracle (回退 su - oracle)
+#      以 oracle 用户执行 sqlplus (自动带 ORACLE_HOME/PATH/ORACLE_SID)
+#
+# 用法:
 #   cd <OMF>/sql/patch
 #   bash extract_dherp_from_dump.sh
 #===============================================================================
 set -u
 
-# 定位与本脚本同目录的 .dump
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 DUMP="$SCRIPT_DIR/01_fix_dherp_deps.sql.dump"
 [ -f "$DUMP" ] || { echo "找不到 $DUMP"; exit 1; }
 
 PDB="${PDB_NAME:-ARTERYPDB}"
 
-# 需要覆盖的 6 个对象 (名称须与 .dump 中 CREATE 语句一致)
+# 需要覆盖的 6(+1) 个对象 (名称须与 .dump 中 CREATE 语句一致)
 objects=(
   "get_orderFloorCnt"
   "get_orderFormula"
@@ -42,6 +46,7 @@ objects=(
 # 从 .dump 提取单个对象的 CREATE 块:
 #   起点 = "^CREATE EDITIONABLE (procedure|function) <name>$" (忽略大小写)
 #   终点 = 下一个顶层 "^CREATE " 或 "^ALTER " 之前 (即本对象自带的 "/" 终止符之后)
+#   并把 CREATE 改为 CREATE OR REPLACE, 使其对已存在的对象可重复覆盖。
 extract_object() {
   local name="$1"
   awk -v name="$name" '
@@ -53,20 +58,41 @@ extract_object() {
     | sed 's/^CREATE EDITIONABLE/CREATE OR REPLACE EDITIONABLE/'
 }
 
+# 以 oracle 用户执行 sqlplus @file (root 下经 runuser -l / su - , 自动带环境)
+run_sqlfile() {
+  local sqlfile="$1"
+  chown oracle:oinstall "$sqlfile" 2>/dev/null || true
+  chmod 644 "$sqlfile"
+  local inner="sqlplus -s / as sysdba @${sqlfile}"
+  if [ "$(id -u)" -eq 0 ]; then
+    if command -v runuser >/dev/null 2>&1; then
+      runuser -l oracle -c "$inner"
+    else
+      su - oracle -c "$inner"
+    fi
+  else
+    eval "$inner"
+  fi
+}
+
 for o in "${objects[@]}"; do
   echo "=== 覆盖对象: $o ==="
+  tmp="$(mktemp /tmp/dherp_ext_XXXXXX.sql)"
   {
     echo "WHENEVER SQLERROR CONTINUE"
     echo "ALTER SESSION SET CONTAINER = ${PDB};"
     echo "SET SERVEROUTPUT ON"
     extract_object "$o"
     echo "EXIT"
-  } | sqlplus -s / as sysdba
+  } > "$tmp"
+  run_sqlfile "$tmp"
+  rm -f "$tmp"
   echo ""
 done
 
 echo "=== 重编译 DHERP 模式 (修复导入依赖顺序导致的级联 INVALID) ==="
-sqlplus -s / as sysdba <<SQL
+tmp="$(mktemp /tmp/dherp_cmp_XXXXXX.sql)"
+cat > "$tmp" <<SQL
 WHENEVER SQLERROR CONTINUE
 ALTER SESSION SET CONTAINER = ${PDB};
 SET SERVEROUTPUT ON
@@ -76,10 +102,13 @@ END;
 /
 EXIT
 SQL
+run_sqlfile "$tmp"
+rm -f "$tmp"
 
 echo ""
 echo "=== 校验: 仍 INVALID 的对象 (应为空) ==="
-sqlplus -s / as sysdba <<SQL
+tmp="$(mktemp /tmp/dherp_chk_XXXXXX.sql)"
+cat > "$tmp" <<SQL
 ALTER SESSION SET CONTAINER = ${PDB};
 SELECT object_name, object_type, status
   FROM dba_objects
@@ -87,3 +116,5 @@ SELECT object_name, object_type, status
  ORDER BY object_type, object_name;
 EXIT
 SQL
+run_sqlfile "$tmp"
+rm -f "$tmp"

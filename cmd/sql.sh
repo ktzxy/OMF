@@ -216,6 +216,7 @@ sql_import_gen_parfile() {
         echo "dumpfile=${base}"
         echo "logfile=${base}.imp.log"
         echo "transform=oid:n"
+        echo "# table_exists_action: 默认 skip(已存在对象则跳过且不导数据); 如需用本 dump 覆盖目标已存在对象, 改为 replace"
         [ -n "$remap" ] && echo "remap_schema=${remap}"
         [ -n "$ts_remap" ] && echo "remap_tablespace=${ts_remap}"
     } >> "$out"

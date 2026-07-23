@@ -251,7 +251,9 @@ do_impdp() {
     chmod 600 "$tmp_par"
     local log_dir="/tmp"; mkdir -p "$log_dir"
     local imp_log="${log_dir}/imp_$(date '+%Y%m%d_%H%M%S').log"
-    as_oracle "impdp parfile=${tmp_par}" 2>&1 | tee "$imp_log"
+    # 终端只显示"非良性跳过"的内容(ORA-31684/39111/39151 已计入下方计数, 无需刷屏);
+    # 完整日志(含良性行)仍落盘到 imp_log 供后面解析统计
+    as_oracle "impdp parfile=${tmp_par}" 2>&1 | tee "$imp_log" | grep -vE 'ORA-(31684|39111|39151)'
     rm -f "$tmp_par"
 
     # ---- 解析 impdp 日志: 区分"良性跳过"与"真正失败" ----

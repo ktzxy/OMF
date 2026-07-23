@@ -6,6 +6,9 @@ conf/omf.conf
 logs/
 *.log
 
+# 导入生成的 parfile (含明文密码, 由 omf sql import 自动生成)
+sql/.import/
+
 # 编辑器/系统临时文件
 *.swp
 *~

@@ -1,17 +1,28 @@
 #===============================================================================
-# OMF 数据泵导入模板 (手动高级用法)
-#   复制本文件并按需修改, 然后以 oracle 用户执行:
-#     runuser -u oracle -- impdp parfile=本文件
+# OMF 数据泵导入参数模板 (sql/imp.par.example)
 #
-#   对应的一键命令: omf sql import <dumpfile> [--remap 源模式[:目标模式]]
-#   本模板与一键命令等价, 仅用于需要微调参数(并行度/替换策略等)的场景。
+# 这是【手工高级用法】的参考模板。日常请用一键命令, 它会自动从配置生成
+# 真正可用的 parfile 并持久化到:  sql/.import/<dump名>.par
+#
+#   一键流程:
+#     1) 检查模式(自动生成可编辑的 imp.par 并探测源模式):
+#        omf sql import <库名>.dmp --check
+#     2) 编辑生成的 parfile (端口/用户/密码/remap/表空间):
+#        vi sql/.import/<库名>.dmp.par
+#     3) 用编辑后的 parfile 真正导入:
+#        omf sql import <库名>.dmp --apply
+#
+#   本模板仅用于"完全手动"场景: 复制后改参数, 再以 oracle 执行:
+#     cp sql/imp.par.example /tmp/imp.par
+#     vi /tmp/imp.par
+#     runuser -u oracle -- impdp parfile=/tmp/imp.par
 #===============================================================================
 
 # 连接串: 用户/密码@//主机:监听端口/服务名(PDB)
-#   端口取 LISTENER_PORT (默认 1521); 密码含特殊字符时用双引号包裹
+#   端口取 LISTENER_PORT (默认 1521, 本环境 1522); 密码含特殊字符时用双引号包裹
 userid=dherp/"dherp_skzy"@//localhost:1521/ARTERYPDB
 
-# 目录对象 (由 omf sql init 创建, 指向 OS 路径 ORACLE_DUMP_DIR)
+# 目录对象 (由 omf sql init 或 omf sql import 自动建, 指向 OS 路径 ORACLE_DUMP_DIR)
 directory=oracle_dumps
 
 # dump 文件名 (须已放在 ORACLE_DUMP_DIR 目录下)
@@ -26,6 +37,8 @@ transform=oid:n
 # ---- 以下为常用可选参数, 按需取消注释 ----
 # 若 dump 源模式名与主库 APP_USER 不同, 改成实际源模式:
 # remap_schema=源模式:dherp
+# 表空间映射(命名空间): 源表空间 -> 目标表空间
+# remap_tablespace=源TS:dherp
 # 表已存在时的处理: replace=删后重建 / append=追加 / skip=跳过
 # table_exists_action=replace
 # 并行度 (大库可提速, 需与 dump 时 parallel 匹配或更小)

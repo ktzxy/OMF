@@ -482,25 +482,36 @@ DROP TABLE smoke_t;'
 
 ### 4. 数据导入（impdp 到应用模式）
 
-**一键导入**（推荐）：把 dump 放到任意位置，框架自动拷入数据泵目录、组装 parfile、以 oracle 执行 impdp，并在导入后按对象类型统计校验。
+**一键导入**（推荐）：把 dump 放到任意位置，框架自动拷入数据泵目录、从配置生成 **持久化 parfile**、以 oracle 执行 impdp，并在导入后按对象类型统计校验。
+
+parfile 生成后**不会自动删除**，保存在 `sql/.import/<dump名>.par`，方便你编辑端口/用户/密码/remap/表空间后再导入。
 
 ```bash
 # 场景 A: 已知 dump 中的模式名 == APP_USER (本例均为 dherp), 直接导入
 omf sql import /root/dherp_202606290300.dmp
-#   → 自动拷入 /data/oracle/oracle_dumps/ , impdp 导入到 dherp@ARTERYPDB
-#   → 末尾打印 dherp 对象统计 (按类型计数)
+#   → 自动拷入 /data/oracle/oracle_dumps/ , 生成 sql/.import/dherp_202606290300.dmp.par
+#   → impdp 导入到 dherp@ARTERYPDB, 末尾打印 dherp 对象统计 (按类型计数)
 
-# 场景 B: 不知道源模式名, 先抽 DDL 预览 (不真正导入)
+# 场景 B: 不知道源模式名, 先检查模式 (生成 parfile + 抽取源模式, 不真正导入)
 omf sql import /root/dherp_202606290300.dmp --check
-#   → 打印 dump 中的 CREATE USER / schema 信息, 据此决定是否 remap
+#   → 生成 sql/.import/<dump名>.par 并保留
+#   → 打印 dump 中探测到的 CREATE USER / schema; 单一源模式会自动写入 remap_schema
+#   → 同时提示 dump 使用的表空间, 若目标库没有则建议 remap_tablespace
+#   → 编辑该 parfile 后: omf sql import <dump> --apply
 
 # 场景 C: dump 源模式名与主库 APP_USER 不同, 改名导入
 omf sql import /root/dherp_202606290300.dmp --remap 源模式[:目标模式]
 #   → --remap SRC          : 目标默认用 APP_USER (即 SRC:dherp)
 #   → --remap SRC:DST     : 显式指定目标模式 DST
+#   → 也可在 --check 生成的 parfile 里手改 remap_schema 后 --apply
+
+# 场景 D: 用检查阶段生成/你编辑过的 parfile 真正导入
+vi sql/.import/dherp_202606290300.dmp.par   # 必要时改端口/密码/remap/表空间
+omf sql import /root/dherp_202606290300.dmp --apply
+#   → 也可显式指定 parfile: omf sql import <dump> --apply /path/to/xxx.par
 ```
 
-**手动高级用法**：复制模板 `sql/imp.par.example` 改参数后手动执行（等价于一键命令，便于调并行度/替换策略）：
+**手动高级用法**：`sql/imp.par.example` 是参考模板，一键命令会复制它并按配置填充生成真正可用的 parfile（单一来源，无需手改模板）。完全手动时：
 ```bash
 cp sql/imp.par.example /tmp/imp.par
 vi /tmp/imp.par                      # 改 dumpfile / remap / parallel 等
@@ -508,6 +519,7 @@ runuser -u oracle -- impdp parfile=/tmp/imp.par
 ```
 
 - 连接串端口取 `conf/omf.conf` 的 `LISTENER_PORT`（默认 `1521`，本环境 `1522`）。
+- 导入前框架会**自动确保** `oracle_dumps` 目录对象在目标 PDB 存在并授权 `APP_USER`，因此**不必先跑 `omf sql init`** 也能直接导入（init 仍负责建表空间/用户等目标结构）。
 - 若用 `sqlldr` / 普通 SQL 入库，连接串同样用 `dherp/dherp_skzy@//localhost:1522/ARTERYPDB`。
 
 ### 5. 注意事项

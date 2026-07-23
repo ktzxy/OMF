@@ -15,7 +15,7 @@ cmd_sql() {
         init)     sql_init "$@";;
         status)   sql_status "$@";;
         rollback) sql_rollback "$@";;
-        *) echo "用法: omf sql {scan|run|init|status|rollback}"; exit 1;;
+        *) echo "用法: omf sql {scan|run|import|init|status|rollback}"; exit 1;;
     esac
 }
 
@@ -161,24 +161,107 @@ sql_init() {
 
 #===============================================================================
 # 数据泵导入 (impdp) 到应用模式
-#   用法: omf sql import <dumpfile> [--remap 源模式[:目标模式]] [--check]
-#   说明:
-#     - dumpfile 可为绝对路径(自动拷入数据泵目录)或仅文件名(须已在目录中)
+#   用法:
+#     omf sql import <dumpfile> [--remap 源模式[:目标模式]] [--remap-tablespace 源TS:目标TS]
+#     omf sql import <dumpfile> --check            # 生成可编辑的 imp.par 并探测源模式, 不导入
+#     omf sql import <dumpfile> --apply [parfile]  # 用生成/编辑过的 parfile 真正导入
+#   设计:
+#     - 一键命令自动从配置(config)生成 parfile, 并【持久化】到 sql/.import/<dump名>.par
+#       (不再散落 /tmp, 也不会被自动删除), 方便用户编辑端口/用户/密码/remap/表空间
+#     - imp.par.example 仅作手工高级用法的参考模板, 日常无需手改它
 #     - 不指定 --remap 时, 假定 dump 中的模式名 == APP_USER (导入到该模式)
-#     - --check: 仅抽取 DDL 预览源模式名, 不真正导入, 用于"未知模式名"场景
 #     - 导入后自动按对象类型统计该模式的对象数做校验
 #===============================================================================
+
+# 持久化 parfile 存放目录
+sql_import_parfile_dir() {
+    echo "${OMF_HOME}/sql/.import"
+}
+
+# 确保数据泵目录对象 oracle_dumps 存在于目标 PDB 并授权给 APP_USER (幂等)
+#   否则跳过 omf sql init 直接 import 会报 ORA-39070 / ORA-39002
+ensure_dump_dir_object() {
+    log_step "确保数据泵目录对象 oracle_dumps 存在 (PDB=${PDB_NAME})"
+    local sql; sql="$(mktemp /tmp/omf_imp_XXXXXX.sql)"
+    {
+        echo "ALTER SESSION SET CONTAINER = ${PDB_NAME};"
+        echo "CREATE OR REPLACE DIRECTORY oracle_dumps AS '${ORACLE_DUMP_DIR}';"
+        echo "GRANT READ, WRITE ON DIRECTORY oracle_dumps TO ${APP_USER};"
+        echo "EXIT"
+    } > "$sql"
+    chmod 600 "$sql"
+    chown "${ORACLE_USER}:${ORACLE_GROUP}" "$sql" 2>/dev/null || true
+    as_oracle "sqlplus -s / as sysdba @${sql}" 2>&1 \
+        | tee -a "${OMF_HOME}/sql/.logs/imp_dir_$(date '+%Y%m%d_%H%M%S').log" \
+        | grep -iE "ORA-|directory|grant" || true
+    rm -f "$sql"
+}
+
+# 以 imp.par.example 为模板, 用配置值生成持久化 parfile 到 $4
+sql_import_gen_parfile() {
+    local base="$1" remap="$2" ts_remap="$3" out="$4"
+    local tmpl="${OMF_HOME}/sql/imp.par.example"
+    if [ -f "$tmpl" ]; then
+        cp "$tmpl" "$out"
+    else
+        : > "$out"
+    fi
+    # 去掉模板里这些 key 的已有行(含注释外的同名行), 统一在末尾重写, 避免重复
+    sed -i -E '/^[[:space:]]*userid=/d; /^[[:space:]]*directory=/d; /^[[:space:]]*dumpfile=/d; /^[[:space:]]*logfile=/d; /^[[:space:]]*transform=/d; /^[[:space:]]*remap_schema=/d; /^[[:space:]]*remap_tablespace=/d' "$out"
+    {
+        echo ""
+        echo "# ---- 以下由 omf sql import 自动生成 ($(date '+%F %T')) ----"
+        echo "userid=${APP_USER}/\"${APP_PASSWORD}\"@//localhost:${LISTENER_PORT}/${PDB_NAME}"
+        echo "directory=oracle_dumps"
+        echo "dumpfile=${base}"
+        echo "logfile=${base}.imp.log"
+        echo "transform=oid:n"
+        [ -n "$remap" ] && echo "remap_schema=${remap}"
+        [ -n "$ts_remap" ] && echo "remap_tablespace=${ts_remap}"
+    } >> "$out"
+    chmod 600 "$out"
+    chown "${ORACLE_USER}:${ORACLE_GROUP}" "$out" 2>/dev/null || true
+    echo "$out"
+}
+
+# 真正执行 impdp + 导入后校验
+do_impdp() {
+    local parfile="$1" base="$2"
+    log_step "开始导入: ${base} -> 模式 ${APP_USER}@${PDB_NAME}"
+    local log_dir="${OMF_HOME}/sql/.logs"; mkdir -p "$log_dir"
+    as_oracle "impdp parfile=${parfile}" 2>&1 | tee "${log_dir}/imp_$(date '+%Y%m%d_%H%M%S').log"
+    log_step "导入后校验 (模式 ${APP_USER} 对象统计)"
+    sql_execute_inline "ALTER SESSION SET CONTAINER = ${PDB_NAME};
+SELECT object_type, COUNT(*) FROM dba_objects WHERE owner='${APP_USER}' GROUP BY object_type ORDER BY 1;"
+}
+
 sql_import() {
-    local dumpfile="" remap="" check_only=0
+    local dumpfile="" remap="" ts_remap="" check_only=0 apply_mode=0 apply_parfile=""
     while [ $# -gt 0 ]; do
         case "$1" in
-            --remap) remap="${2:-}"; shift 2;;
-            --check)  check_only=1; shift;;
+            --remap)            remap="${2:-}"; shift 2;;
+            --remap-tablespace) ts_remap="${2:-}"; shift 2;;
+            --check)            check_only=1; shift;;
+            --apply)
+                apply_mode=1
+                if [ $# -ge 2 ] && [[ "$2" != -* ]]; then
+                    apply_parfile="$2"; shift 2
+                else
+                    shift
+                fi
+                ;;
             -*) log_error "未知选项: $1"; return 1;;
             *)  [ -z "$dumpfile" ] && dumpfile="$1"; shift;;
         esac
     done
-    [ -z "$dumpfile" ] && { echo "用法: omf sql import <dumpfile> [--remap 源模式[:目标模式]] [--check]"; exit 1; }
+    if [ -z "$dumpfile" ]; then
+        if [ "$apply_mode" -eq 1 ] && [ -n "$apply_parfile" ]; then
+            dumpfile="$(basename "$apply_parfile" .par)"
+        else
+            echo "用法: omf sql import <dumpfile> [--remap 源模式[:目标模式]] [--remap-tablespace 源TS:目标TS] [--check] [--apply [parfile]]"
+            exit 1
+        fi
+    fi
 
     # 确保 OS 层数据泵目录存在且属主 oracle
     mkdir -p "$ORACLE_DUMP_DIR"
@@ -202,64 +285,84 @@ sql_import() {
     fi
     dmp="${ORACLE_DUMP_DIR}/${base}"
 
-    # 组装 parfile
-    local parfile; parfile="$(mktemp /tmp/omf_imp_XXXXXX.par)"
-    {
-        echo "userid=${APP_USER}/\"${APP_PASSWORD}\"@//localhost:${LISTENER_PORT}/${PDB_NAME}"
-        echo "directory=oracle_dumps"
-        echo "dumpfile=${base}"
-        echo "logfile=${base}.imp.log"
-        echo "transform=oid:n"
-        if [ -n "$remap" ]; then
-            local src_schema dst_schema
-            src_schema="${remap%%:*}"
-            dst_schema="${remap##*:}"
-            [ "$dst_schema" = "$src_schema" ] && dst_schema="${APP_USER}"
-            echo "remap_schema=${src_schema}:${dst_schema}"
-        fi
-    } > "$parfile"
-    chmod 644 "$parfile"
-    chown "${ORACLE_USER}:${ORACLE_GROUP}" "$parfile" 2>/dev/null || true
+    # 持久化 parfile 路径 (每个 dump 一份, 不再散落 /tmp)
+    local impdir; impdir="$(sql_import_parfile_dir)"
+    mkdir -p "$impdir"
+    local parfile="${impdir}/${base}.par"
 
-    if [ "$check_only" -eq 1 ]; then
-        log_step "抽取 dump DDL 预览源模式名 (不真正导入)"
-        local sqlfile; sqlfile="$(mktemp /tmp/omf_imp_XXXXXX.sql)"
-        local chk; chk="$(mktemp /tmp/omf_imp_XXXXXX.par)"
-        # 单独写一份不含 logfile 的 parfile (避免 logfile + nologfile 冲突)
-        {
-            echo "userid=${APP_USER}/\"${APP_PASSWORD}\"@//localhost:${LISTENER_PORT}/${PDB_NAME}"
-            echo "directory=oracle_dumps"
-            echo "dumpfile=${base}"
-            echo "sqlfile=${sqlfile}"
-            echo "nologfile"
-            echo "transform=oid:n"
-            if [ -n "$remap" ]; then
-                local src_schema dst_schema
-                src_schema="${remap%%:*}"
-                dst_schema="${remap##*:}"
-                [ "$dst_schema" = "$src_schema" ] && dst_schema="${APP_USER}"
-                echo "remap_schema=${src_schema}:${dst_schema}"
-            fi
-        } > "$chk"
-        chmod 644 "$chk"
-        chown "${ORACLE_USER}:${ORACLE_GROUP}" "$chk" 2>/dev/null || true
-        as_oracle "impdp parfile=${chk}" 2>&1 | tee -a "${OMF_HOME}/sql/.logs/imp_check_$(date '+%Y%m%d_%H%M%S').log"
-        echo ""
-        echo "=== dump 中的模式/用户 (如需改名, 用 --remap 源模式[:目标模式]) ==="
-        grep -iE "CREATE USER|schema|REMAP" "$sqlfile" 2>/dev/null | head -20 || echo "(未能提取, 可手动: impdp ... sqlfile= 查看)"
-        rm -f "$chk" "$sqlfile" "$parfile"
+    # ---- --apply: 用既有(用户编辑过的) parfile 直接导入 ----
+    if [ "$apply_mode" -eq 1 ]; then
+        [ -n "$apply_parfile" ] && parfile="$apply_parfile"
+        if [ ! -f "$parfile" ]; then
+            log_error "找不到 parfile: $parfile (请先 omf sql import <dump> --check 生成, 或显式指定 --apply <parfile>)"
+            return 1
+        fi
+        log_info "使用已有 parfile: $parfile"
+        do_impdp "$parfile" "$base"
         return 0
     fi
 
-    log_step "开始导入: ${base} -> 模式 ${APP_USER}@${PDB_NAME}"
-    local log_dir="${OMF_HOME}/sql/.logs"; mkdir -p "$log_dir"
-    as_oracle "impdp parfile=${parfile}" 2>&1 | tee "${log_dir}/imp_$(date '+%Y%m%d_%H%M%S').log"
-    rm -f "$parfile"
+    # 确保目录对象存在 (跳过 sql init 也能导入)
+    ensure_dump_dir_object
 
-    # 导入后校验: 按对象类型统计该模式对象数
-    log_step "导入后校验 (模式 ${APP_USER} 对象统计)"
-    sql_execute_inline "ALTER SESSION SET CONTAINER = ${PDB_NAME};
-SELECT object_type, COUNT(*) FROM dba_objects WHERE owner='${APP_USER}' GROUP BY object_type ORDER BY 1;"
+    # ---- --check: 生成持久化 parfile + 抽取源模式, 不真正导入 ----
+    if [ "$check_only" -eq 1 ]; then
+        log_step "检查模式: 生成 parfile 并抽取 dump 中的源模式"
+        sql_import_gen_parfile "$base" "$remap" "$ts_remap" "$parfile"
+
+        local sqlfile; sqlfile="$(mktemp /tmp/omf_imp_XXXXXX.sql)"
+        local chk; chk="$(mktemp /tmp/omf_imp_XXXXXX.par)"
+        # 复用已生成的 parfile, 仅把 logfile 换成 sqlfile + nologfile (避免 logfile 冲突)
+        {
+            grep -vE '^[[:space:]]*logfile=' "$parfile"
+            echo "sqlfile=${sqlfile}"
+            echo "nologfile"
+        } > "$chk"
+        chmod 600 "$chk"
+        chown "${ORACLE_USER}:${ORACLE_GROUP}" "$chk" 2>/dev/null || true
+        as_oracle "impdp parfile=${chk}" 2>&1 | tee -a "${OMF_HOME}/sql/.logs/imp_check_$(date '+%Y%m%d_%H%M%S').log"
+        rm -f "$chk"
+
+        echo ""
+        echo "=== dump 中探测到的源模式/用户 ==="
+        local schemas
+        schemas=$(grep -iE '^CREATE USER' "$sqlfile" 2>/dev/null | grep -oiE '"[^"]+"' | tr -d '"' | sort -u)
+        [ -z "$schemas" ] && schemas=$(grep -iE 'CREATE (TABLE|VIEW|SEQUENCE|PROCEDURE|INDEX)' "$sqlfile" 2>/dev/null | grep -oiE '"[^"]+"\.' | tr -d '"' | sed 's/\.$//' | sort -u)
+        if [ -n "$schemas" ]; then
+            echo "$schemas" | while read -r s; do echo "  - $s"; done
+            # 单一源模式且与目标不同 -> 自动写入 remap (用户仍可改)
+            local nsc; nsc=$(printf '%s\n' "$schemas" | grep -c .)
+            if [ -z "$remap" ] && [ "$nsc" -eq 1 ] && [ "$schemas" != "${APP_USER}" ]; then
+                echo ""
+                echo "→ 探测到单一源模式 '$schemas', 已自动写入: remap_schema=${schemas}:${APP_USER}"
+                echo "  如需改目标模式, 编辑 parfile 后: omf sql import ${base} --apply"
+                sed -i -E "/^[[:space:]]*remap_schema=/d" "$parfile"
+                sed -i -E "0,/^# ---- 以下由 omf/a remap_schema=${schemas}:${APP_USER}" "$parfile"
+            fi
+        else
+            echo "  (未能从 sqlfile 提取模式; 你可手动编辑 parfile 指定 remap_schema)"
+        fi
+
+        # 探测源表空间 (best-effort), 给出提示
+        local tss
+        tss=$(grep -iE 'DEFAULT TABLESPACE "[^"]+"|TABLESPACE "[^"]+"' "$sqlfile" 2>/dev/null | grep -oiE '"[^"]+"' | tr -d '"' | sort -u | grep -viE '^(SYSTEM|SYSAUX|TEMP|USERS|UNDOTBS1|UNDOTBS2)$')
+        if [ -n "$tss" ] && [ "$tss" != "${APP_TABLESPACE}" ]; then
+            echo ""
+            echo "→ dump 中使用的表空间: $(echo $tss | tr '\n' ' ')"
+            echo "  若目标库无该表空间, 建议加: remap_tablespace=<源TS>:${APP_TABLESPACE}"
+            echo "  例: omf sql import ${base} --remap-tablespace $(echo $tss | head -1):${APP_TABLESPACE} --check"
+        fi
+        rm -f "$sqlfile"
+
+        echo ""
+        log_info "parfile 已生成并保留: $parfile"
+        log_info "可直接编辑(端口/用户/密码/remap/表空间)后执行: omf sql import ${base} --apply"
+        return 0
+    fi
+
+    # ---- 默认: 已知模式, 直接生成 parfile 并导入 ----
+    sql_import_gen_parfile "$base" "$remap" "$ts_remap" "$parfile"
+    do_impdp "$parfile" "$base"
 }
 
 #===============================================================================

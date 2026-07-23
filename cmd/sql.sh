@@ -315,10 +315,13 @@ sql_import() {
         local sqlfile; sqlfile="omf_imp_$(date '+%s%N').sql"
         local chk; chk="$(mktemp /tmp/omf_imp_XXXXXX.par)"
         # 复用已生成的 parfile, 仅把 logfile 换成 sqlfile + nologfile (避免 logfile 冲突)
+        # 关键: 限定 INCLUDE 对象类型, 绕开 19c SQLFILE 全量抽取时 master table 建唯一索引
+        #       撞重复键导致的 ORA-39099/ORA-01452 (该 bug 常使 sqlfile 不生成), 且把耗时从数分钟降到秒级
         {
             grep -vE '^[[:space:]]*logfile=' "$parfile"
             echo "sqlfile=${sqlfile}"
             echo "nologfile"
+            echo "include=USER,TABLE,VIEW,SEQUENCE,PROCEDURE,FUNCTION,TYPE,TRIGGER,GRANT,COMMENT"
         } > "$chk"
         chmod 600 "$chk"
         chown "${ORACLE_USER}:${ORACLE_GROUP}" "$chk" 2>/dev/null || true

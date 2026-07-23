@@ -32,7 +32,7 @@ cmd_log() {
 # get_alert_log() 已统一在 lib/common.sh 实现 (兼容 19c 文本/XML 及大小写变体)
 
 get_listener_log() {
-    echo "${OMF_CONFIG[ORACLE_BASE]}/diag/tnslsnr/$(hostname)/listener/alert/log.xml"
+    echo "${OMF_CONFIG[ORACLE_BASE]}/diag/tnslsnr/$(hostname)/LISTENER/alert/log.xml"
 }
 
 get_trace_dir() {

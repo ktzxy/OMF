@@ -347,8 +347,8 @@ clean_all() {
         echo -e "[预览] 以下将在正式清理时执行: 清空监听器日志, 清空数据库回收站 (PURGE DBA_RECYCLEBIN)"
     else
         # 清理监听器日志
-        if [ -f "${OMF_CONFIG[ORACLE_BASE]}/diag/tnslsnr/$(hostname)/listener/trace/listener.log" ]; then
-            > "${OMF_CONFIG[ORACLE_BASE]}/diag/tnslsnr/$(hostname)/listener/trace/listener.log"
+        if [ -f "${OMF_CONFIG[ORACLE_BASE]}/diag/tnslsnr/$(hostname)/LISTENER/trace/listener.log" ]; then
+            > "${OMF_CONFIG[ORACLE_BASE]}/diag/tnslsnr/$(hostname)/LISTENER/trace/listener.log"
             log_info "监听器日志已清空"
         fi
 

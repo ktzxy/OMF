@@ -435,17 +435,17 @@ PROFILEEOF
 env_firewall() {
     # RHEL 系: firewalld
     if command -v firewall-cmd &>/dev/null && systemctl is-active firewalld &>/dev/null; then
-        firewall-cmd --add-port=1521/tcp --permanent 2>/dev/null
+        firewall-cmd --add-port=${LISTENER_PORT:-1521}/tcp --permanent 2>/dev/null
         firewall-cmd --add-port=5500/tcp --permanent 2>/dev/null
         firewall-cmd --reload 2>/dev/null
-        log_info "防火墙已配置 (1521, 5500, firewalld)"
+        log_info "防火墙已配置 (${LISTENER_PORT:-1521}, 5500, firewalld)"
         return
     fi
     # Debian/Ubuntu 系: ufw
     if command -v ufw &>/dev/null && ufw status 2>/dev/null | grep -q "Status: active"; then
-        ufw allow 1521/tcp 2>/dev/null
+        ufw allow ${LISTENER_PORT:-1521}/tcp 2>/dev/null
         ufw allow 5500/tcp 2>/dev/null
-        log_info "防火墙已配置 (1521, 5500, ufw)"
+        log_info "防火墙已配置 (${LISTENER_PORT:-1521}, 5500, ufw)"
         return
     fi
     log_debug "未检测到启用的防火墙 (firewalld/ufw), 跳过"

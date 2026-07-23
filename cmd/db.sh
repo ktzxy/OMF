@@ -591,8 +591,8 @@ db_dg_standby() {
     if dg_wallet_ready; then
         echo "  连接方式: 钱包免密 (/@别名, 已在主备执行 'omf db dg wallet')"
     else
-        echo "  主库连接: sys/****@${OMF_CONFIG[PRIMARY_IP]}:1521/${OMF_CONFIG[ORACLE_SID]}"
-        echo "  备库连接: sys/****@${OMF_CONFIG[STANDBY_IP]}:1521/${stb_sid}"
+        echo "  主库连接: sys/****@${OMF_CONFIG[PRIMARY_IP]}:${OMF_CONFIG[LISTENER_PORT]:-1521}/${OMF_CONFIG[ORACLE_SID]}"
+        echo "  备库连接: sys/****@${OMF_CONFIG[STANDBY_IP]}:${OMF_CONFIG[LISTENER_PORT]:-1521}/${stb_sid}"
         echo "  建议: 主备均执行 'omf db dg wallet' 以消除 ps 中密码残留"
     fi
     echo ""
@@ -749,12 +749,12 @@ EOF
 # OMF_DG_WALLET aliases
 ${pri_alias} =
   (DESCRIPTION=
-    (ADDRESS=(PROTOCOL=TCP)(HOST=${OMF_CONFIG[PRIMARY_IP]})(PORT=1521))
+    (ADDRESS=(PROTOCOL=TCP)(HOST=${OMF_CONFIG[PRIMARY_IP]})(PORT=${OMF_CONFIG[LISTENER_PORT]:-1521}))
     (CONNECT_DATA=(SERVER=DEDICATED)(SERVICE_NAME=${OMF_CONFIG[ORACLE_SID]}))
   )
 ${stb_alias} =
   (DESCRIPTION=
-    (ADDRESS=(PROTOCOL=TCP)(HOST=${OMF_CONFIG[STANDBY_IP]})(PORT=1521))
+    (ADDRESS=(PROTOCOL=TCP)(HOST=${OMF_CONFIG[STANDBY_IP]})(PORT=${OMF_CONFIG[LISTENER_PORT]:-1521}))
     (CONNECT_DATA=(SERVER=DEDICATED)(SERVICE_NAME=${stb_sid}))
   )
 EOF
@@ -780,7 +780,7 @@ dg_conn_primary() {
     if dg_wallet_ready; then
         echo "/@${OMF_CONFIG[DB_UNIQUE_NAME_PRIMARY]}"
     else
-        echo "sys/${OMF_CONFIG[ORACLE_PASSWORD]}@${OMF_CONFIG[PRIMARY_IP]}:1521/${OMF_CONFIG[ORACLE_SID]}"
+        echo "sys/${OMF_CONFIG[ORACLE_PASSWORD]}@${OMF_CONFIG[PRIMARY_IP]}:${OMF_CONFIG[LISTENER_PORT]:-1521}/${OMF_CONFIG[ORACLE_SID]}"
     fi
 }
 dg_conn_standby() {
@@ -788,6 +788,6 @@ dg_conn_standby() {
     if dg_wallet_ready; then
         echo "/@${OMF_CONFIG[DB_UNIQUE_NAME_STANDBY]}"
     else
-        echo "sys/${OMF_CONFIG[ORACLE_PASSWORD]}@${OMF_CONFIG[STANDBY_IP]}:1521/${stb_sid}"
+        echo "sys/${OMF_CONFIG[ORACLE_PASSWORD]}@${OMF_CONFIG[STANDBY_IP]}:${OMF_CONFIG[LISTENER_PORT]:-1521}/${stb_sid}"
     fi
 }

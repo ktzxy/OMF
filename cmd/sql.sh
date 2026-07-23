@@ -207,7 +207,7 @@ sql_import_gen_parfile() {
         : > "$out"
     fi
     # 去掉模板里这些 key 的已有行(含注释外的同名行), 统一在末尾重写, 避免重复
-    sed -i -E '/^[[:space:]]*userid=/d; /^[[:space:]]*directory=/d; /^[[:space:]]*dumpfile=/d; /^[[:space:]]*logfile=/d; /^[[:space:]]*transform=/d; /^[[:space:]]*remap_schema=/d; /^[[:space:]]*remap_tablespace=/d' "$out"
+    sed -i -E '/^[[:space:]]*userid=/d; /^[[:space:]]*directory=/d; /^[[:space:]]*dumpfile=/d; /^[[:space:]]*logfile=/d; /^[[:space:]]*transform=/d; /^[[:space:]]*remap_schema=/d; /^[[:space:]]*remap_tablespace=/d; /^[[:space:]]*table_exists_action=/d' "$out"
     {
         echo ""
         echo "# ---- 以下由 omf sql import 自动生成 ($(date '+%F %T')) ----"
@@ -216,7 +216,9 @@ sql_import_gen_parfile() {
         echo "dumpfile=${base}"
         echo "logfile=${base}.imp.log"
         echo "transform=oid:n"
-        echo "# table_exists_action: 默认 skip(已存在对象则跳过且不导数据); 如需用本 dump 覆盖目标已存在对象, 改为 replace"
+        echo "# table_exists_action: 默认 replace(覆盖)——同一库不同时间备份, 结构相同, 直接用本 dump 重建对象并导入;"
+        echo "#   如需保留目标已存在数据, 改为 append(追加) 或 skip(跳过已存在对象)"
+        echo "table_exists_action=replace"
         [ -n "$remap" ] && echo "remap_schema=${remap}"
         [ -n "$ts_remap" ] && echo "remap_tablespace=${ts_remap}"
     } >> "$out"
@@ -229,6 +231,16 @@ sql_import_gen_parfile() {
 do_impdp() {
     local parfile="$1" base="$2"
     log_step "开始导入: ${base} -> 模式 ${APP_USER}@${PDB_NAME}"
+
+    # 覆盖/清空类动作会破坏目标已存在对象及其数据, 必须显式确认
+    #   replace/truncate_data 会删/清空已有对象; append/skip/content=metadata_only 不破坏现有数据
+    local tea
+    tea=$(grep -iE '^[[:space:]]*table_exists_action[[:space:]]*=' "$parfile" 2>/dev/null | tail -1 | sed -E 's/^[^=]*=//I' | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
+    case "$tea" in
+        replace|truncate_data)
+            confirm "table_exists_action=${tea} 将【覆盖/清空】目标模式 ${APP_USER}@${PDB_NAME} 中已存在的对象及其数据! 确认继续?"
+            ;;
+    esac
 
     # impdp 经 as_oracle 以 oracle 用户运行; 持久化 parfile 常落在 root 家目录
     #   (如 /root/OMF), oracle 用户无权访问 -> LRM-00109. 故复制到 oracle 可读写的

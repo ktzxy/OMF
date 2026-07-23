@@ -379,8 +379,8 @@ sql_import() {
                 echo ""
                 echo "→ 探测到单一源模式 '$schemas', 已自动写入: remap_schema=${schemas}:${APP_USER}"
                 echo "  如需改目标模式, 编辑 parfile 后: omf sql import ${base} --apply"
-                sed -i -E "/^[[:space:]]*remap_schema=/d" "$parfile"
-                sed -i -E "0,/^# ---- 以下由 omf/a remap_schema=${schemas}:${APP_USER}" "$parfile"
+                sed -i -E '/^[[:space:]]*remap_schema=/d' "$parfile"
+                printf 'remap_schema=%s:%s\n' "$schemas" "${APP_USER}" >> "$parfile"
             elif [ "$nsc" -gt 1 ]; then
                 echo ""
                 echo "→ 检测到多个模式, 未自动 remap; 请编辑 parfile 指定 remap_schema"

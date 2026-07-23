@@ -246,7 +246,7 @@ _omf_dump_schema() {
         | grep -oiE '"[A-Za-z0-9_$#]+"\."' \
         | tr -d '"' | sed 's/\.$//' \
         | grep -viE '^(SYS|SYSTEM|OUTLN|DBSNMP|APPQOSSYS|CTXSYS|DIP|ORACLE_OCM|MDSYS|OLAPSYS|ORDDATA|ORDPLUGINS|ORDSYS|WMSYS|XDB|ANONYMOUS|EXFSYS|FLOWS_FILES|MGMT_VIEW|SI_INFORMTN_SCHEMA|SPATIAL_CSW_ADMIN|SPATIAL_WFS_ADMIN|XS\$NULL)$' \
-        | sort | uniq -c | sort -rn | head -10 | awk '{print $2}'
+        | sort | uniq -c | sort -rn | awk '{print $2}'
 }
 
 # 从 dump 文件明文抽取源表空间 (best-effort)
@@ -338,9 +338,11 @@ sql_import() {
         # 主探测: 直接解析 dump 文件明文 (数据泵 master table 目录多为明文,
         #   "SCHEMA"."OBJECT" 限定符可秒级提取, 绕开 19c SQLFILE 必报的 ORA-39099)
         #   兜底: strings 提取为空时, 再退化为慢速 SQLFILE 抽取
+        set +e
         local schemas tss
         schemas=$(_omf_dump_schema "$dmp")
         tss=$(_omf_dump_tablespace "$dmp")
+        set -e
 
         if [ -z "$schemas" ]; then
             log_warn "明文探测未命中, 退化为 SQLFILE 抽取 (较慢, 可能报 ORA-39099)"

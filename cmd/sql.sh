@@ -310,7 +310,9 @@ sql_import() {
         log_step "检查模式: 生成 parfile 并抽取 dump 中的源模式"
         sql_import_gen_parfile "$base" "$remap" "$ts_remap" "$parfile"
 
-        local sqlfile; sqlfile="$(mktemp /tmp/omf_imp_XXXXXX.sql)"
+        # 注意: impdp 的 sqlfile/dumpfile/logfile 只能写【裸文件名】(会落到 DIRECTORY 对象指向的
+        # ORACLE_DUMP_DIR 下), 不能带路径, 否则报 ORA-39088。故这里用裸名, 读/删都拼 ORACLE_DUMP_DIR。
+        local sqlfile; sqlfile="omf_imp_$(date '+%s%N').sql"
         local chk; chk="$(mktemp /tmp/omf_imp_XXXXXX.par)"
         # 复用已生成的 parfile, 仅把 logfile 换成 sqlfile + nologfile (避免 logfile 冲突)
         {
@@ -326,8 +328,8 @@ sql_import() {
         echo ""
         echo "=== dump 中探测到的源模式/用户 ==="
         local schemas
-        schemas=$(grep -iE '^CREATE USER' "$sqlfile" 2>/dev/null | grep -oiE '"[^"]+"' | tr -d '"' | sort -u)
-        [ -z "$schemas" ] && schemas=$(grep -iE 'CREATE (TABLE|VIEW|SEQUENCE|PROCEDURE|INDEX)' "$sqlfile" 2>/dev/null | grep -oiE '"[^"]+"\.' | tr -d '"' | sed 's/\.$//' | sort -u)
+        schemas=$(grep -iE '^CREATE USER' "${ORACLE_DUMP_DIR}/${sqlfile}" 2>/dev/null | grep -oiE '"[^"]+"' | tr -d '"' | sort -u)
+        [ -z "$schemas" ] && schemas=$(grep -iE 'CREATE (TABLE|VIEW|SEQUENCE|PROCEDURE|INDEX)' "${ORACLE_DUMP_DIR}/${sqlfile}" 2>/dev/null | grep -oiE '"[^"]+"\.' | tr -d '"' | sed 's/\.$//' | sort -u)
         if [ -n "$schemas" ]; then
             echo "$schemas" | while read -r s; do echo "  - $s"; done
             # 单一源模式且与目标不同 -> 自动写入 remap (用户仍可改)
@@ -345,14 +347,14 @@ sql_import() {
 
         # 探测源表空间 (best-effort), 给出提示
         local tss
-        tss=$(grep -iE 'DEFAULT TABLESPACE "[^"]+"|TABLESPACE "[^"]+"' "$sqlfile" 2>/dev/null | grep -oiE '"[^"]+"' | tr -d '"' | sort -u | grep -viE '^(SYSTEM|SYSAUX|TEMP|USERS|UNDOTBS1|UNDOTBS2)$')
+        tss=$(grep -iE 'DEFAULT TABLESPACE "[^"]+"|TABLESPACE "[^"]+"' "${ORACLE_DUMP_DIR}/${sqlfile}" 2>/dev/null | grep -oiE '"[^"]+"' | tr -d '"' | sort -u | grep -viE '^(SYSTEM|SYSAUX|TEMP|USERS|UNDOTBS1|UNDOTBS2)$')
         if [ -n "$tss" ] && [ "$tss" != "${APP_TABLESPACE}" ]; then
             echo ""
             echo "→ dump 中使用的表空间: $(echo $tss | tr '\n' ' ')"
             echo "  若目标库无该表空间, 建议加: remap_tablespace=<源TS>:${APP_TABLESPACE}"
             echo "  例: omf sql import ${base} --remap-tablespace $(echo $tss | head -1):${APP_TABLESPACE} --check"
         fi
-        rm -f "$sqlfile"
+        rm -f "${ORACLE_DUMP_DIR}/${sqlfile}"
 
         echo ""
         log_info "parfile 已生成并保留: $parfile"

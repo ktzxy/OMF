@@ -235,6 +235,31 @@ do_impdp() {
 SELECT object_type, COUNT(*) FROM dba_objects WHERE owner='${APP_USER}' GROUP BY object_type ORDER BY 1;"
 }
 
+# 从 dump 文件明文抽取源模式 (数据泵 master table 目录多为明文)
+#   返回按出现频次排序的候选模式名 (每行一个), 排除系统模式
+#   19c 的 SQLFILE 模式会忽略 INCLUDE 且必报 ORA-39099, 故改用此秒级直读方式
+_omf_dump_schema() {
+    local dmp="$1"
+    local ex
+    command -v strings >/dev/null 2>&1 && ex=strings || ex="grep -a"
+    $ex "$dmp" 2>/dev/null \
+        | grep -oiE '"[A-Za-z0-9_$#]+"\."' \
+        | tr -d '"' | sed 's/\.$//' \
+        | grep -viE '^(SYS|SYSTEM|OUTLN|DBSNMP|APPQOSSYS|CTXSYS|DIP|ORACLE_OCM|MDSYS|OLAPSYS|ORDDATA|ORDPLUGINS|ORDSYS|WMSYS|XDB|ANONYMOUS|EXFSYS|FLOWS_FILES|MGMT_VIEW|SI_INFORMTN_SCHEMA|SPATIAL_CSW_ADMIN|SPATIAL_WFS_ADMIN|XS\$NULL)$' \
+        | sort | uniq -c | sort -rn | head -10 | awk '{print $2}'
+}
+
+# 从 dump 文件明文抽取源表空间 (best-effort)
+_omf_dump_tablespace() {
+    local dmp="$1"
+    local ex
+    command -v strings >/dev/null 2>&1 && ex=strings || ex="grep -a"
+    $ex "$dmp" 2>/dev/null \
+        | grep -oiE '(DEFAULT )?TABLESPACE "[^"]+"' \
+        | grep -oiE '"[^"]+"' | tr -d '"' | sort -u \
+        | grep -viE '^(SYSTEM|SYSAUX|TEMP|USERS|UNDOTBS1|UNDOTBS2)$'
+}
+
 sql_import() {
     local dumpfile="" remap="" ts_remap="" check_only=0 apply_mode=0 apply_parfile=""
     while [ $# -gt 0 ]; do
@@ -310,69 +335,66 @@ sql_import() {
         log_step "检查模式: 生成 parfile 并抽取 dump 中的源模式"
         sql_import_gen_parfile "$base" "$remap" "$ts_remap" "$parfile"
 
-        # 注意: impdp 的 sqlfile/dumpfile/logfile 只能写【裸文件名】(会落到 DIRECTORY 对象指向的
-        # ORACLE_DUMP_DIR 下), 不能带路径, 否则报 ORA-39088。故这里用裸名, 读/删都拼 ORACLE_DUMP_DIR。
-        local sqlfile; sqlfile="omf_imp_$(date '+%s%N').sql"
-        local chk; chk="$(mktemp /tmp/omf_imp_XXXXXX.par)"
-        # 复用已生成的 parfile, 仅把 logfile 换成 sqlfile + nologfile (避免 logfile 冲突)
-        # 关键: 限定 INCLUDE 对象类型, 绕开 19c SQLFILE 全量抽取时 master table 建唯一索引
-        #       撞重复键导致的 ORA-39099/ORA-01452 (该 bug 常使 sqlfile 不生成), 且把耗时从数分钟降到秒级
-        {
-            grep -vE '^[[:space:]]*logfile=' "$parfile"
-            echo "sqlfile=${sqlfile}"
-            echo "nologfile"
-            echo "include=USER,TABLE,VIEW,SEQUENCE,PROCEDURE,FUNCTION,TYPE,TRIGGER,GRANT,COMMENT"
-        } > "$chk"
-        chmod 600 "$chk"
-        chown "${ORACLE_USER}:${ORACLE_GROUP}" "$chk" 2>/dev/null || true
-        as_oracle "impdp parfile=${chk}" 2>&1 | tee -a "${OMF_HOME}/sql/.logs/imp_check_$(date '+%Y%m%d_%H%M%S').log"
-        rm -f "$chk"
+        # 主探测: 直接解析 dump 文件明文 (数据泵 master table 目录多为明文,
+        #   "SCHEMA"."OBJECT" 限定符可秒级提取, 绕开 19c SQLFILE 必报的 ORA-39099)
+        #   兜底: strings 提取为空时, 再退化为慢速 SQLFILE 抽取
+        local schemas tss
+        schemas=$(_omf_dump_schema "$dmp")
+        tss=$(_omf_dump_tablespace "$dmp")
+
+        if [ -z "$schemas" ]; then
+            log_warn "明文探测未命中, 退化为 SQLFILE 抽取 (较慢, 可能报 ORA-39099)"
+            # 注意: impdp 的 sqlfile/dumpfile/logfile 只能写【裸文件名】(落到 DIRECTORY 指向的
+            #   ORACLE_DUMP_DIR 下), 不能带路径, 否则报 ORA-39088
+            local sqlfile; sqlfile="omf_imp_$(date '+%s%N').sql"
+            local chk; chk="$(mktemp /tmp/omf_imp_XXXXXX.par)"
+            {
+                grep -vE '^[[:space:]]*logfile=' "$parfile"
+                echo "sqlfile=${sqlfile}"
+                echo "nologfile"
+            } > "$chk"
+            chmod 600 "$chk"
+            chown "${ORACLE_USER}:${ORACLE_GROUP}" "$chk" 2>/dev/null || true
+            as_oracle "impdp parfile=${chk}" 2>&1 | tee -a "${OMF_HOME}/sql/.logs/imp_check_$(date '+%Y%m%d_%H%M%S').log"
+            rm -f "$chk"
+            local sf="${ORACLE_DUMP_DIR}/${sqlfile}"
+            if [ -s "$sf" ]; then
+                schemas=$(grep -oiE '"[A-Za-z0-9_$#]+"\."' "$sf" 2>/dev/null \
+                          | tr -d '"' | sed 's/\.$//' | sort -u \
+                          | grep -viE '^(SYS|SYSTEM|OUTLN|DBSNMP|APPQOSSYS|CTXSYS|DIP|ORACLE_OCM|MDSYS|OLAPSYS|ORDDATA|ORDPLUGINS|ORDSYS|WMSYS|XDB|ANONYMOUS|EXFSYS|FLOWS_FILES|MGMT_VIEW|SI_INFORMTN_SCHEMA|SPATIAL_CSW_ADMIN|SPATIAL_WFS_ADMIN|XS\$NULL)$')
+                [ -z "$tss" ] && tss=$(grep -iE 'DEFAULT TABLESPACE "[^"]+"|TABLESPACE "[^"]+"' "$sf" 2>/dev/null | grep -oiE '"[^"]+"' | tr -d '"' | sort -u | grep -viE '^(SYSTEM|SYSAUX|TEMP|USERS|UNDOTBS1|UNDOTBS2)$')
+            else
+                echo "  ⚠ SQLFILE 也未生成 (ORA-39099 所致), 请手动编辑 parfile 指定 remap_schema"
+            fi
+            rm -f "$sf"
+        fi
 
         echo ""
         echo "=== dump 中探测到的源模式/用户 ==="
-        local sf="${ORACLE_DUMP_DIR}/${sqlfile}"
-        local schemas=""
-        if [ ! -s "$sf" ]; then
-            echo "  ⚠ 未生成 sqlfile (可能受开头 ORA-39099 影响). parfile 已保留: $parfile"
-            echo "    请手动编辑 parfile 指定 remap_schema=源模式:<目标>"
-        else
-            # 最可靠信号: 任意 "SCHEMA"."OBJECT" 形式; 排除系统模式
-            schemas=$(grep -oiE '"[A-Za-z0-9_$#]+"\."' "$sf" 2>/dev/null \
-                      | tr -d '"' | sed 's/\.$//' | sort -u \
-                      | grep -viE '^(SYS|SYSTEM|OUTLN|DBSNMP|APPQOSSYS|CTXSYS|DIP|ORACLE_OCM|MDSYS|OLAPSYS|ORDDATA|ORDPLUGINS|ORDSYS|WMSYS|XDB|ANONYMOUS|EXFSYS|FLOWS_FILES|MGMT_VIEW|SI_INFORMTN_SCHEMA|SPATIAL_CSW_ADMIN|SPATIAL_WFS_ADMIN|XS\$NULL)$')
-            if [ -z "$schemas" ]; then
-                echo "  (未能从 sqlfile 提取模式; 已打印前 20 行供排查)"
-                echo "----- sqlfile 前 20 行 -----"
-                head -20 "$sf"
-                echo "----------------------------"
-            else
-                echo "$schemas" | while read -r s; do echo "  - $s"; done
-                # 单一源模式且与目标不同 -> 自动写入 remap (用户仍可改)
-                local nsc; nsc=$(printf '%s\n' "$schemas" | grep -c .)
-                if [ -z "$remap" ] && [ "$nsc" -eq 1 ] && [ "$schemas" != "${APP_USER}" ]; then
-                    echo ""
-                    echo "→ 探测到单一源模式 '$schemas', 已自动写入: remap_schema=${schemas}:${APP_USER}"
-                    echo "  如需改目标模式, 编辑 parfile 后: omf sql import ${base} --apply"
-                    sed -i -E "/^[[:space:]]*remap_schema=/d" "$parfile"
-                    sed -i -E "0,/^# ---- 以下由 omf/a remap_schema=${schemas}:${APP_USER}" "$parfile"
-                elif [ "$nsc" -gt 1 ]; then
-                    echo ""
-                    echo "→ 检测到多个模式, 未自动 remap; 请编辑 parfile 指定 remap_schema"
-                fi
+        if [ -n "$schemas" ]; then
+            echo "$schemas" | while read -r s; do echo "  - $s"; done
+            # 单一源模式且与目标不同 -> 自动写入 remap (用户仍可改)
+            local nsc; nsc=$(printf '%s\n' "$schemas" | grep -c .)
+            if [ -z "$remap" ] && [ "$nsc" -eq 1 ] && [ "$schemas" != "${APP_USER}" ]; then
+                echo ""
+                echo "→ 探测到单一源模式 '$schemas', 已自动写入: remap_schema=${schemas}:${APP_USER}"
+                echo "  如需改目标模式, 编辑 parfile 后: omf sql import ${base} --apply"
+                sed -i -E "/^[[:space:]]*remap_schema=/d" "$parfile"
+                sed -i -E "0,/^# ---- 以下由 omf/a remap_schema=${schemas}:${APP_USER}" "$parfile"
+            elif [ "$nsc" -gt 1 ]; then
+                echo ""
+                echo "→ 检测到多个模式, 未自动 remap; 请编辑 parfile 指定 remap_schema"
             fi
+        else
+            echo "  (未能从 dump 提取模式; 请手动编辑 parfile 指定 remap_schema=源模式:<目标>)"
         fi
 
         # 探测源表空间 (best-effort), 给出提示
-        if [ -f "$sf" ]; then
-            local tss
-            tss=$(grep -iE 'DEFAULT TABLESPACE "[^"]+"|TABLESPACE "[^"]+"' "$sf" 2>/dev/null | grep -oiE '"[^"]+"' | tr -d '"' | sort -u | grep -viE '^(SYSTEM|SYSAUX|TEMP|USERS|UNDOTBS1|UNDOTBS2)$')
-            if [ -n "$tss" ] && [ "$tss" != "${APP_TABLESPACE}" ]; then
-                echo ""
-                echo "→ dump 中使用的表空间: $(echo $tss | tr '\n' ' ')"
-                echo "  若目标库无该表空间, 建议加: remap_tablespace=<源TS>:${APP_TABLESPACE}"
-                echo "  例: omf sql import ${base} --remap-tablespace $(echo $tss | head -1):${APP_TABLESPACE} --check"
-            fi
-            rm -f "$sf"
+        if [ -n "$tss" ] && [ "$tss" != "${APP_TABLESPACE}" ]; then
+            echo ""
+            echo "→ dump 中使用的表空间: $(echo $tss | tr '\n' ' ')"
+            echo "  若目标库无该表空间, 建议加: remap_tablespace=<源TS>:${APP_TABLESPACE}"
+            echo "  例: omf sql import ${base} --remap-tablespace $(echo $tss | head -1):${APP_TABLESPACE} --check"
         fi
 
         echo ""

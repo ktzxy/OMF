@@ -83,12 +83,34 @@ for o in "${objects[@]}"; do
     echo "ALTER SESSION SET CONTAINER = ${PDB};"
     echo "SET SERVEROUTPUT ON"
     extract_object "$o"
+    echo "SHOW ERRORS"
     echo "EXIT"
   } > "$tmp"
   run_sqlfile "$tmp"
   rm -f "$tmp"
   echo ""
 done
+
+echo "=== 诊断: 6 个对象的实际编译错误 (定位缺失的列/表) ==="
+tmp="$(mktemp /tmp/dherp_err_XXXXXX.sql)"
+cat > "$tmp" <<SQL
+ALTER SESSION SET CONTAINER = ${PDB};
+SET LINESIZE 200
+SET PAGESIZE 0
+COLUMN OBJECT_NAME FORMAT A30
+COLUMN ATTRIBUTE  FORMAT A10
+COLUMN TEXT        FORMAT A120
+SELECT object_name, line, position, text
+  FROM dba_errors
+ WHERE owner='DHERP'
+   AND object_name IN
+       ('GET_ORDERFLOORCNT','GET_ORDERFORMULA','GET_ORDERFLOOR',
+        'SP_DIANSANQUERY','SP_DIANSANEXEC','WMS_PDA_WFH_PIECE','APP_STYLES_KCTJ')
+ ORDER BY object_name, line, position;
+EXIT
+SQL
+run_sqlfile "$tmp"
+rm -f "$tmp"
 
 echo "=== 重编译 DHERP 模式 (修复导入依赖顺序导致的级联 INVALID) ==="
 tmp="$(mktemp /tmp/dherp_cmp_XXXXXX.sql)"

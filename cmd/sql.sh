@@ -253,7 +253,10 @@ do_impdp() {
     local imp_log="${log_dir}/imp_$(date '+%Y%m%d_%H%M%S').log"
     # 终端只显示"非良性跳过"的内容(ORA-31684/39111/39151 已计入下方计数, 无需刷屏);
     # 完整日志(含良性行)仍落盘到 imp_log 供后面解析统计
-    as_oracle "impdp parfile=${tmp_par}" 2>&1 | tee "$imp_log" | grep -vE 'ORA-(31684|39111|39151)'
+    #   注意: impdp 在 "completed with errors" 时退出码非 0, 配合 omf.sh 的 set -e + pipefail
+    #   会让整条管道非零而直接杀进程, 导致下面的"导入覆盖完成"结论打印不出来.
+    #   故管道末尾 || true, 使非零退出不再致命(日志已落盘, 解析不受影响).
+    as_oracle "impdp parfile=${tmp_par}" 2>&1 | tee "$imp_log" | grep -vE 'ORA-(31684|39111|39151)' || true
     rm -f "$tmp_par"
 
     # ---- 解析 impdp 日志: 区分"良性跳过"与"真正失败" ----

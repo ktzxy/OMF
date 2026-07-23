@@ -228,8 +228,17 @@ sql_import_gen_parfile() {
 do_impdp() {
     local parfile="$1" base="$2"
     log_step "开始导入: ${base} -> 模式 ${APP_USER}@${PDB_NAME}"
-    local log_dir="${OMF_HOME}/sql/.logs"; mkdir -p "$log_dir"
-    as_oracle "impdp parfile=${parfile}" 2>&1 | tee "${log_dir}/imp_$(date '+%Y%m%d_%H%M%S').log"
+
+    # impdp 经 as_oracle 以 oracle 用户运行; 持久化 parfile 常落在 root 家目录
+    #   (如 /root/OMF), oracle 用户无权访问 -> LRM-00109. 故复制到 oracle 可读写的
+    #   /tmp 并改属主; 同时 impdp 本地日志也落到 /tmp, 避免 oracle 写不进 /root/OMF.
+    local tmp_par; tmp_par="$(mktemp /tmp/omf_imp_XXXXXX.par)"
+    cp -f "$parfile" "$tmp_par"
+    chown "${ORACLE_USER}:${ORACLE_GROUP}" "$tmp_par" 2>/dev/null || true
+    chmod 600 "$tmp_par"
+    local log_dir="/tmp"; mkdir -p "$log_dir"
+    as_oracle "impdp parfile=${tmp_par}" 2>&1 | tee "${log_dir}/imp_$(date '+%Y%m%d_%H%M%S').log"
+    rm -f "$tmp_par"
     log_step "导入后校验 (模式 ${APP_USER} 对象统计)"
     sql_execute_inline "ALTER SESSION SET CONTAINER = ${PDB_NAME};
 SELECT object_type, COUNT(*) FROM dba_objects WHERE owner='${APP_USER}' GROUP BY object_type ORDER BY 1;"

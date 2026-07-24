@@ -79,6 +79,63 @@
 
 ---
 
+## D 组：定时备份与清理验证（omf backup / clean schedule）
+
+> 目的：验证定时备份/清理任务能否真实执行，并暴露 cron 环境下的坑点。
+
+### 1) backup auto 实测（BACKUP_MODE=both）
+
+手动以 root 执行 `/root/OMF/omf.sh -y backup auto`，完整成功：
+- **逻辑全量**：expdp 导出 `PDB=ARTERYPDB` → `/backup/oracle/dump/full_ARTERYPDB_20260724_172956_0{1..4}.dmp`，`Job successfully completed`（耗时 5:10）。数据库已有真实业务数据（DHERP 多张百万级表，如 `GOODSDOCEXPTEST` 1259712 行）。
+- **RMAN 物理全量**：datafile 全备 + 归档 + controlfile + spfile + autobackup 全部 `Finished backup` / `Recovery Manager complete`。
+
+### 2) clean all 实测（-y 生效）
+
+手动 + cron 等价环境（`/bin/bash -c '... >> /root/OMF/logs/omf_clean_cron.log'`）均成功：
+- 日志清理 / 审计清理 / 归档清理（`no obsolete backups found`，正常）/ 回收站 `DBA Recyclebin purged` 全部执行。
+- **关键**：`clean all` 内部含多道 `confirm`，实测 `-y` 让全部通过，未出现"非交互环境, 已取消" → 坑点2 修复确认有效。
+
+### 3) schedule setup 生成的 cron 文件（修复后）
+
+`/etc/cron.d/omf_backup`：
+```
+# OMF 备份定时任务 (BACKUP_MODE=both)
+0 2 * * * root /root/OMF/omf.sh -y backup auto >> /root/OMF/logs/omf_backup.log 2>&1
+0 */4 * * * root /root/OMF/omf.sh -y backup archive >> /root/OMF/logs/omf_backup.log 2>&1
+```
+`/etc/cron.d/omf_clean`：
+```
+# OMF 定时清理任务
+0 4 * * * root /root/OMF/omf.sh -y clean all >> /root/OMF/logs/omf_clean_cron.log 2>&1
+0 5 * * 0 root /root/OMF/omf.sh -y clean archive >> /root/OMF/logs/omf_clean_cron.log 2>&1
+```
+> 注：cron 运行用户为 **root**（非默认 oracle），原因见坑点0。
+
+### 4) 三个坑点（定时任务专项）
+
+| # | 坑 | 根因 | 修复 | 验证 |
+|---|----|------|------|------|
+| **坑点0** | OMF 装在 `/root/OMF`（权限 700），cron 默认 `oracle` 用户无法进入 → 定时任务整体失败 | 部署路径问题 | **未改代码**，cron 用户改 `root`（omf 内部 `oracle_su` 切 oracle 设计支持，`require_db_user` 允许 root） | `su - oracle -c "/root/OMF/omf.sh ..."` 实测 `Permission denied`；改 root 后 cron 等价执行成功写入日志 |
+| **坑点1** | 定时备份日志写死 `/var/log/omf_backup.log`，oracle 无写权限 → cron 静默失败 | `backup.sh` 硬编码路径 | 改 `${OMF_HOME}/logs/omf_backup.log`（与 clean 一致） | cron 文件现用 `/root/OMF/logs/...` |
+| **坑点2** | cron 无 TTY 时 `confirm()` 默认 `exit 0` 取消任务 → `backup auto`/`clean all` 静默跳过 | `lib/common.sh` 第 91 行 `[ -t 0 ] \|\| { ... 已取消; exit 0; }` | 生成的 cron 命令自带 `-y`（源码 `backup_schedule`/`clean_schedule`） | `clean all` 在 `-y` 下真正执行清理，未再取消 |
+
+### 5) 坑点0 根治建议（可选）
+
+将 OMF 迁到 `/opt/omf`（与 README 快速开始一致），oracle 可访问，cron 即可恢复 `oracle` 用户：
+```bash
+systemctl stop crond
+mv /root/OMF /opt/omf
+ln -sfn /opt/omf/omf.sh /usr/local/bin/omf
+cd /opt/omf && omf backup schedule setup && omf clean schedule setup
+systemctl start crond
+```
+
+### 6) 小瑕疵（非阻断，留作优化）
+
+`clean all` 报 `[WARN] Trace 目录不存在: /u01/app/oracle/diag/rdbms/ARTERY/ARTERY/trace` —— `clean.sh` 将 trace 目录路径硬编码，未用 `ORACLE_BASE` 推导；当前环境该路径不存在故跳过。不影响主流程。
+
+---
+
 ## DG 专项测试（omf db dg）
 
 > 目的：验证主库侧 Data Guard 准备命令 `omf db dg config` 的真实行为，记录坑点与修正。
@@ -153,4 +210,6 @@
 
 ## 结论
 
-B 组运维命令 + DG 主库准备均在 19c 单实例（CDB/PDB）环境验证：监听重启后服务注册正常、`local_listener` 别名解析正常、停库起库停机约 1 分 13 秒在可接受窗口内；DG `config` 主库侧参数全部落位，并修正了 `db_unique_name` 未生效的坑、统一为 `ARTERY_PRIMARY`，整组参数现已自洽。结合 A 组，OMF 运维与 DG 主库准备可用性已确认。真双机同步（standby/enable/broker 配置）需备库服务器，待环境就绪再补测。
+B 组运维命令 + D 组定时备份清理 + DG 主库准备均在 19c 单实例（CDB/PDB）环境验证：监听重启后服务注册正常、`local_listener` 别名解析正常、停库起库停机约 1 分 13 秒在可接受窗口内；`backup auto`（逻辑+RMAN 物理全量）与 `clean all` 在 `-y` 下真实执行成功，定时 cron 文件已带 `-y` 并写日志到 `${OMF_HOME}/logs`；DG `config` 主库侧参数全部落位，并修正了 `db_unique_name` 未生效的坑、统一为 `ARTERY_PRIMARY`，整组参数现已自洽。结合 A 组，OMF 运维、定时备份清理与 DG 主库准备可用性已确认。
+
+**本轮修复的定时任务三坑**（已 commit & push）：坑点1（backup cron 日志路径 `/var/log`→`${OMF_HOME}/logs`）、坑点2（cron 命令加 `-y` 绕过 confirm 取消）、以及 `clean schedule {setup|show|remove}` 参数解析 bug；坑点0（`/root/OMF` 权限 700 致 oracle 跑不了 cron）以 cron 用户改 `root` 绕过验证，根治建议迁 `/opt/omf`。真双机同步（standby/enable/broker 配置）需备库服务器，待环境就绪再补测。

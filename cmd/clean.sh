@@ -187,7 +187,10 @@ clean_trace() {
     fi
     local warn; warn=$(_clean_warn_days "$days")
 
-    local trace_dir="${OMF_CONFIG[ORACLE_BASE]}/diag/rdbms/${OMF_CONFIG[ORACLE_SID]}/${OMF_CONFIG[ORACLE_SID]}/trace"
+    # 优先用 find 定位真实 trace 目录 (兼容 db_name/db_unique_name 差异, 避免硬编码拼接对不上)
+    local trace_dir
+    trace_dir=$(find "${OMF_CONFIG[ORACLE_BASE]}/diag/rdbms" -type d -name trace 2>/dev/null | head -1)
+    [ -z "$trace_dir" ] && trace_dir="${OMF_CONFIG[ORACLE_BASE]}/diag/rdbms/${OMF_CONFIG[ORACLE_SID]}/${OMF_CONFIG[ORACLE_SID]}/trace"
 
     if [ "${CLEAN_PREVIEW:-false}" = "true" ]; then
         echo -e "[预览] Trace 文件 (保留 ${days} 天, 即将过期阈值 ${warn} 天): ${trace_dir}"

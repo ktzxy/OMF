@@ -132,7 +132,7 @@ systemctl start crond
 
 ### 6) 小瑕疵（非阻断，留作优化）
 
-`clean all` 报 `[WARN] Trace 目录不存在: /u01/app/oracle/diag/rdbms/ARTERY/ARTERY/trace` —— `clean.sh` 将 trace 目录路径硬编码，未用 `ORACLE_BASE` 推导；当前环境该路径不存在故跳过。不影响主流程。
+`clean all` 曾报 `[WARN] Trace 目录不存在: /u01/app/oracle/diag/rdbms/ARTERY/ARTERY/trace` —— 原 `clean.sh`/`log.sh` 将 trace 目录路径硬编码拼接，未兼容 db_name/db_unique_name 差异；**已修复**为用 `find` 在 `${ORACLE_BASE}/diag/rdbms` 下定位真实 trace 目录（回退原拼接），见 `clean_trace()` 与 `log.sh:get_trace_dir()`。
 
 ---
 

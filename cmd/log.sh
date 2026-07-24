@@ -36,6 +36,9 @@ get_listener_log() {
 }
 
 get_trace_dir() {
+    local d
+    d=$(find "${OMF_CONFIG[ORACLE_BASE]}/diag/rdbms" -type d -name trace 2>/dev/null | head -1)
+    [ -n "$d" ] && { echo "$d"; return; }
     echo "${OMF_CONFIG[ORACLE_BASE]}/diag/rdbms/${OMF_CONFIG[ORACLE_SID]}/${OMF_CONFIG[ORACLE_SID]}/trace"
 }
 

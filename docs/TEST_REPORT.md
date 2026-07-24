@@ -54,7 +54,7 @@
 1. **监听重启后必须确认服务注册**：
    ```bash
    lsnrctl status
-   # Services Summary 应含 ARTERY / ARTERYXDB / arterypdb 且 status READY
+   # Services Summary 应含 ARTERY / ARTERY_PRIMARY / ARTERYXDB / arterypdb 且 status READY
    ```
    若 services 为空，手动触发注册：
    ```bash
@@ -79,6 +79,78 @@
 
 ---
 
+## DG 专项测试（omf db dg）
+
+> 目的：验证主库侧 Data Guard 准备命令 `omf db dg config` 的真实行为，记录坑点与修正。
+
+### 执行后关键状态（已闭环）
+| 项 | 值 |
+|----|----|
+| `db_unique_name` | `ARTERY_PRIMARY`（执行后统一，见坑点） |
+| `LOG_MODE` | `ARCHIVELOG` |
+| `FORCE_LOGGING` | `YES` |
+| `DATABASE_ROLE` | `PRIMARY` |
+| `dg_broker_start` | `TRUE` |
+| `log_archive_config` | `DG_CONFIG=(ARTERY_PRIMARY,ARTERY_STANDBY)` |
+| `log_archive_dest_2` | `SERVICE=ARTERY_STANDBY ASYNC ... DB_UNIQUE_NAME=ARTERY_STANDBY` |
+| `fal_server` | `ARTERY_STANDBY` |
+| `standby_file_management` | `AUTO` |
+| Standby Redo Log | 4 组（4/5/6/7 各 2048M，主库上 UNASSIGNED 属预期） |
+
+### 执行：`omf db dg config`
+- 作用：主库侧 DG 准备——开归档、开 Force Logging、配 DG 参数、建 Standby Redo Log、`log_archive_dest_state_2=DEFER`（暂不传，备库就绪后再 enable）。
+- 结果：除 `db_unique_name` 外全部参数设置成功。
+
+#### ⚠ 坑点（重要）：`db_unique_name` 未生效
+- 现象：脚本第一条 `ALTER SYSTEM SET db_unique_name='ARTERY_PRIMARY' SCOPE=SPFILE` 在执行时库未处于 OPEN（连接报 `ORA-01034 ORACLE not available`），且该语句在库起来后**不会被重跑** → `db_unique_name` 仍为默认值 `ARTERY`。
+- 影响：与 `log_archive_config` 中登记的 `DG_CONFIG=(ARTERY_PRIMARY,ARTERY_STANDBY)` 第一个成员不一致，后续建 broker 配置 / 启用传输时 DG 按 `ARTERY_PRIMARY` 找不到主库，**同步起不来**。
+- 处置（用户决策：统一命名，无论是否真建主备都固定为 `ARTERY_PRIMARY`，便于辨识、避免再改）：
+  ```bash
+  sqlplus -S / as sysdba <<'SQL'
+  ALTER SYSTEM SET db_unique_name='ARTERY_PRIMARY' SCOPE=SPFILE;
+  SHUTDOWN IMMEDIATE;
+  STARTUP;
+  SQL
+  ```
+- 复验：`db_unique_name=ARTERY_PRIMARY`；`lsnrctl status` 新增 `ARTERY_PRIMARY` 服务且 `status READY`；整组 DG 参数自洽。
+
+### 验证命令结果与预期
+- `omf db dg validate`：
+  - DGMGRL 报 `ORA-16532: broker configuration does not exist` —— **预期**（尚未建备库、未建 broker 配置）。
+  - 退化视图正常：`DEST_ID 1 VALID`、`DEST_ID 2 DEFERRED`（主动设的，符合预期）、`ARCH CONNECTED` / `DGRD ALLOCATED` 正常。
+- `omf db dg status`：
+  - DGMGRL `ORA-16532` —— **预期**，但工具判为 `✗ 执行失败`（瑕疵：broker 未配置时应判"未配置"而非失败）。
+  - **broker 配置建立前，用 `omf db dg validate` 看状态更准。**
+
+### OMF DG 流程缺口（重要）
+- `omf db dg enable` 仅把 `log_archive_dest_state_2` 改 `ENABLE`，**不会自动 `CREATE CONFIGURATION`**。
+- 即使用 `enable`，`omf db dg status` 仍报 `ORA-16532`，除非主备就绪后**手动 `dgmgrl` 建 broker 配置**。
+- 真要建备的完整路径：`omf db dg wallet`（主备各一次）→ 备库 `omf db dg standby` → `omf db dg enable` → 手动 `dgmgrl CREATE CONFIGURATION` → `omf db dg validate`。
+
+### DG 完整测试路径
+| 步骤 | 命令 | 在哪台 | 前置 / 副作用 |
+|------|------|--------|--------------|
+| 1. 主库准备 | `omf db dg config` | 主库 | 已做；开归档+Force Logging+建 SRL（注意 `db_unique_name` 需已统一） |
+| 2. 钱包免密 | `omf db dg wallet` | 主库**和**备库各一次 | 建 wallet + 写 tns 别名，消除连接密码暴露 |
+| 3. 建备库 | `omf db dg standby` | **备库服务器** | RMAN duplicate，需同版本 Oracle、主备网络/静态监听/密码文件就绪 |
+| 4. 开传输 | `omf db dg enable` | 主库 | `log_archive_dest_state_2=ENABLE` |
+| 5. 建 broker 配置 | `dgmgrl` 手动 `CREATE CONFIGURATION` | 主库 | OMF 当前未自动建，需手动 |
+| 6. 校验 | `omf db dg validate` | 主库 | `dgmgrl validate` 或退化查 `v$archive_dest_status` |
+| 7. 看状态 | `omf db dg status` | 主库 | `dgmgrl show configuration`（需先有 broker 配置） |
+
+> 单台机器无法真正测"双机同步"；但步骤 1 的参数正确性、步骤 6 的 validate 逻辑、钱包免密均可在主库侧验证。
+
+### DG 作用
+1. **灾难恢复**：主库机房故障，可切到备库继续营业（RTO 分钟级）。
+2. **高可用**：配合 DG Broker 可自动/手动 failover。
+3. **数据保护**：最大保护模式可做到主库提交前备库已收到 redo（零丢失）。
+4. **只读分流（ADG）**：备库可开只读扛报表/查询，减轻主库压力。
+
+### 本轮未执行
+- `omf db dg wallet` / `standby` / `enable`：需第二台备库服务器，单台无法真正测双机同步（参数正确性与 validate 逻辑已在主库侧验证）。
+
+---
+
 ## 结论
 
-B 组全部命令在 19c 单实例（CDB/PDB）环境验证通过：监听重启后服务注册正常、`local_listener` 别名解析正常、停库起库停机时长在可接受窗口内。结合 A 组，OMF 运维命令可用性已确认。
+B 组运维命令 + DG 主库准备均在 19c 单实例（CDB/PDB）环境验证：监听重启后服务注册正常、`local_listener` 别名解析正常、停库起库停机约 1 分 13 秒在可接受窗口内；DG `config` 主库侧参数全部落位，并修正了 `db_unique_name` 未生效的坑、统一为 `ARTERY_PRIMARY`，整组参数现已自洽。结合 A 组，OMF 运维与 DG 主库准备可用性已确认。真双机同步（standby/enable/broker 配置）需备库服务器，待环境就绪再补测。

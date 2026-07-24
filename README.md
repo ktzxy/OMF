@@ -434,6 +434,30 @@ omf db start / omf db stop                       # 起停库
 - `omf sql init` / `omf sql run --all`：真正写库建对象，执行前务必 `omf sql scan` 确认脚本并确认幂等。
 - `omf tune apply`：会重启数据库做内存调整，维护窗口执行。
 
+### 场景八：Data Guard 主库准备（🔴 改库参数 + 重启，维护窗口）
+```bash
+# 1) 主库侧 DG 准备（开归档/Force Logging/配参数/建 Standby Redo Log, dest_state_2=DEFER）
+omf db dg config
+#   关键: 执行前确认 db_unique_name 已统一为 ARTERY_PRIMARY, 否则 config 首条语句
+#         在库未 OPEN 时会失败且不重跑, 导致名字与 log_archive_config 不一致
+sqlplus -S / as sysdba <<'SQL'
+SELECT db_unique_name, log_mode, force_logging FROM v$database;
+SQL
+#   若 db_unique_name 非 ARTERY_PRIMARY, 修正并重启:
+sqlplus -S / as sysdba <<'SQL'
+ALTER SYSTEM SET db_unique_name='ARTERY_PRIMARY' SCOPE=SPFILE;
+SHUTDOWN IMMEDIATE; STARTUP;
+SQL
+
+# 2) 校验（broker 配置未建前, validate 比 status 更准）
+omf db dg validate      # DEST_1 VALID / DEST_2 DEFERRED 即预期; ORA-16532 属正常
+omf db dg status        # broker 未配置会报 ORA-16532 (工具判失败), 属预期
+
+# 3) 真正建备需第二台服务器: 主备各 omf db dg wallet → 备库 omf db dg standby
+#    → omf db dg enable → 手动 dgmgrl CREATE CONFIGURATION → omf db dg validate
+```
+> 注意：OMF `dg enable` 只改 `log_archive_dest_state_2=ENABLE`，**不自动建 broker 配置**；`status` 在 broker 配置建立前必然报 ORA-16532，属预期而非故障。详见 [docs/TEST_REPORT.md](docs/TEST_REPORT.md) 的 DG 专项。
+
 ## 定时任务
 
 配置完成后会自动创建以下 cron 任务:

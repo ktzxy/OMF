@@ -386,10 +386,10 @@ clean_schedule() {
             cat > /etc/cron.d/omf_clean << EOF
 # OMF 定时清理任务
 # 每天凌晨 4:00 - 清理日志和 trace (按保留天数)
-0 4 * * * oracle ${OMF_HOME}/omf.sh clean all >> ${OMF_HOME}/logs/omf_clean_cron.log 2>&1
+0 4 * * * oracle ${OMF_HOME}/omf.sh -y clean all >> ${OMF_HOME}/logs/omf_clean_cron.log 2>&1
 
 # 每周日凌晨 5:00 - 清理过期归档
-0 5 * * 0 oracle ${OMF_HOME}/omf.sh clean archive >> ${OMF_HOME}/logs/omf_clean_cron.log 2>&1
+0 5 * * 0 oracle ${OMF_HOME}/omf.sh -y clean archive >> ${OMF_HOME}/logs/omf_clean_cron.log 2>&1
 EOF
             chmod 644 /etc/cron.d/omf_clean
             systemctl restart crond 2>/dev/null || service cron restart 2>/dev/null || true

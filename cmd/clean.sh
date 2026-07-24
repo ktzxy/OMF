@@ -22,9 +22,13 @@ cmd_clean() {
             -p|--preview) CLEAN_PREVIEW="true"; shift;;
             -y|--yes) shift;;
             -*) shift;;                 # 忽略其它未知选项
-            *)  # 第一个非选项参数即为子命令
-                [ "$subcmd" = "all" ] && subcmd="$1"
-                rest+=("$1"); shift;;
+            *)  # 第一个非选项参数即为子命令, 后续非选项参数才进 rest
+                if [ "$subcmd" = "all" ]; then
+                    subcmd="$1"
+                else
+                    rest+=("$1")
+                fi
+                shift;;
         esac
     done
     export CLEAN_DAYS CLEAN_ALL CLEAN_PREVIEW

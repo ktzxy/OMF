@@ -666,8 +666,8 @@ backup_schedule() {
             local mode="${BACKUP_MODE:-both}"
             {
                 echo "# OMF 备份定时任务 (BACKUP_MODE=${mode})"
-                echo "0 2 * * * oracle ${OMF_HOME}/omf.sh backup auto >> /var/log/omf_backup.log 2>&1"
-                echo "0 */4 * * * oracle ${OMF_HOME}/omf.sh backup archive >> /var/log/omf_backup.log 2>&1"
+                echo "0 2 * * * oracle ${OMF_HOME}/omf.sh backup auto >> ${OMF_HOME}/logs/omf_backup.log 2>&1"
+                echo "0 */4 * * * oracle ${OMF_HOME}/omf.sh backup archive >> ${OMF_HOME}/logs/omf_backup.log 2>&1"
             } > /etc/cron.d/omf_backup
             chmod 644 /etc/cron.d/omf_backup
             systemctl restart crond 2>/dev/null || service cron restart 2>/dev/null || true

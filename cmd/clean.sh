@@ -21,7 +21,7 @@ cmd_clean() {
             -d|--days) CLEAN_DAYS="${2:-}"; shift 2;;
             --all|-a|--force) CLEAN_ALL="true"; shift;;
             -p|--preview) CLEAN_PREVIEW="true"; shift;;
-            -y|--yes) shift;;
+            -y|--yes) CLEAN_YES="true"; shift;;
             -*) log_error "未知选项: $1"; exit 1;;
             *)  # 第一个非选项参数即为子命令, 后续非选项参数才进 rest
                 if [ "$subcmd" = "all" ]; then
@@ -32,7 +32,7 @@ cmd_clean() {
                 shift;;
         esac
     done
-    export CLEAN_DAYS CLEAN_ALL CLEAN_PREVIEW
+    export CLEAN_DAYS CLEAN_ALL CLEAN_PREVIEW CLEAN_YES
 
     case "$subcmd" in
         logs)      clean_logs;;

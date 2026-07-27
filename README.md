@@ -290,7 +290,7 @@ omf check all                       # 健康检查含内存项 (可用内存过�
 | `omf backup physical [--all\|--root\|--pdb a,b]` | RMAN 物理全量备份 |
 | `omf backup schedule setup` | 配置定时备份 |
 | `omf backup auto` | 按 `BACKUP_MODE` 配置自动执行 (logical/physical/both) |
-| `omf backup cleanup [-d N | --all]` | 清理备份：`-d N` 删 N 天前的 RMAN 备份集 + dump 文件；`--all` 删全部（需确认） |
+| `omf backup cleanup [--logical\|--physical] [-d N \| --all] [-p\|list] [-y]` | 清理备份：`--logical` 仅逻辑备份(dump)、`--physical` 仅物理备份(RMAN)，默认两者；`-d N` 删 N 天前的；`--all` 删全部；`-p\|list` 仅预览不删；`-y` 免确认直接执行 |
 | `omf backup list [all\|expdp\|rman]` | 查看备份列表，并按 `BACKUP_RETENTION_DAYS` 高亮"即将过期"(剩余≤阈值标黄)/"已过期(将清理)"(标红)；阈值 `BACKUP_WARN_DAYS`(默认保留期1/5，钳制2~7天) |
 | `omf backup validate [--all\|--root\|--pdb a,b]` | 校验备份可恢复性 (RESTORE VALIDATE) |
 | `omf backup restore <file> [--pdb <PDB>]` | 逻辑恢复 (impdp)，默认恢复到 `PDB_NAME`，可指定目标 PDB |
@@ -373,7 +373,7 @@ omf check all                       # 健康检查含内存项 (可用内存过�
 | `omf clean trace [-d N \| --all] [-p]` | 清理 trace 文件（同上，含 `-p` 预览高亮） |
 | `omf clean audit [-d N \| --all] [-p]` | 清理审计文件（同上，含 `-p` 预览高亮） |
 | `omf clean archive [-d N \| --all] [-p]` | 清理归档日志（`-d N` 删 N 天前；`--all` 删全部需确认；`-p` 基于 `V$ARCHIVED_LOG` 预览高亮） |
-| `omf clean backup [-d N \| --all]` | 清理备份（同 `omf backup cleanup`） |
+| `omf clean backup [-d N \| --all] [--logical\|--physical] [-p] [-y]` | 清理备份（同 `omf backup cleanup`；`-y` 免确认，`-p` 预览） |
 | `omf clean schedule setup` | 配置定时清理 |
 
 ## 生产操作标准步骤（按场景）

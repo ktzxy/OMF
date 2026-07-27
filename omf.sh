@@ -98,14 +98,14 @@ cmd_help() {
         env)        echo "用法: omf env {prepare|user|kernel|deps|dirs|vars|firewall|all}";;
         install)    echo "用法: omf install {software|listener|check} [zip路径] [EE|SE]";;
         db)         echo "用法: omf db {create|start|stop|restart|status|pdb|dg|archivelog}";;
-        backup)     echo "用法: omf backup {logical|physical|incremental|archive|auto|schedule|list|validate|restore|cleanup} [选项]"; echo "  cleanup: [-d 天数 | --all] [-p|--dry-run|list] [-y]   (list=预览待删, 安全不删)"; echo "  通用选项: --all / -y(跳过确认) / -h(帮助)";;
+        backup)     echo "用法: omf backup {logical|physical|incremental|archive|auto|schedule|list|validate|restore|cleanup} [选项]"; echo "  cleanup: [--logical|--physical] [-d 天数 | --all] [-p|--dry-run|list] [-y]"; echo "    --logical 仅逻辑备份(dump) | --physical 仅物理备份(RMAN) | 默认两者"; echo "    -d N 删 N 天前(默认30) | --all 删全部 | -p|list 仅预览 | -y 免确认";;
         sql)        echo "用法: omf sql {scan|run|init|status|rollback}";;
         tune)       echo "用法: omf tune {memory|storage|session|analyze|awr|apply}";;
         check)      echo "用法: omf check {all|db|disk|perf|alert|listener|preflight|monitor}";;
         listener)   echo "用法: omf listener {status|start|stop|restart|port <新端口>}";;
         status)     echo "用法: omf status [history [N]]";;
         log)        echo "用法: omf log {view|tail|rotate|clean}";;
-        clean)      echo "用法: omf clean {logs|trace|audit|archive|backup|all|schedule} [-d 天数 | --all] [-p|--preview] [-y]"; echo "  注: omf clean backup ≡ omf backup cleanup (清理旧备份)";;
+        clean)      echo "用法: omf clean {logs|trace|audit|archive|backup|all|schedule} [-d 天数 | --all] [-p|--preview] [-y]"; echo "  backup: ≡ omf backup cleanup (清理旧备份), 支持 --logical/--physical/-d N/--all/-p/-y";;
         config)     echo "用法: omf config {get|set|list|validate|show}";;
         self-update) echo "用法: omf self-update [version|force]";;
         *)          usage;;

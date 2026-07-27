@@ -301,41 +301,47 @@ get_alert_log() {
 # 注: "-d N" 这里的 N 天前 = 当前日期往前 N 天 (find -mtime +N / RMAN SYSDATE-N)
 #===============================================================================
 backup_cleanup() {
-    local all="false" days="" dry_run="false"
-    # 优先解析本次传入的 -d/--all, 否则用 cmd_clean 注入的全局变量, 再回退配置
+    local all="false" days="" dry_run="false" yes="false" scope="both"
+    # 1) 继承 cmd_clean 注入的全局变量 (omf clean backup 路径)
+    [ -n "${CLEAN_DAYS:-}" ] && days="$CLEAN_DAYS"
+    [ "${CLEAN_ALL:-false}" = "true" ] && all="true"
+    [ "${CLEAN_PREVIEW:-false}" = "true" ] && dry_run="true"
+    [ "${CLEAN_YES:-false}" = "true" ] && yes="true"
+    # 2) 解析本次传入参数 (omf backup cleanup 路径, 可覆盖全局)
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            -h|--help) echo "用法: omf backup cleanup [-d 天数 | --all] [-p|--dry-run|list] [-y]"; exit 0;;
-            -p|--preview|--dry-run) dry_run="true"; shift;;
-            list) dry_run="true"; shift;;   # 便捷别名: cleanup list = 预览待删对象(安全不删)
+            -h|--help)
+                echo "用法: omf backup cleanup [--logical|--physical] [-d 天数 | --all] [-p|--dry-run|list] [-y]"
+                echo "  --logical   仅清理逻辑备份(dump)      --physical  仅清理物理备份(RMAN)"
+                echo "  -d N        清理 N 天前的 (默认 30)    --all       清理全部(忽略天数)"
+                echo "  -p|list     仅预览, 不删除            -y          跳过确认直接执行"
+                exit 0;;
+            -p|--preview|--dry-run|list) dry_run="true"; shift;;
+            --logical)  scope="logical";  shift;;
+            --physical) scope="physical"; shift;;
             -d|--days) days="$2"; shift 2;;
             --all|-a|--force) all="true"; shift;;
-            -y|--yes) shift;;
-            *) log_error "未知参数: $1 (用法: omf backup cleanup [-d 天数 | --all] [-p|--dry-run|list] [-y])"; exit 1;;
+            -y|--yes) yes="true"; shift;;
+            *) log_error "未知参数: $1 (用法: omf backup cleanup [--logical|--physical] [-d 天数 | --all] [-p|--dry-run|list] [-y])"; exit 1;;
         esac
     done
-    [ -z "$days" ] && days="${CLEAN_DAYS:-${OMF_CONFIG[BACKUP_RETENTION_DAYS]:-30}}"
-    [ "$all" = "true" ] || all="${CLEAN_ALL:-false}"
+    [ -z "$days" ] && days="${OMF_CONFIG[BACKUP_RETENTION_DAYS]:-30}"
+    # -y 真正免交互: 设置 confirm() 读取的环境变量, 否则 -y 只是被吞掉仍弹确认
+    [ "$yes" = "true" ] && export OMF_ASSUME_YES=true
 
     local base="${ORACLE_BACKUP:-/backup/oracle}"
     local sid="${OMF_CONFIG[ORACLE_SID]:-ARTERY}"
+    local scope_desc
+    if [ "$all" = "true" ]; then scope_desc="【全部】${scope}备份"; else scope_desc="${days} 天前的 ${scope}备份"; fi
 
     if [ "$dry_run" = "true" ]; then
         echo "========== [DRY-RUN] 仅预览将要删除的对象, 不实际删除 =========="
-    fi
-    if [ "$all" = "true" ]; then
-        local scope_desc="【全部】备份 (所有 RMAN 备份集 + dump/物理文件)"
-    else
-        local scope_desc="${days} 天前的备份 (RMAN 备份集 + dump 文件)"
-    fi
-
-    if [ "$dry_run" = "true" ]; then
         echo "清理范围: ${scope_desc}"
-    else
+    elif [ "$yes" != "true" ]; then
         if [ "$all" = "true" ]; then
-            confirm "确认清理【全部】备份? 此操作不可恢复, 将删除所有 RMAN 备份集与 dump/物理文件!"
+            confirm "确认清理【全部】${scope}备份? 此操作不可恢复!"
         else
-            confirm "确认清理 ${days} 天前的备份 (RMAN 备份集 + dump 文件)?"
+            confirm "确认清理 ${days} 天前的 ${scope}备份?"
         fi
     fi
 
@@ -348,38 +354,42 @@ backup_cleanup() {
         fi
     }
 
-    # 1) 逻辑备份 (dump) 文件: 直接按 mtime 删除
-    if [ "$all" = "true" ]; then
-        log_step "清理全部 dump 文件: ${base}/dump"
-        _cleanup_find "${base}/dump" -name "*.dmp"
-        _cleanup_find "${base}/dump" -name "*.log"
-    else
-        # 注意: find -mtime +N 实际删 (N+1) 天前, 故用 +(days-1) 实现"保留 days 天"
-        log_step "清理 ${days} 天前的 dump 文件: ${base}/dump"
-        _cleanup_find "${base}/dump" -name "*.dmp" -mtime "+$((days-1))"
-        _cleanup_find "${base}/dump" -name "*.log" -mtime "+$((days-1))"
-    fi
-
-    # 2) 物理备份目录兜底清理 (RMAN 已删的不会重复; 仅清孤儿文件)
-    for d in full incremental controlfile spfile; do
-        [ -d "${base}/${d}" ] || continue
+    # --- 1) 逻辑备份 (dump) ---
+    if [ "$scope" = "both" ] || [ "$scope" = "logical" ]; then
         if [ "$all" = "true" ]; then
-            log_step "清理全部物理文件: ${base}/${d}"
-            _cleanup_find "${base}/${d}" -type f
+            log_step "清理全部 dump 文件: ${base}/dump"
+            _cleanup_find "${base}/dump" -name "*.dmp"
+            _cleanup_find "${base}/dump" -name "*.log"
         else
-            log_step "清理 ${days} 天前的物理文件: ${base}/${d}"
-            _cleanup_find "${base}/${d}" -type f -mtime "+$((days-1))"
+            # 注意: find -mtime +N 实际删 (N+1) 天前, 故用 +(days-1) 实现"保留 days 天"
+            log_step "清理 ${days} 天前的 dump 文件: ${base}/dump"
+            _cleanup_find "${base}/dump" -name "*.dmp" -mtime "+$((days-1))"
+            _cleanup_find "${base}/dump" -name "*.log" -mtime "+$((days-1))"
         fi
-    done
-
-    # 3) RMAN 元数据清理 (需数据库运行且归档模式)
-    if [ "$dry_run" = "true" ]; then
-        echo "  [DRY-RUN] 将执行 RMAN 清理: ${scope_desc} (此处不实际连接数据库)"
-        log_info "备份清理预览完成 (DRY-RUN, 未做任何删除)"
-        return 0
     fi
 
-    local arch_on
+    # --- 2) 物理备份 (RMAN 备份集 + 物理目录) ---
+    if [ "$scope" = "both" ] || [ "$scope" = "physical" ]; then
+        if [ "$dry_run" = "true" ]; then
+            echo "  [DRY-RUN] 将执行 RMAN 清理: ${scope_desc} (此处不实际连接数据库)"
+            log_info "备份清理预览完成 (DRY-RUN, 未做任何删除)"
+            return 0
+        fi
+
+        # 物理目录兜底清理 (RMAN 已删的不会重复; 仅清孤儿文件)
+        for d in full incremental controlfile spfile; do
+            [ -d "${base}/${d}" ] || continue
+            if [ "$all" = "true" ]; then
+                log_step "清理全部物理文件: ${base}/${d}"
+                _cleanup_find "${base}/${d}" -type f
+            else
+                log_step "清理 ${days} 天前的物理文件: ${base}/${d}"
+                _cleanup_find "${base}/${d}" -type f -mtime "+$((days-1))"
+            fi
+        done
+
+        # 3) RMAN 元数据清理 (需数据库运行且归档模式)
+        local arch_on
     arch_on=$(oracle_su "
 export ORACLE_SID=${sid}
 export ORACLE_HOME=${OMF_CONFIG[ORACLE_HOME]}
@@ -413,6 +423,7 @@ RMANEOF
     else
         log_warn "数据库未运行或非归档模式, 跳过 RMAN 元数据清理 (仅清理磁盘文件)"
     fi
+    fi   # 闭合 [scope=both|physical] 物理范围块
 
     log_info "备份清理完成"
 }

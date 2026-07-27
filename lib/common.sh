@@ -301,11 +301,12 @@ get_alert_log() {
 # 注: "-d N" 这里的 N 天前 = 当前日期往前 N 天 (find -mtime +N / RMAN SYSDATE-N)
 #===============================================================================
 backup_cleanup() {
-    local all="false" days=""
+    local all="false" days="" dry_run="false"
     # 优先解析本次传入的 -d/--all, 否则用 cmd_clean 注入的全局变量, 再回退配置
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            -h|--help) echo "用法: omf backup cleanup [-d 天数 | --all] [-y]"; exit 0;;
+            -h|--help) echo "用法: omf backup cleanup [-d 天数 | --all] [-p|--preview] [-y]"; exit 0;;
+            -p|--preview|--dry-run) dry_run="true"; shift;;
             -d|--days) days="$2"; shift 2;;
             --all|-a|--force) all="true"; shift;;
             -y|--yes) shift;;
@@ -318,35 +319,65 @@ backup_cleanup() {
     local base="${ORACLE_BACKUP:-/backup/oracle}"
     local sid="${OMF_CONFIG[ORACLE_SID]:-ARTERY}"
 
-    if [ "$all" = "true" ]; then
-        confirm "确认清理【全部】备份? 此操作不可恢复, 将删除所有 RMAN 备份集与 dump/物理文件!"
-    else
-        confirm "确认清理 ${days} 天前的备份 (RMAN 备份集 + dump 文件)?"
+    if [ "$dry_run" = "true" ]; then
+        echo "========== [DRY-RUN] 仅预览将要删除的对象, 不实际删除 =========="
     fi
+    if [ "$all" = "true" ]; then
+        local scope_desc="【全部】备份 (所有 RMAN 备份集 + dump/物理文件)"
+    else
+        local scope_desc="${days} 天前的备份 (RMAN 备份集 + dump 文件)"
+    fi
+
+    if [ "$dry_run" = "true" ]; then
+        echo "清理范围: ${scope_desc}"
+    else
+        if [ "$all" = "true" ]; then
+            confirm "确认清理【全部】备份? 此操作不可恢复, 将删除所有 RMAN 备份集与 dump/物理文件!"
+        else
+            confirm "确认清理 ${days} 天前的备份 (RMAN 备份集 + dump 文件)?"
+        fi
+    fi
+
+    # 删除执行器: dry_run 时仅打印待删对象, 否则真正删除
+    _cleanup_find() {
+        if [ "$dry_run" = "true" ]; then
+            find "$@" -print 2>/dev/null | sed 's/^/  [将删除] /'
+        else
+            find "$@" -delete 2>/dev/null || true
+        fi
+    }
 
     # 1) 逻辑备份 (dump) 文件: 直接按 mtime 删除
     if [ "$all" = "true" ]; then
         log_step "清理全部 dump 文件: ${base}/dump"
-        find "${base}/dump" -name "*.dmp" -delete 2>/dev/null || true
-        find "${base}/dump" -name "*.log" -delete 2>/dev/null || true
+        _cleanup_find "${base}/dump" -name "*.dmp"
+        _cleanup_find "${base}/dump" -name "*.log"
     else
         # 注意: find -mtime +N 实际删 (N+1) 天前, 故用 +(days-1) 实现"保留 days 天"
         log_step "清理 ${days} 天前的 dump 文件: ${base}/dump"
-        find "${base}/dump" -name "*.dmp" -mtime "+$((days-1))" -delete 2>/dev/null || true
-        find "${base}/dump" -name "*.log" -mtime "+$((days-1))" -delete 2>/dev/null || true
+        _cleanup_find "${base}/dump" -name "*.dmp" -mtime "+$((days-1))"
+        _cleanup_find "${base}/dump" -name "*.log" -mtime "+$((days-1))"
     fi
 
     # 2) 物理备份目录兜底清理 (RMAN 已删的不会重复; 仅清孤儿文件)
     for d in full incremental controlfile spfile; do
         [ -d "${base}/${d}" ] || continue
         if [ "$all" = "true" ]; then
-            find "${base}/${d}" -type f -delete 2>/dev/null || true
+            log_step "清理全部物理文件: ${base}/${d}"
+            _cleanup_find "${base}/${d}" -type f
         else
-            find "${base}/${d}" -type f -mtime "+$((days-1))" -delete 2>/dev/null || true
+            log_step "清理 ${days} 天前的物理文件: ${base}/${d}"
+            _cleanup_find "${base}/${d}" -type f -mtime "+$((days-1))"
         fi
     done
 
     # 3) RMAN 元数据清理 (需数据库运行且归档模式)
+    if [ "$dry_run" = "true" ]; then
+        echo "  [DRY-RUN] 将执行 RMAN 清理: ${scope_desc} (此处不实际连接数据库)"
+        log_info "备份清理预览完成 (DRY-RUN, 未做任何删除)"
+        return 0
+    fi
+
     local arch_on
     arch_on=$(oracle_su "
 export ORACLE_SID=${sid}

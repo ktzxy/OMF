@@ -305,6 +305,7 @@ backup_cleanup() {
     # 优先解析本次传入的 -d/--all, 否则用 cmd_clean 注入的全局变量, 再回退配置
     while [[ $# -gt 0 ]]; do
         case "$1" in
+            -h|--help) echo "用法: omf backup cleanup [-d 天数 | --all] [-y]"; exit 0;;
             -d|--days) days="$2"; shift 2;;
             --all|-a|--force) all="true"; shift;;
             -y|--yes) shift;;

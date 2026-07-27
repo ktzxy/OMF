@@ -125,10 +125,13 @@ main() {
         cmd_help "${1:-}"
         exit 0
     fi
-    if [ "${1:-}" = "-h" ] || [ "${1:-}" = "--help" ]; then
-        cmd_help "$cmd"
-        exit 0
-    fi
+    # 子命令级 -h/--help: omf <cmd> <sub> -h 也显示帮助, 避免把 -h 当参数传入子命令导致误执行
+    for _a in "$@"; do
+        if [ "$_a" = "-h" ] || [ "$_a" = "--help" ]; then
+            cmd_help "$cmd"
+            exit 0
+        fi
+    done
 
     # 为每个命令初始化集中日志 (命令名作为日志前缀)
     log_init "$cmd"

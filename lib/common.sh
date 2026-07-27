@@ -399,26 +399,36 @@ echo \"select log_mode from v\\\$database;\" | sqlplus -s / as sysdba | grep -i 
 
     if [ -n "$arch_on" ]; then
         if [ "$all" = "true" ]; then
-            log_step "RMAN: 删除全部备份集与镜像副本"
+            log_step "RMAN: 删除全部备份集与镜像副本, 并清理孤立(文件已失)的过期记录"
+            # 注: 先 CROSSCHECK+DELETE EXPIRED 清理孤儿记录(文件已被 find 删/丢失的 EXPIRED 备份),
+            #      DELETE NOPROMPT BACKUP 只删 AVAILABLE 的, 不碰 EXPIRED, 故孤儿必须单独清
             oracle_su "
 export ORACLE_SID=${sid}
 export ORACLE_HOME=${OMF_CONFIG[ORACLE_HOME]}
 export PATH=\$ORACLE_HOME/bin:\$PATH
 rman target / <<RMANEOF
+CROSSCHECK BACKUP;
+CROSSCHECK COPY;
+DELETE NOPROMPT EXPIRED BACKUP;
+DELETE NOPROMPT EXPIRED COPY;
 DELETE NOPROMPT BACKUP;
 DELETE NOPROMPT COPY;
 RMANEOF
-" 2>&1 | tail -15
+" 2>&1 | tail -40
         else
-            log_step "RMAN: 删除 ${days} 天前完成的备份集"
+            log_step "RMAN: 删除 ${days} 天前完成的备份集, 并清理孤立(文件已失)的过期记录"
             oracle_su "
 export ORACLE_SID=${sid}
 export ORACLE_HOME=${OMF_CONFIG[ORACLE_HOME]}
 export PATH=\$ORACLE_HOME/bin:\$PATH
 rman target / <<RMANEOF
+CROSSCHECK BACKUP;
+CROSSCHECK COPY;
+DELETE NOPROMPT EXPIRED BACKUP;
+DELETE NOPROMPT EXPIRED COPY;
 DELETE NOPROMPT BACKUP COMPLETED BEFORE 'SYSDATE-${days}';
 RMANEOF
-" 2>&1 | tail -15
+" 2>&1 | tail -40
         fi
     else
         log_warn "数据库未运行或非归档模式, 跳过 RMAN 元数据清理 (仅清理磁盘文件)"

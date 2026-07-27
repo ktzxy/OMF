@@ -15,6 +15,46 @@ export OMF_HOME
 source "${OMF_HOME}/lib/common.sh"
 source "${OMF_HOME}/lib/config.sh"
 
+# 提前建立命令软链 + 持久化 PATH: 确保在后续任何步骤 (含 config validate) 即使
+# 因 set -e 提前退出时, omf 命令与软链也已就绪。迁移/重装场景必需 —— 旧软链可能
+# 仍指向已迁走的 /root/OMF, 必须强制 rm 再 ln 才能保证幂等覆盖。
+_link_omf() {
+    local link_target="/usr/local/bin/omf"
+    mkdir -p /usr/local/bin
+    rm -f "$link_target"                                   # 强制重建: 无论旧链指向何处
+    if ln -sf "${OMF_HOME}/omf.sh" "$link_target" 2>/dev/null; then
+        log_info "已建立命令软链: $link_target -> ${OMF_HOME}/omf.sh"
+    else
+        log_warn "软链创建失败, 可手动: ln -sfn ${OMF_HOME}/omf.sh $link_target"
+    fi
+    if ! command -v omf >/dev/null 2>&1; then
+        local d linked=0
+        for d in $(echo "$PATH" | tr ':' ' '); do
+            if [ -d "$d" ] && [ -w "$d" ]; then
+                rm -f "$d/omf"
+                if ln -sf "${OMF_HOME}/omf.sh" "$d/omf" 2>/dev/null; then
+                    log_info "已将 omf 软链到已在 PATH 的目录: $d/omf (当前 shell 立即可用)"
+                    linked=1; break
+                fi
+            fi
+        done
+        [ "$linked" -eq 0 ] && log_warn "未在 PATH 中找到可写目录, 请手动: ln -sfn ${OMF_HOME}/omf.sh /usr/local/bin/omf ; export PATH=/usr/local/bin:\$PATH"
+    fi
+    case ":$PATH:" in
+        *:/usr/local/bin:*) ;;
+        *) echo 'export PATH="/usr/local/bin:$PATH"' > /etc/profile.d/omf.sh
+           chmod +x /etc/profile.d/omf.sh
+           log_info "已将 /usr/local/bin 加入 /etc/profile.d/omf.sh (新 shell 自动生效)" ;;
+    esac
+    hash -r
+    if command -v omf >/dev/null 2>&1; then
+        log_info "命令 omf 可用: $(command -v omf)"
+    else
+        log_warn "当前 shell 仍找不到 omf, 请执行: source /etc/profile.d/omf.sh ; hash -r"
+    fi
+}
+_link_omf
+
 echo ""
 echo "╔══════════════════════════════════════════════════════════╗"
 echo "║          OMF 引导安装 (Bootstrap) v${OMF_VERSION}               ║"
@@ -53,48 +93,7 @@ echo ""
 chmod +x "${OMF_HOME}/omf.sh" "${OMF_HOME}/setup.sh" "${OMF_HOME}"/cmd/*.sh "${OMF_HOME}"/lib/*.sh 2>/dev/null || true
 log_info "已赋予脚本执行权限 (omf.sh/setup.sh/cmd/*.sh/lib/*.sh)"
 
-# 4. 建立全局命令软链
-#    优先写入 /usr/local/bin (绝大多数发行版默认在 PATH 中), 并持久化到
-#    /etc/profile.d, 保证新开 shell 自动可用, 避免再次出现 command not found
-#    注意: 先 rm -f 旧目标, 防止残留目录/损坏软链导致 ln -sf 失败 (set -e 下会中断引导)
-link_target="/usr/local/bin/omf"
-mkdir -p /usr/local/bin
-rm -f "$link_target"
-ln -sf "${OMF_HOME}/omf.sh" "$link_target" || log_warn "软链创建失败, 可手动: ln -sfn ${OMF_HOME}/omf.sh $link_target"
-
-# 兜底: 若当前 shell 的 PATH 不含 /usr/local/bin (profile.d 仅对新登录 shell 生效),
-# 再链到一个已在 PATH 中的可写目录 (如 /usr/bin), 保证本次 shell 立即可用,
-# 不必重开终端或手动 export PATH
-if ! command -v omf >/dev/null 2>&1; then
-    linked=0
-    for d in $(echo "$PATH" | tr ':' ' '); do
-        if [ -d "$d" ] && [ -w "$d" ]; then
-            rm -f "$d/omf"
-            if ln -sf "${OMF_HOME}/omf.sh" "$d/omf" 2>/dev/null; then
-                log_info "已将 omf 软链到已在 PATH 的目录: $d/omf (当前 shell 立即可用)"
-                linked=1
-                break
-            fi
-        fi
-    done
-    [ "$linked" -eq 0 ] && log_warn "未在 PATH 中找到可写目录, 请手动: ln -sfn ${OMF_HOME}/omf.sh /usr/local/bin/omf ; export PATH=/usr/local/bin:\$PATH"
-fi
-
-# 持久化 PATH (仅当 /usr/local/bin 不在 PATH 时)
-case ":$PATH:" in
-    *:/usr/local/bin:*) ;;
-    *) export PATH="/usr/local/bin:$PATH"
-       echo 'export PATH="/usr/local/bin:$PATH"' > /etc/profile.d/omf.sh
-       chmod +x /etc/profile.d/omf.sh
-       log_info "已将 /usr/local/bin 加入 /etc/profile.d/omf.sh (新 shell 自动生效)" ;;
-esac
-
-hash -r
-if command -v omf >/dev/null 2>&1 && [ -x "$link_target" ]; then
-    log_info "命令 omf 可用, 任意目录可直接执行: $(command -v omf)"
-else
-    log_warn "omf 软链未就绪, 请手动执行: ln -sfn ${OMF_HOME}/omf.sh $link_target ; hash -r"
-fi
+# 4. 建立全局命令软链 (已前移至初始化阶段, 见上方 _link_omf, 确保迁移/重装幂等)
 
 # 5. 可选: 预检
 if [ -t 0 ] && [ "${OMF_NONINTERACTIVE:-false}" != "true" ]; then

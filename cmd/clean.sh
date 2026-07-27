@@ -17,11 +17,12 @@ cmd_clean() {
     # 兼容 "omf clean logs -d 7" 与 "omf clean -d 7 logs" 两种顺序
     while [[ $# -gt 0 ]]; do
         case "$1" in
+            -h|--help) cmd_help clean; exit 0;;
             -d|--days) CLEAN_DAYS="${2:-}"; shift 2;;
             --all|-a|--force) CLEAN_ALL="true"; shift;;
             -p|--preview) CLEAN_PREVIEW="true"; shift;;
             -y|--yes) shift;;
-            -*) shift;;                 # 忽略其它未知选项
+            -*) log_error "未知选项: $1"; exit 1;;
             *)  # 第一个非选项参数即为子命令, 后续非选项参数才进 rest
                 if [ "$subcmd" = "all" ]; then
                     subcmd="$1"

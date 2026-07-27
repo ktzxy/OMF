@@ -305,12 +305,13 @@ backup_cleanup() {
     # 优先解析本次传入的 -d/--all, 否则用 cmd_clean 注入的全局变量, 再回退配置
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            -h|--help) echo "用法: omf backup cleanup [-d 天数 | --all] [-p|--preview] [-y]"; exit 0;;
+            -h|--help) echo "用法: omf backup cleanup [-d 天数 | --all] [-p|--dry-run|list] [-y]"; exit 0;;
             -p|--preview|--dry-run) dry_run="true"; shift;;
+            list) dry_run="true"; shift;;   # 便捷别名: cleanup list = 预览待删对象(安全不删)
             -d|--days) days="$2"; shift 2;;
             --all|-a|--force) all="true"; shift;;
             -y|--yes) shift;;
-            *) shift;;
+            *) log_error "未知参数: $1 (用法: omf backup cleanup [-d 天数 | --all] [-p|--dry-run|list] [-y])"; exit 1;;
         esac
     done
     [ -z "$days" ] && days="${CLEAN_DAYS:-${OMF_CONFIG[BACKUP_RETENTION_DAYS]:-30}}"

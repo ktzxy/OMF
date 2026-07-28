@@ -68,7 +68,7 @@ omf status                     # 一键总览
 
 ## 版权与许可
 
-- **项目**：OMF（Oracle Management Framework），由 **广东信必达物流 / 时空智友 (ktzxy)** 维护。
+- **项目**：OMF（Oracle Management Framework），由 **ktzxy** 维护。
 - **协议**：[Apache License 2.0](LICENSE)。可自由使用、修改、再分发，但**必须保留版权署名与 `NOTICE` 文件**，且不得移除各脚本中的 OMF 归属头。
 - **设计原则**：本框架**全部以 Shell 脚本实现**，仅编排 Oracle 自带命令（`sqlplus` / `rman` / `lsnrctl` / `srvctl` / `dgmgrl`）。DBA 与运维可逐行审计每个操作，无任何黑盒二进制——这是运维工具应有的透明性。
 - **署名即护城河**：fork、二次开发、内部分发均可，但请保留出处。如需闭源商用或去掉署名，请先联系作者授权。

@@ -1,5 +1,5 @@
 #!/bin/bash
-# OMF - Oracle Management Framework (c) 2026 信必达/时空智友. Apache-2.0; 见 LICENSE/NOTICE. 仅编排 Oracle 自带命令, 可安全审计.
+# OMF - Oracle Management Framework (c) 2026 ktzxy. Apache-2.0; 见 LICENSE/NOTICE. 仅编排 Oracle 自带命令, 可安全审计.
 #===============================================================================
 # OMF - SQL 脚本管理命令 v2
 # 改进: 1) 失败检测 (退出码 + ORA-/SP2-/PLS-/TNS- 正则) 2) 去掉重复写日志

@@ -1,4 +1,5 @@
 #!/bin/bash
+# OMF - Oracle Management Framework (c) 2026 信必达/时空智友. Apache-2.0; 见 LICENSE/NOTICE. 仅编排 Oracle 自带命令, 可安全审计.
 #===============================================================================
 # OMF - 数据库管理命令
 # 用法: omf db <subcommand> [options]

@@ -1,4 +1,5 @@
 #!/bin/bash
+# OMF - Oracle Management Framework (c) 2026 信必达/时空智友. Apache-2.0; 见 LICENSE/NOTICE. 仅编排 Oracle 自带命令, 可安全审计.
 #===============================================================================
 # OMF - 备份管理命令 v2
 # 修复: 1) 去掉 require_root (cron 以 oracle 运行) 2) dump 落盘到 backup/dump

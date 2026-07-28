@@ -384,11 +384,43 @@ SQL
 
 #===============================================================================
 # 数据库启动
+#   DG 感知: ENABLE_DG=true 时先 STARTUP MOUNT 探测角色;
+#     物理备库 -> 保持 MOUNT + 开启 MRP 实时应用 (备库不应 OPEN PDB)
+#     主库/未启 DG -> 正常 OPEN + 打开所有 PDB
 #===============================================================================
 db_start() {
     log_step "启动数据库..."
 
-    oracle_su "
+    if omf_dg_enabled; then
+        # 先 MOUNT, 查角色再决定 OPEN 还是留 MOUNT+MRP
+        oracle_su "
+export ORACLE_SID=${OMF_CONFIG[ORACLE_SID]}
+export ORACLE_HOME=${OMF_CONFIG[ORACLE_HOME]}
+export PATH=\$ORACLE_HOME/bin:\$PATH
+sqlplus -s / as sysdba <<'SQL'
+STARTUP MOUNT;
+EXIT;
+SQL
+" || true
+        local role; role="$(omf_db_role 2>/dev/null)"
+        if echo "$role" | grep -qi "PHYSICAL STANDBY"; then
+            log_info "检测到物理备库, 保持 MOUNT 并开启 MRP 实时应用"
+            as_oracle "sqlplus -s / as sysdba <<'SQL'
+ALTER DATABASE RECOVER MANAGED STANDBY DATABASE USING CURRENT LOGFILE DISCONNECT FROM SESSION;
+EXIT;
+SQL"
+            log_info "备库已启动 (MOUNT + MRP)"
+            db_status
+            return 0
+        fi
+        # 主库: 继续 OPEN
+        as_oracle "sqlplus -s / as sysdba <<'SQL'
+ALTER DATABASE OPEN;
+ALTER PLUGGABLE DATABASE ALL OPEN;
+EXIT;
+SQL"
+    else
+        oracle_su "
 export ORACLE_SID=${OMF_CONFIG[ORACLE_SID]}
 export ORACLE_HOME=${OMF_CONFIG[ORACLE_HOME]}
 export PATH=\$ORACLE_HOME/bin:\$PATH
@@ -399,17 +431,32 @@ ALTER PLUGGABLE DATABASE ALL OPEN;
 EXIT;
 SQL
 "
+    fi
     log_info "数据库已启动"
     db_status
 }
 
 #===============================================================================
 # 数据库停止
+#   DG 感知: 物理备库先 CANCEL MRP 再 SHUTDOWN (否则 shutdown 等待 MRP 变慢/报错);
+#            备库处于 MOUNT 无 PDB 打开, 跳过 PDB CLOSE (避免 ORA-01109)
 #===============================================================================
 db_stop() {
     log_step "停止数据库..."
 
-    oracle_su "
+    local role=""
+    if omf_dg_enabled; then
+        role="$(omf_db_role 2>/dev/null)"
+    fi
+    if echo "$role" | grep -qi "PHYSICAL STANDBY"; then
+        log_info "检测到物理备库, 先停止 MRP 再关库"
+        as_oracle "sqlplus -s / as sysdba <<'SQL'
+ALTER DATABASE RECOVER MANAGED STANDBY DATABASE CANCEL;
+SHUTDOWN IMMEDIATE;
+EXIT;
+SQL" || true
+    else
+        oracle_su "
 export ORACLE_SID=${OMF_CONFIG[ORACLE_SID]}
 export ORACLE_HOME=${OMF_CONFIG[ORACLE_HOME]}
 export PATH=\$ORACLE_HOME/bin:\$PATH
@@ -420,6 +467,7 @@ SHUTDOWN IMMEDIATE;
 EXIT;
 SQL
 "
+    fi
     log_info "数据库已停止"
 }
 
@@ -466,6 +514,7 @@ SQL
 #===============================================================================
 db_dg() {
     local action="${1:-config}"
+    shift || true
 
     case "$action" in
         config)
@@ -555,6 +604,24 @@ SQL
         validate)
             db_dg_validate
             ;;
+        broker)
+            db_dg_broker "$@"
+            ;;
+        switchover)
+            db_dg_switchover "$@"
+            ;;
+        failover)
+            db_dg_failover "$@"
+            ;;
+        reinstate)
+            db_dg_reinstate "$@"
+            ;;
+        apply)
+            db_dg_apply "$@"
+            ;;
+        gap)
+            db_dg_gap "$@"
+            ;;
         status)
             oracle_su "
 export ORACLE_SID=${OMF_CONFIG[ORACLE_SID]}
@@ -564,9 +631,280 @@ dgmgrl / 'show configuration'
 "
             ;;
         *)
-            echo "用法: omf db dg {config|enable|standby|wallet|validate|status}"
+            echo "用法: omf db dg {config|enable|standby|wallet|broker|switchover|failover|reinstate|apply|gap|validate|status}"
+            echo "  config      配置主库 (归档/Force Logging/SRL/参数)"
+            echo "  enable      开启日志传输 (dest_state_2=ENABLE)"
+            echo "  standby     备库服务器自动建备 (RMAN duplicate)"
+            echo "  wallet      创建 DG 钱包 (主备各执行一次)"
+            echo "  broker      创建/重建 Broker 配置 (switchover/failover 前置)"
+            echo "  switchover  计划内主备切换 (无数据丢失, 需 Broker 就绪)"
+            echo "  failover [--immediate]  灾难切换 (主库故障时在备库执行)"
+            echo "  reinstate   failover 后将旧主库回收为新备库 (需 Flashback)"
+            echo "  apply {start|stop|status}  备库 MRP 应用管理"
+            echo "  gap         查看传输/应用延迟与归档间隙"
+            echo "  validate    校验 DG 配置/传输状态"
+            echo "  status      查看 Broker 配置 (dgmgrl)"
             ;;
     esac
+}
+
+#===============================================================================
+# 创建/重建 Data Guard Broker 配置 (在【主库】执行)
+#   switchover/failover 的前置条件. 幂等: 已存在同名配置时先移除再重建.
+#   前提: 主备均 dg_broker_start=TRUE, 备库已建好且日志传输正常 (omf db dg enable)
+#===============================================================================
+db_dg_broker() {
+    require_db_user
+    local pri="${OMF_CONFIG[DB_UNIQUE_NAME_PRIMARY]}"
+    local stb="${OMF_CONFIG[DB_UNIQUE_NAME_STANDBY]}"
+
+    # 角色守卫: broker 配置只能在主库创建
+    local role; role="$(omf_db_role 2>/dev/null)"
+    if [ -n "$role" ] && ! echo "$role" | grep -qi "PRIMARY"; then
+        log_error "当前数据库角色为 ${role}, Broker 配置须在【主库】创建"
+    fi
+
+    log_step "创建 Data Guard Broker 配置: ${pri} (主) + ${stb} (备)"
+    echo ""
+    echo "前提条件 (请确认已满足):"
+    echo "  1) 备库已建好 (omf db dg standby) 且日志传输已开启 (omf db dg enable)"
+    echo "  2) 主备均已配置 tnsnames 别名 ${pri}/${stb} (omf db dg wallet 会写入)"
+    echo "  3) 主备 dg_broker_start=TRUE (omf db dg config 已设置主库)"
+    echo ""
+    confirm "确认创建 Broker 配置? (已存在同名配置将被移除重建)"
+
+    set +e
+    as_oracle "dgmgrl / <<DGEOF
+REMOVE CONFIGURATION;
+CREATE CONFIGURATION 'omf_dg' AS PRIMARY DATABASE IS '${pri}' CONNECT IDENTIFIER IS ${pri};
+ADD DATABASE '${stb}' AS CONNECT IDENTIFIER IS ${stb} MAINTAINED AS PHYSICAL;
+ENABLE CONFIGURATION;
+SHOW CONFIGURATION;
+DGEOF" 2>&1 | tee -a "$OMF_RUN_LOG"
+    local rc=${PIPESTATUS[0]}
+    set -e
+
+    if [ "$rc" -eq 0 ] && grep -qi "SUCCESS\|Configuration.*enabled" "$OMF_RUN_LOG"; then
+        log_info "Broker 配置已创建。等待 1-2 分钟让 broker 完成健康检查, 再执行 omf db dg status 确认 SUCCESS"
+    else
+        log_warn "Broker 配置可能未完全成功, 请执行 omf db dg status 查看; 常见原因: 备库未注册静态监听/别名不可达"
+    fi
+}
+
+#===============================================================================
+# 计划内主备切换 Switchover (在【主库】执行, 无数据丢失)
+#   预检: Broker 配置 SUCCESS + 目标备库 Ready for Switchover: Yes
+#===============================================================================
+db_dg_switchover() {
+    require_db_user
+    local target="${OMF_CONFIG[DB_UNIQUE_NAME_STANDBY]}"
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --to) target="${2:-$target}"; shift 2;;
+            *) shift;;
+        esac
+    done
+
+    log_step "计划内主备切换 (Switchover) -> 目标: ${target}"
+
+    # 1. 角色守卫: switchover 应在主库发起
+    local role; role="$(omf_db_role 2>/dev/null)"
+    if [ -z "$role" ]; then
+        log_error "数据库不可连接, 无法执行 switchover"
+    fi
+    if ! echo "$role" | grep -qi "PRIMARY"; then
+        log_error "当前角色为 ${role}, switchover 须在【主库】发起 (主库故障请用 omf db dg failover)"
+    fi
+
+    # 2. Broker 健康预检
+    local cfg
+    cfg=$(as_oracle "dgmgrl / 'show configuration'" 2>/dev/null)
+    if ! echo "$cfg" | grep -qi "SUCCESS"; then
+        log_warn "Broker 配置状态非 SUCCESS:"
+        echo "$cfg"
+        log_error "请先修复 Broker 状态 (omf db dg status / validate), 或先执行 omf db dg broker 创建配置"
+    fi
+
+    # 3. 切换就绪预检 (validate database 输出 Ready for Switchover)
+    local vout
+    vout=$(as_oracle "dgmgrl / 'validate database ${target}'" 2>/dev/null)
+    echo "$vout"
+    if ! echo "$vout" | grep -qi "Ready for Switchover:.*Yes"; then
+        log_error "目标备库 ${target} 未就绪 (Ready for Switchover 非 Yes), 请检查日志传输/应用延迟 (omf db dg gap)"
+    fi
+
+    log_warn "切换后: 本机变为【备库】, ${target} 变为【主库】; 应用连接串需指向新主库"
+    confirm "确认执行 switchover 到 ${target}?"
+
+    set +e
+    as_oracle "dgmgrl / 'switchover to ${target}'" 2>&1 | tee -a "$OMF_RUN_LOG"
+    local rc=${PIPESTATUS[0]}
+    set -e
+
+    if [ "$rc" -eq 0 ] && ! grep -qi "ORA-\|error" "$OMF_RUN_LOG"; then
+        log_info "Switchover 完成! 本机现为备库, 新主库: ${target}"
+        log_info "后续: 1) 应用改连新主库  2) omf db dg status 确认配置 SUCCESS  3) 本机备库确认 MRP 应用 (omf db dg apply status)"
+        send_notification "OMF DG Switchover 完成" "新主库: ${target}"
+    else
+        log_warn "Switchover 可能未完全成功, 请立即检查: omf db dg status 与两端 alert 日志"
+        send_notification "OMF DG Switchover 异常" "请检查 dgmgrl 输出与 alert 日志"
+    fi
+}
+
+#===============================================================================
+# 灾难切换 Failover (主库故障时在【备库】执行)
+#   默认完全 failover (尽量零丢失); --immediate 立即切换 (可能丢数据)
+#   切换后旧主库须 reinstate (需提前开 Flashback) 或重建
+#===============================================================================
+db_dg_failover() {
+    require_db_user
+    local target="${OMF_CONFIG[DB_UNIQUE_NAME_STANDBY]}" immediate="false"
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --to)        target="${2:-$target}"; shift 2;;
+            --immediate) immediate="true"; shift;;
+            *) shift;;
+        esac
+    done
+
+    log_step "灾难切换 (Failover) -> 目标: ${target}"
+
+    # 角色守卫: failover 在备库发起 (主库还活着就不该 failover)
+    # 注: 用不带锚点的 PRIMARY 匹配 (sqlplus 输出可能带空白); PHYSICAL/LOGICAL STANDBY 不含 PRIMARY, 无误判
+    local role; role="$(omf_db_role 2>/dev/null)"
+    if echo "$role" | grep -qi "PRIMARY"; then
+        log_error "当前是【主库】且存活, 不应执行 failover! 计划内切换请用 omf db dg switchover"
+    fi
+    if [ -z "$role" ]; then
+        log_error "本机数据库不可连接, 无法执行 failover (failover 须在存活的【备库】上执行)"
+    fi
+
+    echo ""
+    log_warn "⚠ Failover 是灾难操作, 仅当主库确认不可恢复时执行!"
+    log_warn "  - 旧主库将被 Broker 标记为需要 reinstate (需其 Flashback Database 已开启)"
+    log_warn "  - 若 Flashback 未开, 旧主库只能重建 (omf db dg standby)"
+    [ "$immediate" = "true" ] && log_warn "  - IMMEDIATE 模式: 不等待剩余 redo 应用, 【可能丢失数据】!"
+    echo ""
+    confirm "确认主库已不可恢复, 执行 failover 到 ${target}?"
+
+    local fo_cmd="failover to ${target}"
+    [ "$immediate" = "true" ] && fo_cmd="failover to ${target} immediate"
+
+    set +e
+    as_oracle "dgmgrl / '${fo_cmd}'" 2>&1 | tee -a "$OMF_RUN_LOG"
+    local rc=${PIPESTATUS[0]}
+    set -e
+
+    if [ "$rc" -eq 0 ]; then
+        log_info "Failover 完成! 本机现为新主库: ${target}"
+        log_info "后续: 1) 应用改连本机  2) 旧主库修复后执行 omf db dg reinstate 回收为备库"
+        send_notification "OMF DG Failover 完成" "新主库: ${target}, 请尽快处理旧主库 (reinstate 或重建)"
+    else
+        log_error "Failover 失败 (rc=$rc), 请检查 dgmgrl 输出与 alert 日志"
+    fi
+}
+
+#===============================================================================
+# Reinstate: failover 后将旧主库回收为新备库 (在【新主库】执行)
+#   前提: 旧主库已 STARTUP MOUNT 且其 Flashback Database 在 failover 前已开启
+#===============================================================================
+db_dg_reinstate() {
+    require_db_user
+    local target="${1:-${OMF_CONFIG[DB_UNIQUE_NAME_PRIMARY]}}"
+
+    log_step "Reinstate 旧主库 ${target} 为新备库"
+
+    local role; role="$(omf_db_role 2>/dev/null)"
+    if [ -n "$role" ] && ! echo "$role" | grep -qi "PRIMARY"; then
+        log_error "当前角色为 ${role}, reinstate 须在【新主库】执行"
+    fi
+
+    echo "前提: 旧主库 (${target}) 已修复并 STARTUP MOUNT, 且其 Flashback 在 failover 前已开启"
+    confirm "确认 reinstate ${target}?"
+
+    set +e
+    as_oracle "dgmgrl / 'reinstate database ${target}'" 2>&1 | tee -a "$OMF_RUN_LOG"
+    local rc=${PIPESTATUS[0]}
+    set -e
+
+    if [ "$rc" -eq 0 ]; then
+        log_info "Reinstate 完成, ${target} 现为新备库。执行 omf db dg status 确认配置 SUCCESS"
+    else
+        log_warn "Reinstate 失败。若旧主库 Flashback 未开启, 只能重建备库: 在旧主库服务器执行 omf db dg standby"
+    fi
+}
+
+#===============================================================================
+# 备库 MRP (Managed Recovery Process) 应用管理 (在【备库】执行)
+#   apply start: 开启实时应用; apply stop: 停止应用; apply status: 查看应用进程
+#===============================================================================
+db_dg_apply() {
+    require_db_user
+    local action="${1:-status}"
+    local role; role="$(omf_db_role 2>/dev/null)"
+
+    case "$action" in
+        start)
+            if [ -n "$role" ] && ! echo "$role" | grep -qi "STANDBY"; then
+                log_error "当前角色为 ${role}, MRP 应用只能在【备库】开启"
+            fi
+            log_step "开启备库实时应用 (MRP, USING CURRENT LOGFILE)"
+            as_oracle "sqlplus -s / as sysdba <<'SQL'
+ALTER DATABASE RECOVER MANAGED STANDBY DATABASE CANCEL;
+ALTER DATABASE RECOVER MANAGED STANDBY DATABASE USING CURRENT LOGFILE DISCONNECT FROM SESSION;
+EXIT;
+SQL" 2>/dev/null || \
+            as_oracle "sqlplus -s / as sysdba <<'SQL'
+ALTER DATABASE RECOVER MANAGED STANDBY DATABASE USING CURRENT LOGFILE DISCONNECT FROM SESSION;
+EXIT;
+SQL"
+            log_info "MRP 已开启 (实时应用)"
+            ;;
+        stop)
+            log_step "停止备库应用 (MRP CANCEL)"
+            as_oracle "sqlplus -s / as sysdba <<'SQL'
+ALTER DATABASE RECOVER MANAGED STANDBY DATABASE CANCEL;
+EXIT;
+SQL"
+            log_info "MRP 已停止"
+            ;;
+        status|*)
+            log_step "备库应用进程状态"
+            as_oracle "sqlplus -s / as sysdba <<'SQL'
+SET LINES 200 PAGES 50
+SELECT process, status, thread#, sequence#, block# FROM v\$managed_standby ORDER BY process;
+EXIT;
+SQL"
+            ;;
+    esac
+}
+
+#===============================================================================
+# 传输/应用延迟与归档间隙 (主备均可执行)
+#===============================================================================
+db_dg_gap() {
+    require_db_user
+    log_step "Data Guard 传输/应用延迟与归档间隙"
+    as_oracle "sqlplus -s / as sysdba <<'SQL'
+SET LINES 200 PAGES 50
+PROMPT ===== 当前角色 =====
+SELECT db_unique_name, database_role, open_mode, protection_mode FROM v\$database;
+PROMPT
+PROMPT ===== 传输/应用延迟 (备库上有值) =====
+SELECT name, value, time_computed FROM v\$dataguard_stats
+WHERE name IN ('transport lag','apply lag','apply finish time');
+PROMPT
+PROMPT ===== 归档间隙 (有行即存在 GAP) =====
+SELECT thread#, low_sequence#, high_sequence# FROM v\$archive_gap;
+PROMPT
+PROMPT ===== 归档目的地状态 =====
+SELECT dest_id, status, error FROM v\$archive_dest_status WHERE dest_id<=2;
+PROMPT
+PROMPT ===== 主库: 最新归档序列 vs 备库已应用 (主库上执行有意义) =====
+SELECT dest_id, MAX(sequence#) AS max_seq, MAX(CASE WHEN applied='YES' THEN sequence# END) AS max_applied
+FROM v\$archived_log GROUP BY dest_id ORDER BY dest_id;
+EXIT;
+SQL"
 }
 
 #===============================================================================

@@ -33,11 +33,14 @@ cmd_check() {
         schemas)
             check_schemas "$@"
             ;;
+        dg)
+            check_dg "$@"
+            ;;
         monitor)
             check_monitor "$@"
             ;;
         *)
-            echo "用法: omf check {all|db|disk|perf|alert|listener|preflight|schemas|monitor}"
+            echo "用法: omf check {all|db|disk|perf|alert|listener|preflight|schemas|dg|monitor}"
             exit 1
             ;;
     esac
@@ -293,6 +296,12 @@ echo \"select log_mode from v\\\$database;\" | sqlplus -s / as sysdba | grep -i 
     echo "--- 模式(多库)存在性校验 ---"
     check_schemas_inner
 
+    # Data Guard 健康 (仅 ENABLE_DG=true 时检查)
+    if omf_dg_enabled; then
+        echo "--- Data Guard 检查 ---"
+        check_dg_inner
+    fi
+
     echo ""
     echo "═══════════════════════════════════════"
     echo "检查结果: ✓ $ok 正常  ⚠ $warns 警告  ✗ $errors 错误"
@@ -392,6 +401,93 @@ check_schemas() {
     echo "══════════════════════════════════════════════════════════"
     echo "校验结果: ✓ $ok 正常  ⚠ $warns 警告  ✗ $errors 错误"
     echo "══════════════════════════════════════════════════════════"
+    [ "$errors" -gt 0 ] && return 2
+    return 0
+}
+
+#===============================================================================
+# Data Guard 健康检查
+#   check_dg_inner: 核心, 复用调用方已定义的 check_item (ok|warn|err)
+#   check_dg:       子命令入口, 自带计数并汇总 + 附加详情 (延迟/GAP)
+#===============================================================================
+check_dg_inner() {
+    # 数据库未起时跳过 (不误报)
+    local role; role="$(omf_db_role 2>/dev/null)"
+    if [ -z "$role" ]; then
+        check_item "数据库未连接, 跳过 DG 检查" warn
+        return 0
+    fi
+    check_item "数据库角色: ${role}" ok
+
+    if echo "$role" | grep -qi "PRIMARY"; then
+        # 主库: dest_2 传输状态
+        local dest2
+        dest2=$(as_oracle "echo \"set pagesize 0 feedback off heading off
+SELECT status || '|' || NVL(error,'-') FROM v\\\$archive_dest_status WHERE dest_id=2;\" | sqlplus -s / as sysdba" 2>/dev/null | tr -d ' ' | head -1)
+        case "$dest2" in
+            VALID\|*)    check_item "日志传输 dest_2: VALID" ok;;
+            DEFERRED\|*) check_item "日志传输 dest_2: DEFERRED (未启用, 执行 omf db dg enable)" warn;;
+            *)           check_item "日志传输 dest_2: ${dest2:-未知} (检查 omf db dg gap)" err;;
+        esac
+        # 归档间隙 (主库视角: 备库 applied 落后)
+        local gap
+        gap=$(as_oracle "echo \"set pagesize 0 feedback off heading off
+SELECT COUNT(*) FROM v\\\$archive_gap;\" | sqlplus -s / as sysdba" 2>/dev/null | tr -d ' ' | head -1)
+        if [ "${gap:-0}" = "0" ]; then
+            check_item "归档间隙: 无" ok
+        else
+            check_item "归档间隙: ${gap} 个 (执行 omf db dg gap 查看)" err
+        fi
+    elif echo "$role" | grep -qi "PHYSICAL STANDBY"; then
+        # 备库: MRP 是否在应用
+        local mrp
+        mrp=$(as_oracle "echo \"set pagesize 0 feedback off heading off
+SELECT COUNT(*) FROM v\\\$managed_standby WHERE process LIKE 'MRP%';\" | sqlplus -s / as sysdba" 2>/dev/null | tr -d ' ' | head -1)
+        if [ "${mrp:-0}" != "0" ]; then
+            check_item "MRP 应用进程: 运行中" ok
+        else
+            check_item "MRP 应用进程: 未运行! (执行 omf db dg apply start)" err
+        fi
+        # 应用延迟
+        local lag
+        lag=$(as_oracle "echo \"set pagesize 0 feedback off heading off
+SELECT NVL(MAX(value),'-') FROM v\\\$dataguard_stats WHERE name='apply lag';\" | sqlplus -s / as sysdba" 2>/dev/null | tr -d ' ' | head -1)
+        if [ "$lag" = "-" ] || [ -z "$lag" ]; then
+            check_item "应用延迟: 无法获取" warn
+        elif echo "$lag" | grep -qE '^\+00 00:0[0-9]:'; then
+            check_item "应用延迟: ${lag} (<10分钟)" ok
+        else
+            check_item "应用延迟: ${lag} (偏大, 检查网络/主库归档量)" warn
+        fi
+    fi
+}
+
+check_dg() {
+    if ! omf_dg_enabled; then
+        echo "ENABLE_DG=false, 未启用 Data Guard (conf 中开启后再检查)"
+        return 0
+    fi
+    echo ""
+    echo "╔══════════════════════════════════════════════════════════╗"
+    echo "║          OMF Data Guard 健康检查                           ║"
+    echo "╚══════════════════════════════════════════════════════════╝"
+    echo ""
+    local errors=0 warns=0 ok=0
+    check_item() {
+        local desc="$1" status="$2"
+        case "$status" in
+            ok)   echo "  ✓ $desc"; ok=$((ok+1));;
+            warn) echo "  ⚠ $desc"; warns=$((warns+1));;
+            err)  echo "  ✗ $desc"; errors=$((errors+1));;
+        esac
+    }
+    check_dg_inner
+    echo ""
+    echo "══════════════════════════════════════════════════════════"
+    echo "检查结果: ✓ $ok 正常  ⚠ $warns 警告  ✗ $errors 错误"
+    echo "══════════════════════════════════════════════════════════"
+    echo ""
+    echo "详情 (延迟/间隙/目的地): omf db dg gap;  Broker 状态: omf db dg status"
     [ "$errors" -gt 0 ] && return 2
     return 0
 }

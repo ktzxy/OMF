@@ -41,7 +41,10 @@ omf db dg standby
 # 5) 主库开启日志传输 + 校验
 omf db dg enable
 omf db dg validate
-#   真正建备需第二台服务器; 备库建好后手动 dgmgrl CREATE CONFIGURATION
+
+# 6) 创建 Broker 配置 (switchover/failover 前置, 主库执行)
+omf db dg broker
+omf db dg status        # 等 1-2 分钟后应显示 SUCCESS
 ```
 
 `omf db dg` 子命令：
@@ -52,10 +55,62 @@ omf db dg validate
 | `omf db dg enable` | 开启日志传输（dest_state_2=ENABLE）|
 | `omf db dg standby` | 备库服务器自动建备（RMAN duplicate）|
 | `omf db dg wallet` | 创建 DG 钱包（主备各执行一次，消除 ps 密码残留）|
+| `omf db dg broker` | 创建/重建 Broker 配置（switchover/failover 前置）|
+| `omf db dg switchover [--to X]` | 计划内主备切换（主库执行，无数据丢失）|
+| `omf db dg failover [--to X] [--immediate]` | 灾难切换（备库执行）|
+| `omf db dg reinstate [X]` | failover 后回收旧主库为新备库（需 Flashback）|
+| `omf db dg apply {start\|stop\|status}` | 备库 MRP 应用管理 |
+| `omf db dg gap` | 传输/应用延迟与归档间隙 |
 | `omf db dg validate` | 校验 DG 配置/传输状态 |
-| `omf db dg status` | 查看 DG 配置（`dgmgrl`）|
+| `omf db dg status` | 查看 Broker 配置（`dgmgrl`）|
 
-> `dg enable` 只改 `log_archive_dest_state_2=ENABLE`，**不自动建 broker 配置**；`status` 在 broker 配置建立前必然报 `ORA-16532`，属预期而非故障。
+> `dg enable` 只改 `log_archive_dest_state_2=ENABLE`，**不自动建 broker 配置**；备库建好后执行 `omf db dg broker` 创建 Broker 配置（switchover/failover 的前置），在此之前 `status` 报 `ORA-16532` 属预期而非故障。
+
+## 2.1 角色切换（Switchover / Failover）
+
+### 计划内切换（Switchover，无数据丢失）
+
+适用: 主库计划内停机维护（打补丁/换硬件）。**在主库执行**：
+
+```bash
+# 前置(一次性): 创建 Broker 配置
+omf db dg broker
+
+# 切换 (自动预检: Broker=SUCCESS + Ready for Switchover: Yes)
+omf db dg switchover                 # 切到配置的 DB_UNIQUE_NAME_STANDBY
+omf db dg switchover --to <备库唯一名>  # 或显式指定
+
+# 切换后
+omf db dg status                     # 确认配置 SUCCESS
+omf db dg apply status               # 本机(新备库)确认 MRP 应用
+# 应用连接串改指新主库
+```
+
+### 灾难切换（Failover，主库故障）
+
+适用: 主库彻底不可恢复。**在存活的备库执行**：
+
+```bash
+omf db dg failover                   # 完全 failover, 应用完剩余 redo (尽量零丢失)
+omf db dg failover --immediate       # 立即切换, 不等剩余 redo (可能丢数据!)
+
+# 旧主库修复后 (在新主库执行):
+omf db dg reinstate                  # 回收旧主库为新备库 (需其 Flashback 在 failover 前已开)
+# 若 Flashback 未开, 只能在旧主库服务器重建: omf db dg standby
+```
+
+> **建议**: DG 环境主库提前开启 Flashback（`ALTER DATABASE FLASHBACK ON`，需 FRA），否则 failover 后旧主库无法 reinstate 只能重建。
+
+### 日常运维
+
+```bash
+omf db dg gap            # 传输/应用延迟、归档间隙、目的地错误
+omf db dg apply start    # 备库开启 MRP 实时应用 (USING CURRENT LOGFILE)
+omf db dg apply stop     # 备库停止应用 (如备库维护前)
+omf check dg             # DG 健康检查 (传输/MRP/延迟/间隙, 已并入 omf check all)
+```
+
+`omf db start`/`omf db stop` 已 DG 感知（`ENABLE_DG=true` 时）：物理备库启动到 `MOUNT` 并自动开 MRP，停止先 `CANCEL` MRP 再关库——无需手工区分主备操作。
 
 ## 3. 钱包免密（消除 ps 密码残留）
 
@@ -84,9 +139,15 @@ omf db dg validate
 
 - `omf status` 现含 **Data Guard 区块**：显示 `ENABLE_DG` 配置与实际数据库角色（PRIMARY / PHYSICAL STANDBY / …）。
 - `omf check db` 的 SQL 输出已含 `database_role`，可直接看到当前角色。
-- `omf check all` 含实例/归档/磁盘/内存等，DG 环境下建议额外关注：备库 `v$managed_standby` 的 MRP（Managed Recovery Process）是否 APPLYING LOG，以及 `v$archive_dest_status` 的传输错误。
+- `omf check dg`（`ENABLE_DG=true` 时自动并入 `omf check all`）：主库查 `dest_2` 传输状态与归档间隙，备库查 MRP 进程与应用延迟，异常直接给出修复命令提示。
+- 详情排查用 `omf db dg gap`（`v$dataguard_stats` / `v$archive_gap` / `v$archive_dest_status`）。
 
-### 4.4 其它注意事项
+### 4.4 启停
+
+- `omf db start`：`ENABLE_DG=true` 时先 `STARTUP MOUNT` 探测角色，物理备库保持 MOUNT 并开 MRP，主库正常 OPEN + 打开 PDB。
+- `omf db stop`：物理备库先 `RECOVER ... CANCEL` 停 MRP 再 `SHUTDOWN IMMEDIATE`（避免关库卡在 MRP）。
+
+### 4.5 其它注意事项
 
 - **主备 Oracle 版本须一致**（建备用 `duplicate from active database`，要求相同版本/补丁）。
 - **主备 TNS / 静态监听**：备库需静态监听注册 `<STANDBY_SID>`，否则 duplicate 连不上。

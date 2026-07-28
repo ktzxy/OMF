@@ -1,5 +1,15 @@
 # 版本变更记录
 
+## v1.5 关键改进（DG 切换自动化 / DG 感知启停 / DG 健康检查）
+
+- **DG Broker 自动化**：`omf db dg broker` 一键创建/重建 Broker 配置（幂等，switchover/failover 的前置）。
+- **计划内切换**：`omf db dg switchover [--to X]` 自动预检（角色=PRIMARY、Broker=SUCCESS、`Ready for Switchover: Yes`）后执行 `dgmgrl switchover`，附切换后行动指引与通知。
+- **灾难切换**：`omf db dg failover [--to X] [--immediate]`，角色守卫（主库存活时拒绝）、`--immediate` 丢数风险强告警；`omf db dg reinstate [X]` 回收旧主库为新备库。
+- **备库应用管理**：`omf db dg apply {start|stop|status}`（MRP 实时应用/停止/进程状态）。
+- **延迟与间隙**：`omf db dg gap` 查看 `v$dataguard_stats` 传输/应用延迟、`v$archive_gap` 归档间隙、目的地错误。
+- **DG 感知启停**：`ENABLE_DG=true` 时 `omf db start` 对物理备库保持 MOUNT+自动开 MRP（不再误 OPEN PDB）；`omf db stop` 先 CANCEL MRP 再关库。
+- **DG 健康检查**：`omf check dg`（并入 `omf check all`，仅 `ENABLE_DG=true` 时执行）——主库查 dest_2 传输状态/归档间隙，备库查 MRP 进程/应用延迟，异常直接提示修复命令。
+
 ## v1.4 关键改进（运维增强 / 安全加固 / 多模式 / DG / 文档拆分）
 
 - **文档拆分**：`README.md` 精简为首页（安装/快速开始/功能大纲+跳转），专题文档移入 `docs/`：`INSTALL.md`(环境/安装/建库/版本发行版)、`CONFIG.md`(配置/多模式/内存调优)、`SQL.md`(初始化/导入/多库/回滚)、`BACKUP.md`(备份/恢复/范围/按模式/DG)、`CHECK.md`(检查/总览/监控/场景)、`DATAGUARD.md`(DG 全盘指南)、`TROUBLESHOOT.md`(排错)、`CHANGELOG.md`(本文件)。

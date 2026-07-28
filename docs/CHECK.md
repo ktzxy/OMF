@@ -12,6 +12,7 @@
 | `omf check listener` | 监听器检查（`lsnrctl status`/`services`）|
 | `omf check preflight` | 安装前预检（内存下限/HugePages/磁盘阈值/依赖/用户/连通性）|
 | `omf check schemas` | **校验已配置模式（多库）是否真实存在于数据库** |
+| `omf check dg` | **Data Guard 健康检查**（传输/MRP/延迟/间隙，需 `ENABLE_DG=true`，已并入 `check all`）|
 | `omf check monitor [json\|prom]` | 机器可读监控输出（JSON/Prometheus，自动持久化快照）|
 
 退出码：`0`=成功，`1`=执行错误（真正失败），`2`=检查/健康检查发现问题（预期内，非崩溃）。
@@ -120,3 +121,5 @@ omf db start / omf db stop
 - `omf sql init` / `omf sql run --all`：真正写库建对象，执行前务必 `omf sql scan` 确认脚本并确认幂等。
 - `omf tune apply`：会重启数据库做内存调整，维护窗口执行。
 - `omf db dg config`：改库参数 + 重启，维护窗口执行（详见 [DATAGUARD.md](DATAGUARD.md)）。
+- `omf db dg switchover`：主备角色互换，应用需改连新主库，维护窗口执行。
+- `omf db dg failover [--immediate]`：仅主库不可恢复时执行；`--immediate` 可能丢数据（详见 [DATAGUARD.md](DATAGUARD.md)）。

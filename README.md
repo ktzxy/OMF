@@ -60,7 +60,7 @@ omf status                     # 一键总览
 
 ## Data Guard 一句话
 
-`omf db dg config` 配置主库 → 备库 `omf db dg wallet` + `omf db dg standby` 建备 → 主库 `omf db dg enable` + `omf db dg validate` 校验。备份/恢复在 DG 环境下的注意事项见 [docs/DATAGUARD.md](docs/DATAGUARD.md)。
+`omf db dg config` 配置主库 → 备库 `omf db dg wallet` + `omf db dg standby` 建备 → 主库 `omf db dg enable` + `omf db dg broker` 建 Broker → `omf db dg switchover` 计划切换 / `omf db dg failover` 灾难切换 / `omf check dg` 健康检查。详见 [docs/DATAGUARD.md](docs/DATAGUARD.md)。
 
 ## 版本与变更
 

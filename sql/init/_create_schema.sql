@@ -1,46 +1,49 @@
 --===============================================================================
--- OMF 标准初始化脚本: 创建应用模式(用户) + 表空间 + 目录对象
+-- OMF 标准初始化模板: 创建【单个】应用模式(用户) + 表空间 + 目录对象
 --
--- 用途: 为后续的数据导入(impdp / sqlldr / 入库脚本)准备目标模式。
---       在 Oracle 中, "模式(Schema)"等同于"用户(User)" —— 创建用户即创建其模式,
---       因此无需单独的"模式名"配置: 修改 APP_USER 即同时设定了用户名与模式名。
+--   本文件由 omf sql init 按 APP_SCHEMAS 列表逐个调用, 每次注入不同
+--   &APP_USER / &APP_PASSWORD / &APP_TABLESPACE / &APP_DATA_DIR。
 --
--- 可配置项 (在 conf/omf.conf 中修改, 无需改动本脚本):
---   APP_USER       用户名 / 模式名         (默认 dherp)
---   APP_PASSWORD   用户密码               (默认 dherp_skzy)
---   APP_TABLESPACE 表空间名              (默认 dherp)
---   PDB_NAME       目标 PDB              (默认 ARTERYPDB)
---   ORACLE_SID     用于推导数据文件路径   (默认 ARTERY)
+--   注意: 文件名以 '_' 开头, 会被 omf sql run --all / sql_scan 自动跳过,
+--         避免被当成普通 init 脚本误执行(它由 sql init 显式循环调用)。
 --
--- 幂等: 用 PL/SQL EXECUTE IMMEDIATE 吞掉
---        ORA-01543 (表空间已存在) 与 ORA-01920 (用户已存在), 重跑不再误报;
---        其余真实错误仍照常抛出, 并被 OMF 的三重检测(退出码 + grep ORA-)捕获。
+-- 可配置项 (conf/omf.conf):
+--   APP_SCHEMAS         模式列表(空格分隔), 如 "dherp lsdherp miserp"
+--   <大写名>_USER       覆盖 Oracle 用户名 (默认=模式名)
+--   <大写名>_PASSWORD   覆盖密码           (默认=全局 APP_PASSWORD)
+--   <大写名>_TABLESPACE 覆盖表空间名       (默认=模式名)
+--   <大写名>_DATA_DIR   覆盖数据文件目录   (默认=${ORACLE_DATA}/${ORACLE_SID}/<模式名>)
+--   在 Oracle 中 "模式(Schema)" 等同于 "用户(User)"。
+--
+-- 幂等: 用 PL/SQL EXECUTE IMMEDIATE 吞掉 ORA-01543(表空间已存在) 与
+--       ORA-01920(用户已存在); 其余真实错误仍照常抛出。
 --===============================================================================
 
--- 切换到目标 PDB (PDB 必须 OPEN, 否则此处直接报错并终止)
+-- 切换到目标 PDB (PDB 必须 OPEN)
 ALTER SESSION SET CONTAINER = &PDB_NAME;
 
 -- 1) 创建表空间 (幂等)
+--    数据文件落在 &APP_DATA_DIR (每模式独立子目录, 避免多模式同名文件冲突 ORA-01537)
 DECLARE
     v_sql VARCHAR2(4000);
 BEGIN
     v_sql := 'CREATE TABLESPACE &APP_TABLESPACE
     DATAFILE
-        ''&ORACLE_DATA/&ORACLE_SID/data00.dbf'' SIZE 1G AUTOEXTEND ON NEXT 500M,
-        ''&ORACLE_DATA/&ORACLE_SID/data01.dbf'' SIZE 1G AUTOEXTEND ON NEXT 500M,
-        ''&ORACLE_DATA/&ORACLE_SID/data02.dbf'' SIZE 1G AUTOEXTEND ON NEXT 500M,
-        ''&ORACLE_DATA/&ORACLE_SID/data03.dbf'' SIZE 1G AUTOEXTEND ON NEXT 500M,
-        ''&ORACLE_DATA/&ORACLE_SID/data04.dbf'' SIZE 1G AUTOEXTEND ON NEXT 500M,
-        ''&ORACLE_DATA/&ORACLE_SID/data05.dbf'' SIZE 1G AUTOEXTEND ON NEXT 500M,
-        ''&ORACLE_DATA/&ORACLE_SID/data06.dbf'' SIZE 1G AUTOEXTEND ON NEXT 500M,
-        ''&ORACLE_DATA/&ORACLE_SID/data07.dbf'' SIZE 1G AUTOEXTEND ON NEXT 500M,
-        ''&ORACLE_DATA/&ORACLE_SID/data08.dbf'' SIZE 1G AUTOEXTEND ON NEXT 500M,
-        ''&ORACLE_DATA/&ORACLE_SID/data09.dbf'' SIZE 1G AUTOEXTEND ON NEXT 500M,
-        ''&ORACLE_DATA/&ORACLE_SID/data10.dbf'' SIZE 1G AUTOEXTEND ON NEXT 500M
+        ''&APP_DATA_DIR/data00.dbf'' SIZE 1G AUTOEXTEND ON NEXT 500M,
+        ''&APP_DATA_DIR/data01.dbf'' SIZE 1G AUTOEXTEND ON NEXT 500M,
+        ''&APP_DATA_DIR/data02.dbf'' SIZE 1G AUTOEXTEND ON NEXT 500M,
+        ''&APP_DATA_DIR/data03.dbf'' SIZE 1G AUTOEXTEND ON NEXT 500M,
+        ''&APP_DATA_DIR/data04.dbf'' SIZE 1G AUTOEXTEND ON NEXT 500M,
+        ''&APP_DATA_DIR/data05.dbf'' SIZE 1G AUTOEXTEND ON NEXT 500M,
+        ''&APP_DATA_DIR/data06.dbf'' SIZE 1G AUTOEXTEND ON NEXT 500M,
+        ''&APP_DATA_DIR/data07.dbf'' SIZE 1G AUTOEXTEND ON NEXT 500M,
+        ''&APP_DATA_DIR/data08.dbf'' SIZE 1G AUTOEXTEND ON NEXT 500M,
+        ''&APP_DATA_DIR/data09.dbf'' SIZE 1G AUTOEXTEND ON NEXT 500M,
+        ''&APP_DATA_DIR/data10.dbf'' SIZE 1G AUTOEXTEND ON NEXT 500M
     EXTENT MANAGEMENT LOCAL
     SEGMENT SPACE MANAGEMENT AUTO';
     EXECUTE IMMEDIATE v_sql;
-    DBMS_OUTPUT.PUT_LINE('表空间 &APP_TABLESPACE 创建完成');
+    DBMS_OUTPUT.PUT_LINE('表空间 &APP_TABLESPACE 创建完成 (数据目录 &APP_DATA_DIR)');
 EXCEPTION
     WHEN OTHERS THEN
         IF SQLCODE = -1543 THEN

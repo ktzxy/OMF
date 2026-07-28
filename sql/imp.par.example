@@ -35,10 +35,12 @@ logfile=dherp_202606290300.dmp.imp.log
 transform=oid:n
 
 # ---- 以下为常用可选参数, 按需取消注释 ----
-# 若 dump 源模式名与主库 APP_USER 不同, 改成实际源模式:
-# remap_schema=源模式:dherp
+# 若 dump 源模式名与目标模式不同, 改成实际源模式 (目标模式由 omf sql import --schema 决定):
+# remap_schema=源模式:目标模式
 # 表空间映射(命名空间): 源表空间 -> 目标表空间
-# remap_tablespace=源TS:dherp
+# remap_tablespace=源TS:目标TS
+# 多模式导入示例: omf sql import xxx.dmp --schema lsdherp
+#   → 目标用户/表空间/密码自动取 LSDHERP_* 配置, 并自动 remap 进 lsdherp 模式
 # 表已存在时的处理: replace=删后重建 / append=追加 / skip=跳过
 # table_exists_action=replace
 # 并行度 (大库可提速, 需与 dump 时 parallel 匹配或更小)

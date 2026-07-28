@@ -45,7 +45,7 @@ sql_scan() {
     for dir in $(get_sql_dirs); do
         echo ""; echo "--- $(basename "$dir") ---"
         local scripts
-        scripts=$(find "$dir" -maxdepth 1 -name "*.sql" -type f | sort)
+        scripts=$(find "$dir" -maxdepth 1 -name "*.sql" ! -name '_*.sql' -type f | sort)
         [ -z "$scripts" ] && { echo "  (无脚本)"; continue; }
         for script in $scripts; do
             total=$((total+1))
@@ -147,14 +147,42 @@ sql_execute_inline() {
 
 sql_init() {
     log_step "初始化基线数据"
+    # 预检数据库可连 (DB 未起时提前报错, 避免下面逐模式建用户静默失败)
+    sql_preflight
     # 预建数据泵目录 (Oracle DIRECTORY 对象指向的 OS 路径), 确保 impdp 可直接使用。
-    # 否则 omf sql import 会因 OS 目录不存在而报 ORA-27037 / permission denied。
     mkdir -p "$ORACLE_DUMP_DIR"
     chown "${ORACLE_USER}:${ORACLE_GROUP}" "$ORACLE_DUMP_DIR" 2>/dev/null || true
     chmod 750 "$ORACLE_DUMP_DIR"
     log_info "数据泵目录已就绪: $ORACLE_DUMP_DIR (属主 ${ORACLE_USER}:${ORACLE_GROUP})"
+
+    # ---- 逐个模式创建用户/表空间 (遍历 APP_SCHEMAS, 支持 N 个库) ----
+    # 数据文件按 <SID>/<模式名>/ 子目录隔离, 彻底避免多个表空间同名数据文件冲突(ORA-01537)。
+    local template="${SQL_INIT_DIR}/_create_schema.sql"
+    if [ -f "$template" ]; then
+        local names; names="$(omf_schema_list)"
+        log_info "待初始化模式: $names"
+        local name u ts pw dd
+        for name in $names; do
+            u=$(omf_schema_user "$name")
+            ts=$(omf_schema_tablespace "$name")
+            pw=$(omf_schema_password "$name")
+            dd=$(omf_schema_datadir "$name")
+            # 数据文件子目录必须存在, 否则 CREATE TABLESPACE 报 ORA-01119
+            mkdir -p "$dd"
+            chown "${ORACLE_USER}:${ORACLE_GROUP}" "$dd" 2>/dev/null || true
+            chmod 750 "$dd"
+            log_step "创建模式[${name}] -> 用户=${u} 表空间=${ts} 数据目录=${dd}"
+            if ! _sql_run_file "$template" "$u" "$pw" "$ts" "$dd"; then
+                log_warn "模式[${name}] 创建失败或部分失败, 请检查日志 (可能用户已存在, 属正常幂等跳过)"
+            fi
+        done
+    else
+        log_warn "未找到模式模板: $template (跳过模式创建, 仅执行其余 init 脚本)"
+    fi
+
+    # ---- 执行其余 init 脚本 (非模板 _*.sql), 支持断点续跑 ----
     sql_scan
-    confirm "确认执行所有初始化脚本?"
+    confirm "确认执行所有初始化脚本(模式模板除外)?"
     sql_preflight
     sql_execute_all
 }
@@ -178,15 +206,16 @@ sql_import_parfile_dir() {
     echo "${OMF_HOME}/sql/.import"
 }
 
-# 确保数据泵目录对象 oracle_dumps 存在于目标 PDB 并授权给 APP_USER (幂等)
-#   否则跳过 omf sql init 直接 import 会报 ORA-39070 / ORA-39002
+# 确保数据泵目录对象 oracle_dumps 存在并授权给指定用户 (默认主模式 APP_USER)
+#   多模式导入时, 需对目标模式用户单独授权, 否则 impdp 报 ORA-39070
 ensure_dump_dir_object() {
-    log_step "确保数据泵目录对象 oracle_dumps 存在 (PDB=${PDB_NAME})"
+    local target_user="${1:-${APP_USER}}"
+    log_step "确保数据泵目录对象 oracle_dumps 存在并授权给 ${target_user} (PDB=${PDB_NAME})"
     local sql; sql="$(mktemp /tmp/omf_imp_XXXXXX.sql)"
     {
         echo "ALTER SESSION SET CONTAINER = ${PDB_NAME};"
         echo "CREATE OR REPLACE DIRECTORY oracle_dumps AS '${ORACLE_DUMP_DIR}';"
-        echo "GRANT READ, WRITE ON DIRECTORY oracle_dumps TO ${APP_USER};"
+        echo "GRANT READ, WRITE ON DIRECTORY oracle_dumps TO ${target_user};"
         echo "EXIT"
     } > "$sql"
     chmod 600 "$sql"
@@ -197,9 +226,46 @@ ensure_dump_dir_object() {
     rm -f "$sql"
 }
 
+# 授予用户跨模式导入所需权限 (impdp 以该用户连接并 remap 到其它模式时需要 IMP_FULL_DATABASE)
+_grant_import_privs() {
+    local u="$1"
+    [ -z "$u" ] && return 0
+    log_step "授予 ${u} 导入权限 (IMP_FULL_DATABASE, 支持跨模式 remap)"
+    local sql; sql="$(mktemp /tmp/omf_imp_XXXXXX.sql)"
+    {
+        echo "ALTER SESSION SET CONTAINER = ${PDB_NAME};"
+        echo "GRANT IMP_FULL_DATABASE TO ${u};"
+        echo "GRANT CREATE SESSION TO ${u};"
+        echo "EXIT"
+    } > "$sql"
+    chmod 600 "$sql"
+    chown "${ORACLE_USER}:${ORACLE_GROUP}" "$sql" 2>/dev/null || true
+    as_oracle "sqlplus -s / as sysdba @${sql}" 2>&1 \
+        | grep -iE "ORA-|grant" || true
+    rm -f "$sql"
+}
+
+# 确保目标模式存在: 若不存在, 按模板自动创建 (幂等)
+#   使 omf sql import --schema X 即使未先跑 sql init 也能自举建好用户/表空间
+_ensure_schema_exists() {
+    local name="$1"
+    local tmpl="${SQL_INIT_DIR}/_create_schema.sql"
+    [ -f "$tmpl" ] || { log_warn "未找到模式模板 ${tmpl}, 请先 omf sql init 创建模式 ${name}"; return 0; }
+    local u ts pw dd
+    u=$(omf_schema_user "$name"); ts=$(omf_schema_tablespace "$name")
+    pw=$(omf_schema_password "$name"); dd=$(omf_schema_datadir "$name")
+    mkdir -p "$dd"; chown "${ORACLE_USER}:${ORACLE_GROUP}" "$dd" 2>/dev/null || true; chmod 750 "$dd"
+    log_step "确保模式[${name}]存在 (用户=${u}); 若不存在则按模板创建"
+    _sql_run_file "$tmpl" "$u" "$pw" "$ts" "$dd" || \
+        log_warn "模式[${name}]创建失败或部分失败, 请检查日志"
+}
+
 # 以 imp.par.example 为模板, 用配置值生成持久化 parfile 到 $4
+#   $5 目标用户名, $6 目标用户密码 (缺省回退全局 APP_USER/APP_PASSWORD)
 sql_import_gen_parfile() {
-    local base="$1" remap="$2" ts_remap="$3" out="$4"
+    local base="$1" remap="$2" ts_remap="$3" out="$4" tgt_user="$5" tgt_pw="$6"
+    [ -z "$tgt_user" ] && tgt_user="${APP_USER}"
+    [ -z "$tgt_pw" ] && tgt_pw="${APP_PASSWORD}"
     local tmpl="${OMF_HOME}/sql/imp.par.example"
     if [ -f "$tmpl" ]; then
         cp "$tmpl" "$out"
@@ -211,7 +277,7 @@ sql_import_gen_parfile() {
     {
         echo ""
         echo "# ---- 以下由 omf sql import 自动生成 ($(date '+%F %T')) ----"
-        echo "userid=${APP_USER}/\"${APP_PASSWORD}\"@//localhost:${LISTENER_PORT}/${PDB_NAME}"
+        echo "userid=${tgt_user}/\"${tgt_pw}\"@//localhost:${LISTENER_PORT}/${PDB_NAME}"
         echo "directory=oracle_dumps"
         echo "dumpfile=${base}"
         echo "logfile=${base}.imp.log"
@@ -229,8 +295,8 @@ sql_import_gen_parfile() {
 
 # 真正执行 impdp + 导入后校验
 do_impdp() {
-    local parfile="$1" base="$2"
-    log_step "开始导入: ${base} -> 模式 ${APP_USER}@${PDB_NAME}"
+    local parfile="$1" base="$2" tgt_user="${3:-${APP_USER}}"
+    log_step "开始导入: ${base} -> 模式 ${tgt_user}@${PDB_NAME}"
 
     # 覆盖/清空类动作会破坏目标已存在对象及其数据, 必须显式确认
     #   replace/truncate_data 会删/清空已有对象; append/skip/content=metadata_only 不破坏现有数据
@@ -238,7 +304,7 @@ do_impdp() {
     tea=$(grep -iE '^[[:space:]]*table_exists_action[[:space:]]*=' "$parfile" 2>/dev/null | tail -1 | sed -E 's/^[^=]*=//I' | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
     case "$tea" in
         replace|truncate_data)
-            confirm "table_exists_action=${tea} 将【覆盖/清空】目标模式 ${APP_USER}@${PDB_NAME} 中已存在的对象及其数据! 确认继续?"
+            confirm "table_exists_action=${tea} 将【覆盖/清空】目标模式 ${tgt_user}@${PDB_NAME} 中已存在的对象及其数据! 确认继续?"
             ;;
     esac
 
@@ -281,10 +347,10 @@ do_impdp() {
         [ "${comp_cnt:-0}" -gt 0 ] && log_warn "  - 另有 ${comp_cnt} 个对象创建后编译失败(INVALID), 多为已知的 6 个依赖缺失对象, 详见下方 INVALID 检查"
     fi
 
-    log_step "导入后校验 (模式 ${APP_USER} 对象统计 + INVALID 检查)"
+    log_step "导入后校验 (模式 ${tgt_user} 对象统计 + INVALID 检查)"
     sql_execute_inline "ALTER SESSION SET CONTAINER = ${PDB_NAME};
-SELECT object_type, COUNT(*) FROM dba_objects WHERE owner='${APP_USER}' GROUP BY object_type ORDER BY 1;
-SELECT 'INVALID 对象数: '||COUNT(*) FROM dba_objects WHERE owner='${APP_USER}' AND status='INVALID';"
+SELECT object_type, COUNT(*) FROM dba_objects WHERE owner='${tgt_user}' GROUP BY object_type ORDER BY 1;
+SELECT 'INVALID 对象数: '||COUNT(*) FROM dba_objects WHERE owner='${tgt_user}' AND status='INVALID';"
 }
 
 # 从 dump 文件明文抽取源模式 (数据泵 master table 目录多为明文)
@@ -314,10 +380,12 @@ _omf_dump_tablespace() {
 
 sql_import() {
     local dumpfile="" remap="" ts_remap="" check_only=0 apply_mode=0 apply_parfile=""
+    local schema=""
     while [ $# -gt 0 ]; do
         case "$1" in
             --remap)            remap="${2:-}"; shift 2;;
             --remap-tablespace) ts_remap="${2:-}"; shift 2;;
+            --schema)           schema="${2:-}"; shift 2;;
             --check)            check_only=1; shift;;
             --apply)
                 apply_mode=1
@@ -335,9 +403,29 @@ sql_import() {
         if [ "$apply_mode" -eq 1 ] && [ -n "$apply_parfile" ]; then
             dumpfile="$(basename "$apply_parfile" .par)"
         else
-            echo "用法: omf sql import <dumpfile> [--remap 源模式[:目标模式]] [--remap-tablespace 源TS:目标TS] [--check] [--apply [parfile]]"
+            echo "用法: omf sql import <dumpfile> [--schema 模式名] [--remap 源模式[:目标模式]] [--remap-tablespace 源TS:目标TS] [--check] [--apply [parfile]]"
             exit 1
         fi
+    fi
+
+    # ---- 解析目标模式 (默认主模式 APP_USER) ----
+    #   --schema <name> 指定导入到某个已配置模式(如 lsdherp); 框架自动解析其
+    #   用户/表空间/密码, 确保该模式存在, 并授予目录与跨模式导入权限。
+    local tgt_user tgt_ts tgt_pw
+    if [ -n "$schema" ]; then
+        tgt_user=$(omf_schema_user "$schema")
+        tgt_ts=$(omf_schema_tablespace "$schema")
+        tgt_pw=$(omf_schema_password "$schema")
+        log_info "目标模式: ${schema} -> 用户=${tgt_user} 表空间=${tgt_ts}"
+        # 自举: 若目标用户尚未创建, 按模板自动建好(幂等)
+        _ensure_schema_exists "$schema"
+        # 确保目标用户有目录读写的权限 (否则 impdp 报 ORA-39070)
+        ensure_dump_dir_object "$tgt_user"
+        # 授予跨模式 remap 所需权限 (impdp 以该用户连接并 remap 到其它模式)
+        _grant_import_privs "$tgt_user"
+    else
+        tgt_user="$APP_USER"; tgt_ts="$APP_TABLESPACE"; tgt_pw="$APP_PASSWORD"
+        ensure_dump_dir_object
     fi
 
     # 确保 OS 层数据泵目录存在且属主 oracle
@@ -375,17 +463,14 @@ sql_import() {
             return 1
         fi
         log_info "使用已有 parfile: $parfile"
-        do_impdp "$parfile" "$base"
+        do_impdp "$parfile" "$base" "$tgt_user"
         return 0
     fi
-
-    # 确保目录对象存在 (跳过 sql init 也能导入)
-    ensure_dump_dir_object
 
     # ---- --check: 生成持久化 parfile + 抽取源模式, 不真正导入 ----
     if [ "$check_only" -eq 1 ]; then
         log_step "检查模式: 生成 parfile 并抽取 dump 中的源模式"
-        sql_import_gen_parfile "$base" "$remap" "$ts_remap" "$parfile"
+        sql_import_gen_parfile "$base" "$remap" "$ts_remap" "$parfile" "$tgt_user" "$tgt_pw"
 
         # 主探测: 直接解析 dump 文件明文 (数据泵 master table 目录多为明文,
         #   "SCHEMA"."OBJECT" 限定符可秒级提取, 绕开 19c SQLFILE 必报的 ORA-39099)
@@ -429,12 +514,12 @@ sql_import() {
             echo "$schemas" | while read -r s; do echo "  - $s"; done
             # 单一源模式且与目标不同 -> 自动写入 remap (用户仍可改)
             local nsc; nsc=$(printf '%s\n' "$schemas" | grep -c .)
-            if [ -z "$remap" ] && [ "$nsc" -eq 1 ] && [ "$schemas" != "${APP_USER}" ]; then
+            if [ -z "$remap" ] && [ "$nsc" -eq 1 ] && [ "$schemas" != "$tgt_user" ]; then
                 echo ""
-                echo "→ 探测到单一源模式 '$schemas', 已自动写入: remap_schema=${schemas}:${APP_USER}"
+                echo "→ 探测到单一源模式 '$schemas', 已自动写入: remap_schema=${schemas}:${tgt_user}"
                 echo "  如需改目标模式, 编辑 parfile 后: omf sql import ${base} --apply"
                 sed -i -E '/^[[:space:]]*remap_schema=/d' "$parfile"
-                printf 'remap_schema=%s:%s\n' "$schemas" "${APP_USER}" >> "$parfile"
+                printf 'remap_schema=%s:%s\n' "$schemas" "$tgt_user" >> "$parfile"
             elif [ "$nsc" -gt 1 ]; then
                 echo ""
                 echo "→ 检测到多个模式, 未自动 remap; 请编辑 parfile 指定 remap_schema"
@@ -444,11 +529,11 @@ sql_import() {
         fi
 
         # 探测源表空间 (best-effort), 给出提示
-        if [ -n "$tss" ] && [ "$tss" != "${APP_TABLESPACE}" ]; then
+        if [ -n "$tss" ] && [ "$tss" != "$tgt_ts" ]; then
             echo ""
             echo "→ dump 中使用的表空间: $(echo $tss | tr '\n' ' ')"
-            echo "  若目标库无该表空间, 建议加: remap_tablespace=<源TS>:${APP_TABLESPACE}"
-            echo "  例: omf sql import ${base} --remap-tablespace $(echo $tss | head -1):${APP_TABLESPACE} --check"
+            echo "  若目标库无该表空间, 建议加: remap_tablespace=<源TS>:${tgt_ts}"
+            echo "  例: omf sql import ${base} --remap-tablespace $(echo $tss | head -1):${tgt_ts} --check"
         fi
 
         echo ""
@@ -458,8 +543,8 @@ sql_import() {
     fi
 
     # ---- 默认: 已知模式, 直接生成 parfile 并导入 ----
-    sql_import_gen_parfile "$base" "$remap" "$ts_remap" "$parfile"
-    do_impdp "$parfile" "$base"
+    sql_import_gen_parfile "$base" "$remap" "$ts_remap" "$parfile" "$tgt_user" "$tgt_pw"
+    do_impdp "$parfile" "$base" "$tgt_user"
 }
 
 #===============================================================================
@@ -473,7 +558,7 @@ sql_execute_all() {
 
     for dir in $(get_sql_dirs); do
         local scripts
-        scripts=$(find "$dir" -maxdepth 1 -name "*.sql" -type f | sort)
+        scripts=$(find "$dir" -maxdepth 1 -name "*.sql" ! -name '_*.sql' -type f | sort)
         for script in $scripts; do
             local ef; ef=$(get_executed_file "$script")
             [ -f "$ef" ] && continue   # 已执行, 跳过 (断点续跑)
@@ -494,37 +579,36 @@ sql_execute_all() {
 #===============================================================================
 # 执行单个脚本 (核心: 严格错误检测)
 #===============================================================================
-sql_execute_one() {
-    local script="$1"
+#===============================================================================
+# 执行单个脚本 (核心: 严格错误检测)
+#   _sql_run_file: 用显式传入的变量构建 wrapper 并执行 (供模式创建按每个模式注入不同值)
+#   sql_execute_one: 兼容旧调用, 用全局 APP_USER 上下文执行 (patch/upgrade/custom 等)
+#===============================================================================
+_sql_run_file() {
+    local script="$1" app_user="$2" app_pw="$3" app_ts="$4" data_dir="$5"
+    [ -f "$script" ] || { log_error "脚本不存在: $script"; return 1; }
     local log_dir="${OMF_HOME}/sql/.logs"
     mkdir -p "$log_dir"
     local log_file="${log_dir}/$(basename "$script" .sql)_$(date '+%Y%m%d_%H%M%S').log"
 
-    log_step "执行: $(basename "$script")"
+    log_step "执行: $(basename "$script") (上下文用户=${app_user}, 表空间=${app_ts})"
     log_info "日志: $log_file"
 
-    # 注入 DEFINE, 使脚本中的 &PDB_NAME/&ORACLE_SID/&APP_USER/&APP_PASSWORD
-    # 等非交互变量自动替换, 避免 sqlplus 卡在交互输入
-    #
-    # 关键: 不用 "@${script}" 引用原始脚本, 而是由 root 读取脚本内容直接嵌入 wrapper。
-    # 原因: 脚本常位于 /root/OMF/sql/... 下, 而 oracle 经 runuser 无权进入 /root (默认 700),
-    #       sqlplus 打开 @文件 时会报 "O/S Message: Permission denied"。
-    #       内联到 /tmp 的 wrapper (已 chown oracle) 后, oracle 只需读该 wrapper 即可。
     local wrapper; wrapper=$(mktemp /tmp/omf_sql_XXXXXX.sql)
     {
         echo "WHENEVER SQLERROR EXIT SQL.SQLCODE ROLLBACK"
         echo "WHENEVER OSERROR  EXIT FAILURE ROLLBACK"
         echo "DEFINE PDB_NAME     = '${PDB_NAME}'"
         echo "DEFINE ORACLE_SID   = '${ORACLE_SID}'"
-        echo "DEFINE APP_USER     = '${APP_USER}'"
-        echo "DEFINE APP_PASSWORD = '${APP_PASSWORD}'"
-        echo "DEFINE APP_TABLESPACE = '${APP_TABLESPACE}'"
+        echo "DEFINE APP_USER     = '${app_user}'"
+        echo "DEFINE APP_PASSWORD = '${app_pw}'"
+        echo "DEFINE APP_TABLESPACE = '${app_ts}'"
         echo "DEFINE ORACLE_DATA  = '${ORACLE_DATA}'"
+        echo "DEFINE APP_DATA_DIR = '${data_dir}'"
         echo "DEFINE ORACLE_DUMP_DIR = '${ORACLE_DUMP_DIR}'"
         echo "SET SERVEROUTPUT ON"
         echo "SET ECHO ON"
         # 自动切到应用 PDB: 脚本以 / as sysdba 连入 CDB$ROOT, 在 PDB 内创建对象前必须先切容器。
-        # 注入到开头, 使 patch/upgrade/custom/init 脚本无需在文件开头手写 ALTER SESSION SET CONTAINER。
         echo "ALTER SESSION SET CONTAINER = ${PDB_NAME};"
         cat "$script"
         echo ""
@@ -532,7 +616,7 @@ sql_execute_one() {
     } > "$wrapper"
     chmod 600 "$wrapper"
     # oracle 经 runuser 执行, 需能读此 wrapper (含脚本内容与 DEFINE 变量)
-    chown oracle:oinstall "$wrapper" 2>/dev/null || true
+    chown "${ORACLE_USER}:${ORACLE_GROUP}" "$wrapper" 2>/dev/null || true
 
     set +e
     as_oracle "sqlplus -s / as sysdba @${wrapper}" 2>&1 | tee "$log_file"
@@ -555,6 +639,13 @@ sql_execute_one() {
 
     log_info "执行成功: $(basename "$script")"
     return 0
+}
+
+sql_execute_one() {
+    local script="$1"
+    local data_dir="${ORACLE_DATA}/${ORACLE_SID}/${APP_USER}"
+    # 非模式创建类脚本(patch/upgrade/custom)用全局 APP_USER 上下文执行
+    _sql_run_file "$script" "$APP_USER" "$APP_PASSWORD" "$APP_TABLESPACE" "$data_dir"
 }
 
 #===============================================================================

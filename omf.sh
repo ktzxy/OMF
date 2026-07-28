@@ -99,7 +99,7 @@ cmd_help() {
         install)    echo "用法: omf install {software|listener|check} [zip路径] [EE|SE]";;
         db)         echo "用法: omf db {create|start|stop|restart|status|pdb|dg|archivelog}";;
         backup)     echo "用法: omf backup {logical|physical|incremental|archive|auto|schedule|list|validate|restore|cleanup} [选项]"; echo "  cleanup: [--logical|--physical] [-d 天数 | --all] [-p|--dry-run|list] [-y]"; echo "    --logical 仅逻辑备份(dump) | --physical 仅物理备份(RMAN) | 默认两者"; echo "    -d N 删 N 天前(默认30) | --all 删全部 | -p|list 仅预览 | -y 免确认";;
-        sql)        echo "用法: omf sql {scan|run|init|status|rollback}";;
+        sql)        echo "用法: omf sql {scan|run|init|status|rollback}"; echo "  import <dump> [--schema 模式名] [--remap 源[:目标]] [--remap-tablespace 源TS:目标TS] [--check] [--apply [parfile]]"; echo "    --schema 指定导入到的目标模式(多库多模式); 不指定则默认主模式 APP_USER";;
         tune)       echo "用法: omf tune {memory|storage|session|analyze|awr|apply}";;
         check)      echo "用法: omf check {all|db|disk|perf|alert|listener|preflight|monitor}";;
         listener)   echo "用法: omf listener {status|start|stop|restart|port <新端口>}";;

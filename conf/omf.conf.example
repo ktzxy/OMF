@@ -39,15 +39,23 @@ ORACLE_PASSWORD="${ORACLE_PASSWORD:-ChangeMe_123}"
 SYSTEM_PASSWORD="${SYSTEM_PASSWORD:-ChangeMe_123}"
 PDB_PASSWORD="${PDB_PASSWORD:-ChangeMe_123}"
 
-# ===== 应用模式 / 初始化脚本 (omf sql init 使用) =====
-# 以下三项可选: 注释即沿用 lib/config.sh 默认值, 取消注释即可覆盖。
-#   APP_USER       应用用户名 / 模式名 (Oracle 中 模式 = 用户, 改它即同时改用户名与模式名)
-#   APP_PASSWORD   应用用户密码
-#   APP_TABLESPACE 表空间名 (可与用户名不同)
-# 数据文件路径由 ORACLE_DATA + ORACLE_SID 推导, 例如: ${ORACLE_DATA}/${ORACLE_SID}/data00.dbf
-# APP_USER="dherp"
-# APP_PASSWORD="${APP_PASSWORD:-ChangeMe_123}"
-# APP_TABLESPACE="${APP_TABLESPACE:-dherp}"
+# ===== 应用模式 / 多模式(多库) (omf sql init 使用) =====
+# 单模式(传统): 仅配 APP_USER/APP_PASSWORD/APP_TABLESPACE 即可。
+#   Oracle 中 模式 = 用户, 改 APP_USER 即同时改用户名与模式名; 数据文件路径由
+#   ORACLE_DATA + ORACLE_SID 推导为 ${ORACLE_DATA}/${ORACLE_SID}/<用户>/dataNN.dbf
+# 多模式(多库, 如批号库 dherp + 连锁库 lsdherp + ...):
+#   用 APP_SCHEMAS 列出所有模式(空格分隔), 框架自动逐个建用户/表空间。
+#   每个模式可用 <大写模式名>_USER / _PASSWORD / _TABLESPACE / _DATA_DIR 个别覆盖,
+#   缺省: 用户名=表空间名=模式名, 密码=全局 APP_PASSWORD, 数据目录=<SID>/<模式名>。
+# 示例(取消注释启用双模式):
+#   APP_SCHEMAS="dherp lsdherp"
+#   LSDHERP_PASSWORD="ls_pwd"          # 连锁库独立密码
+#   LSDHERP_TABLESPACE="ls_ts"         # 连锁库独立表空间
+#   MISERP_DATA_DIR="/data/oracle/oradata/ARTERY/miserp"  # 第3个库可指定数据目录
+APP_USER="dherp"
+APP_PASSWORD="${APP_PASSWORD:-ChangeMe_123}"
+APP_TABLESPACE="${APP_TABLESPACE:-dherp}"
+APP_SCHEMAS=""
 
 # ===== 存储路径 =====
 ORACLE_DATA_BASE="/data/oracle"

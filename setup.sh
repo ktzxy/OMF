@@ -77,7 +77,8 @@ if [ -t 0 ] && [ "${OMF_NONINTERACTIVE:-false}" != "true" ]; then
         read -r -p "ORACLE_HOME [${ORACLE_HOME}]: " v; [ -n "$v" ] && set_config ORACLE_HOME "$v"
         read -r -p "ORACLE_DATA [${ORACLE_DATA}]: " v; [ -n "$v" ] && set_config ORACLE_DATA "$v"
         read -r -p "ORACLE_BACKUP [${ORACLE_BACKUP}]: " v; [ -n "$v" ] && set_config ORACLE_BACKUP "$v"
-        read -r -p "APP_USER [${APP_USER}]: " v; [ -n "$v" ] && set_config APP_USER "$v"
+        read -r -p "APP_USER (主模式) [${APP_USER}]: " v; [ -n "$v" ] && set_config APP_USER "$v"
+        read -r -p "APP_SCHEMAS (多模式列表, 空格分隔; 留空=仅主模式) [${APP_SCHEMAS:-}]: " v; [ -n "$v" ] && set_config APP_SCHEMAS "$v"
         read -r -p "BACKUP_MODE (logical|physical|both) [${BACKUP_MODE}]: " v
         [ -n "$v" ] && set_config BACKUP_MODE "$v"
         echo "提示: 密码建议通过环境变量注入, 例如 export ORACLE_PASSWORD=xxx 后再运行"

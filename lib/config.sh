@@ -46,6 +46,8 @@ load_config() {
     OMF_CONFIG[APP_USER]="${APP_USER:-dherp}"
     OMF_CONFIG[APP_PASSWORD]="${APP_PASSWORD:-dherp_skzy}"
     OMF_CONFIG[APP_TABLESPACE]="${APP_TABLESPACE:-dherp}"
+    # 多模式(多库)列表: 空格分隔, 如 "dherp lsdherp miserp"; 留空 = 仅 APP_USER 单模式
+    OMF_CONFIG[APP_SCHEMAS]="${APP_SCHEMAS:-}"
 
     OMF_CONFIG[PROCESSES]="1500"
     OMF_CONFIG[OPEN_CURSORS]="1000"
@@ -130,8 +132,14 @@ show_config() {
     echo "  ORACLE_SID:     ${OMF_CONFIG[ORACLE_SID]}"
     echo "  PDB_NAME:       ${OMF_CONFIG[PDB_NAME]}"
     echo "  CHARSET:        ${OMF_CONFIG[CHARSET]}"
-    echo "  APP_USER:       ${OMF_CONFIG[APP_USER]}"
+    echo "  APP_USER:       ${OMF_CONFIG[APP_USER]}  (主模式)"
     echo "  APP_TABLESPACE: ${OMF_CONFIG[APP_TABLESPACE]}"
+    echo "  APP_SCHEMAS:   ${OMF_CONFIG[APP_SCHEMAS]:-(仅 ${OMF_CONFIG[APP_USER]})}"
+    local _s _u _ts _dd
+    for _s in $(omf_schema_list); do
+        _u=$(omf_schema_user "$_s"); _ts=$(omf_schema_tablespace "$_s"); _dd=$(omf_schema_datadir "$_s")
+        echo "    └ 模式[${_s}] -> 用户=${_u} 表空间=${_ts} 数据目录=${_dd}"
+    done
     echo ""
     echo "[路径配置]"
     echo "  ORACLE_BASE:    ${OMF_CONFIG[ORACLE_BASE]}"
@@ -188,6 +196,42 @@ set_config() {
         echo "${key}=\"${value}\"" >> "$config_file"
     fi
     log_info "配置已更新并持久化: $key = $value"
+}
+
+#===============================================================================
+# 多模式(多库)支持: APP_SCHEMAS 列表 + 每个模式的派生配置
+#   配置示例 (conf/omf.conf):
+#     APP_SCHEMAS="dherp lsdherp miserp"     # 空格分隔, 想加第 N 个直接追加
+#     LSDHERP_PASSWORD="ls_pwd"                # 每个模式的个别覆盖 (键名 = 大写模式名 + 后缀)
+#     LSDHERP_TABLESPACE="ls_ts"              #   缺省: 用户名/表空间=模式名, 密码=全局 APP_PASSWORD
+#     MISERP_DATA_DIR="/data/oracle/oradata/ARTERY/miserp"
+#   区分逻辑: 列表里的"名字"即模式的逻辑键(也是默认 Oracle 用户名/表空间名);
+#             每个模式可经 <大写名>_USER / _TABLESPACE / _PASSWORD / _DATA_DIR 个别覆盖.
+#===============================================================================
+omf_schema_list() {
+    local s="${APP_SCHEMAS:-${OMF_CONFIG[APP_SCHEMAS]:-}}"
+    [ -z "$s" ] && s="${APP_USER:-${OMF_CONFIG[APP_USER]:-dherp}}"
+    echo "$s"
+}
+
+# 给定逻辑名, 返回覆盖键 lookup (大写), 兼容小写/大写书写的模式名
+_omf_schema_key() { echo "$1" | tr '[:lower:]' '[:upper:]'; }
+
+omf_schema_user() {
+    local key; key="$(_omf_schema_key "$1")_USER"
+    echo "${!key:-$1}"
+}
+omf_schema_tablespace() {
+    local key; key="$(_omf_schema_key "$1")_TABLESPACE"
+    echo "${!key:-$1}"
+}
+omf_schema_password() {
+    local key; key="$(_omf_schema_key "$1")_PASSWORD"
+    echo "${!key:-${APP_PASSWORD:-${OMF_CONFIG[APP_PASSWORD]:-}}}"
+}
+omf_schema_datadir() {
+    local key; key="$(_omf_schema_key "$1")_DATA_DIR"
+    echo "${!key:-${ORACLE_DATA}/${ORACLE_SID}/$1}"
 }
 
 # 自动加载

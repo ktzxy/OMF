@@ -100,8 +100,16 @@ validate_config() {
     check_required "PDB_NAME"      "PDB Name"
     check_required "ORACLE_DATA"   "数据目录"
     check_required "ORACLE_PASSWORD" "Oracle 密码"
-    check_required "APP_USER"      "应用用户"
-    check_required "APP_PASSWORD"  "应用密码"
+    check_required "APP_USER"      "应用用户(主模式)"
+    check_required "APP_PASSWORD"  "应用密码(主模式)"
+
+    echo ""
+    echo "--- 模式(多库)解析 ---"
+    local _s _u _ts _dd
+    for _s in $(omf_schema_list); do
+        _u=$(omf_schema_user "$_s"); _ts=$(omf_schema_tablespace "$_s"); _dd=$(omf_schema_datadir "$_s")
+        echo "  ✓ 模式[${_s}] -> 用户=${_u} 表空间=${_ts} 数据目录=${_dd}"
+    done
 
     echo ""
     echo "--- 路径检查 ---"
@@ -193,6 +201,13 @@ SYSTEM_PASSWORD="${SYSTEM_PASSWORD:-Qiyuan!960#123}"
 PDB_PASSWORD="${PDB_PASSWORD:-Qiyuan!960#123}"
 APP_USER="dherp"
 APP_PASSWORD="${APP_PASSWORD:-dherp_skzy}"
+# 多模式(多库)列表: 空格分隔, 如 "dherp lsdherp"; 留空=仅单模式(见 APP_USER)
+# 每个模式的个别覆盖键: <大写模式名>_PASSWORD / _TABLESPACE / _USER / _DATA_DIR
+# 示例(取消注释启用):
+# APP_SCHEMAS="dherp lsdherp"
+# LSDHERP_PASSWORD="ls_pwd"
+# LSDHERP_TABLESPACE="ls_ts"
+APP_SCHEMAS=""
 
 # ===== 存储路径 =====
 ORACLE_DATA_BASE="/data/oracle"

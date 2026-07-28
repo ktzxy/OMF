@@ -103,10 +103,33 @@ backup_auto() {
 #===============================================================================
 # 逻辑备份 (expdp) -> 落盘到 ${ORACLE_BACKUP}/dump
 #   默认: 仅配置 PDB_NAME;  --all: 所有 PDB 各导一份;  --pdb a,b: 指定 PDB;  --root: CDB$ROOT
+#   --schema <名>: 仅导出指定模式(多库场景), 复用 omf_schema_user 解析实际用户;
+#               此时忽略 scope, 固定导出 PDB_NAME 中的该模式。
+#   DG 守卫: 物理备库(PHYSICAL STANDBY)不可做 expdp (需读写库), 必须在主库执行。
 #===============================================================================
 backup_logical() {
     require_db_user
-    parse_scope "$@"
+    local schema="" rest_args=()
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --schema) schema="${2:-}"; shift 2;;
+            *)       rest_args+=("$1"); shift;;
+        esac
+    done
+    parse_scope "${rest_args[@]}"
+
+    # DG 守卫: 物理备库上 expdp 不可用, 必须到主库执行逻辑备份
+    local role; role="$(omf_db_role 2>/dev/null)"
+    if echo "$role" | grep -qi "PHYSICAL STANDBY"; then
+        log_error "当前为【物理备库 PHYSICAL STANDBY】, 无法执行 expdp 逻辑备份 (需读写库)。请到【主库】执行 omf backup logical"
+    fi
+
+    # --schema 限定: 固定单 PDB + 切到 SCHEMAS= 导出
+    if [ -n "$schema" ]; then
+        SCOPE_MODE="single"
+        local su; su="$(omf_schema_user "$schema")"
+        log_info "按模式逻辑备份: 模式=${schema} -> 用户=${su} @ PDB=${PDB_NAME}"
+    fi
     ensure_dump_dir
 
     local log_file="$OMF_RUN_LOG"
@@ -142,14 +165,17 @@ select name from v\\\$pdbs;\" | sqlplus -s / as sysdba" 2>/dev/null \
     esac
 
     for pdb in "${pdbs[@]}"; do
-        backup_logical_one "$pdb" "$log_file"
+        local su=""
+        [ -n "$schema" ] && su="$(omf_schema_user "$schema")"
+        backup_logical_one "$pdb" "$log_file" "$su"
     done
     backup_cleanup_disks "dump" "${BACKUP_RETENTION_DAYS}"
 }
 
 # 单个 PDB/CDB$ROOT 的 expdp 全库导出
+#   $3 = schema_user (可选): 非空则导出该模式(替换 FULL=Y 为 SCHEMAS=), 仅该模式数据落盘
 backup_logical_one() {
-    local pdb="$1"; local log_file="$2"
+    local pdb="$1"; local log_file="$2"; local schema_user="${3:-}"
     local ts=$(date '+%Y%m%d_%H%M%S')
     local dump_dir="${ORACLE_BACKUP}/dump"
     # 注意: parfile 路径不能含 PDB 名, 因为 PDB 名可能含 '$' (如 PDB$SEED/CDB$ROOT),
@@ -181,7 +207,16 @@ EOF
     chown oracle:oinstall "$parfile" 2>/dev/null || true
     chmod 600 "$parfile"
 
-    log_step "逻辑全量备份开始 (expdp -> PDB=${pdb}) -> ${dump_dir}"
+    # 按模式导出: 移除 FULL=Y, 改用 SCHEMAS= 限定模式 (多库场景按库单独备份)
+    if [ -n "$schema_user" ]; then
+        sed -i '/^[[:space:]]*FULL=Y[[:space:]]*$/d' "$parfile"
+        sed -i "s|^DUMPFILE=.*|DUMPFILE=schema_${schema_user}_${ts}_%U.dmp|" "$parfile"
+        sed -i "s|^LOGFILE=.*|LOGFILE=schema_${schema_user}_${ts}.log|" "$parfile"
+        echo "SCHEMAS=${schema_user}" >> "$parfile"
+        log_step "逻辑备份(按模式)开始 (expdp SCHEMAS=${schema_user} -> PDB=${pdb}) -> ${dump_dir}"
+    else
+        log_step "逻辑全量备份开始 (expdp -> PDB=${pdb}) -> ${dump_dir}"
+    fi
     set +e
     as_oracle "expdp parfile=${parfile}" 2>&1 | tee -a "$log_file"
     local rc=${PIPESTATUS[0]}
@@ -191,7 +226,11 @@ EOF
     rm -f "$parfile"
 
     if [ "$rc" -eq 0 ] && grep -qi "successfully completed" "$log_file"; then
-        log_info "逻辑全量备份完成 (PDB=${pdb}): ${dump_dir}/full_${pdb}_${ts}_*.dmp"
+        if [ -n "$schema_user" ]; then
+            log_info "逻辑备份(按模式)完成 (${schema_user}@${pdb}): ${dump_dir}/schema_${schema_user}_${ts}_*.dmp"
+        else
+            log_info "逻辑全量备份完成 (PDB=${pdb}): ${dump_dir}/full_${pdb}_${ts}_*.dmp"
+        fi
     else
         send_notification "OMF 逻辑备份失败 (PDB=${pdb})" "日志: $log_file"
         log_error "逻辑备份失败 (PDB=${pdb}), 查看日志: $log_file"
@@ -427,6 +466,9 @@ backup_restore() {
         echo "  omf backup restore --rman [--all|--root|--pdb a,b] [--scn <SCN>] [--time 'YYYY-MM-DD HH24:MI:SS']  物理恢复"
         echo "  omf backup restore --rman [--all|--root|--pdb a,b] --validate 校验备份可恢复性"
         echo ""
+        echo "  ※ DG 注意: 主库(ENABLE_DG=true)上执行物理恢复会破坏 Data Guard 备库,"
+        echo "    恢复后需在主库重新 dgmgrl 重建备库(或重新 duplicate)。逻辑恢复(impdp)会经 redo 自动同步到备库, 无此问题。"
+        echo ""
         echo "可用逻辑备份:"
         ls -1 "${ORACLE_BACKUP}/dump/"*.dmp 2>/dev/null || echo "(无)"
         exit 1
@@ -589,6 +631,15 @@ RMANEOF"
         log_warn "将执行【不完全恢复】${until_clause}"
     fi
     log_warn "恢复范围: ${SCOPE_MODE}$([ "$SCOPE_MODE" = "pdb" ] && echo " (${SCOPE_PDBS})")"
+
+    # DG 守卫: 主库+DG 开启时, 物理恢复会破坏备库(备份集与备库 redo 流不一致)
+    if omf_dg_enabled; then
+        local role; role="$(omf_db_role 2>/dev/null)"
+        if echo "$role" | grep -qi "PRIMARY"; then
+            log_warn "检测到【主库 + ENABLE_DG=true】: 物理恢复会使 Data Guard 备库与重建后的主库不一致!"
+            log_warn "恢复完成后, 必须重新在主库 dgmgrl 重建备库配置 (或重新 RMAN duplicate 备库), 否则备库永久失效。"
+        fi
+    fi
 
     confirm "确认执行物理恢复? 这将用备份覆盖当前数据文件!"
 

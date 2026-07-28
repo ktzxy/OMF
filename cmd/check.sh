@@ -30,11 +30,14 @@ cmd_check() {
         preflight)
             check_preflight "$@"
             ;;
+        schemas)
+            check_schemas "$@"
+            ;;
         monitor)
             check_monitor "$@"
             ;;
         *)
-            echo "用法: omf check {all|db|disk|perf|alert|listener|preflight|monitor}"
+            echo "用法: omf check {all|db|disk|perf|alert|listener|preflight|schemas|monitor}"
             exit 1
             ;;
     esac
@@ -286,6 +289,10 @@ echo \"select log_mode from v\\\$database;\" | sqlplus -s / as sysdba | grep -i 
         check_item "Alert 日志 (文件不存在)" warn
     fi
 
+    # 模式(多库)存在性校验: 已配置的每个模式, 其 Oracle 用户是否真实存在
+    echo "--- 模式(多库)存在性校验 ---"
+    check_schemas_inner
+
     echo ""
     echo "═══════════════════════════════════════"
     echo "检查结果: ✓ $ok 正常  ⚠ $warns 警告  ✗ $errors 错误"
@@ -339,6 +346,54 @@ WHERE input_type='DB FULL' AND status='COMPLETED';
 EXIT;
 SQL
 "
+}
+
+#===============================================================================
+# 模式(多库)存在性校验
+#   check_schemas_inner: 核心, 复用调用方已定义的 check_item (ok|warn|err)
+#   check_schemas:       子命令入口, 自带计数并汇总
+#===============================================================================
+check_schemas_inner() {
+    # 数据库未起时, dba_users 查不到, 直接跳过(不误报)
+    if ! as_oracle "echo 'SELECT 1 FROM dual;' | sqlplus -s / as sysdba" &>/dev/null; then
+        check_item "数据库未连接, 跳过模式存在性校验" warn
+        return 0
+    fi
+    local s u exists
+    for s in $(omf_schema_list); do
+        u=$(omf_schema_user "$s")
+        exists=$(as_oracle "echo \"set pagesize 0 feedback off heading off
+SELECT COUNT(*) FROM dba_users WHERE username='${u}';\" | sqlplus -s / as sysdba" 2>/dev/null | tr -d ' ')
+        if [ "$exists" = "1" ]; then
+            check_item "模式[${s}] (用户 ${u}) 已存在" ok
+        else
+            check_item "模式[${s}] (用户 ${u}) 不存在于数据库! 请 omf sql init" err
+        fi
+    done
+}
+
+check_schemas() {
+    echo ""
+    echo "╔══════════════════════════════════════════════════════════╗"
+    echo "║          OMF 模式(多库)存在性校验                          ║"
+    echo "╚══════════════════════════════════════════════════════════╝"
+    echo ""
+    local errors=0 warns=0 ok=0
+    check_item() {
+        local desc="$1" status="$2"
+        case "$status" in
+            ok)   echo "  ✓ $desc"; ok=$((ok+1));;
+            warn) echo "  ⚠ $desc"; warns=$((warns+1));;
+            err)  echo "  ✗ $desc"; errors=$((errors+1));;
+        esac
+    }
+    check_schemas_inner
+    echo ""
+    echo "══════════════════════════════════════════════════════════"
+    echo "校验结果: ✓ $ok 正常  ⚠ $warns 警告  ✗ $errors 错误"
+    echo "══════════════════════════════════════════════════════════"
+    [ "$errors" -gt 0 ] && return 2
+    return 0
 }
 
 #===============================================================================

@@ -146,6 +146,14 @@ sql_execute_inline() {
 }
 
 sql_init() {
+    local only_schema=""
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --schema) only_schema="${2:-}"; shift 2;;
+            *) shift;;
+        esac
+    done
+
     log_step "初始化基线数据"
     # 预检数据库可连 (DB 未起时提前报错, 避免下面逐模式建用户静默失败)
     sql_preflight
@@ -155,12 +163,21 @@ sql_init() {
     chmod 750 "$ORACLE_DUMP_DIR"
     log_info "数据泵目录已就绪: $ORACLE_DUMP_DIR (属主 ${ORACLE_USER}:${ORACLE_GROUP})"
 
+    local executed_dir="${OMF_HOME}/sql/.executed"
+    mkdir -p "$executed_dir"
+
     # ---- 逐个模式创建用户/表空间 (遍历 APP_SCHEMAS, 支持 N 个库) ----
     # 数据文件按 <SID>/<模式名>/ 子目录隔离, 彻底避免多个表空间同名数据文件冲突(ORA-01537)。
     local template="${SQL_INIT_DIR}/_create_schema.sql"
     if [ -f "$template" ]; then
-        local names; names="$(omf_schema_list)"
-        log_info "待初始化模式: $names"
+        local names
+        if [ -n "$only_schema" ]; then
+            names="$only_schema"
+            log_info "仅初始化单模式: ${names} (其余模式不受影响)"
+        else
+            names="$(omf_schema_list)"
+            log_info "待初始化模式: $names"
+        fi
         local name u ts pw dd
         for name in $names; do
             u=$(omf_schema_user "$name")
@@ -175,12 +192,21 @@ sql_init() {
             if ! _sql_run_file "$template" "$u" "$pw" "$ts" "$dd"; then
                 log_warn "模式[${name}] 创建失败或部分失败, 请检查日志 (可能用户已存在, 属正常幂等跳过)"
             fi
+            # 记录该模式基线已建 (供 omf sql rollback --schema <名> 定点重置)
+            mkdir -p "${executed_dir}/${name}"
+            date '+%F %T' > "${executed_dir}/${name}/.schema_created"
         done
     else
         log_warn "未找到模式模板: $template (跳过模式创建, 仅执行其余 init 脚本)"
     fi
 
     # ---- 执行其余 init 脚本 (非模板 _*.sql), 支持断点续跑 ----
+    # 仅全量 init 时执行全局脚本; 单模式(--schema)重建只重建该模式的用户/表空间,
+    # 不重跑全局 init 脚本(通常只需一次, 且非模式专属)。
+    if [ -n "$only_schema" ]; then
+        log_info "单模式重建完成 (已重建 ${only_schema} 的用户/表空间)。全局 init 脚本未重跑。"
+        return 0
+    fi
     sql_scan
     confirm "确认执行所有初始化脚本(模式模板除外)?"
     sql_preflight
@@ -669,15 +695,36 @@ sql_status() {
 
 #===============================================================================
 # 回滚 (重置执行记录, 允许重跑)
+#   omf sql rollback <name>              清除单个脚本记录(全局命名空间)
+#   omf sql rollback --all                清除全部执行记录
+#   omf sql rollback --all  --schema X  仅清除模式 X 的执行记录(定点重置单库)
+#   omf sql rollback <name> --schema X   仅清除模式 X 下该脚本的记录
+#   模式命名空间: sql/.executed/<模式名>/, 由 omf sql init --schema 写入 .schema_created 标记
 #===============================================================================
 sql_rollback() {
-    local name="$1"
-    [ -z "$name" ] && { echo "用法: omf sql rollback <name> | --all"; exit 1; }
+    local name="" schema=""
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --schema) schema="${2:-}"; shift 2;;
+            --all)    name="--all"; shift;;
+            *)        [ -z "$name" ] && name="$1"; shift;;
+        esac
+    done
+    [ -z "$name" ] && { echo "用法: omf sql rollback <name> | --all [--schema <模式名>]"; exit 1; }
     local executed_dir="${OMF_HOME}/sql/.executed"
     if [ "$name" = "--all" ]; then
-        confirm "确认重置所有 SQL 执行记录?"
-        rm -rf "$executed_dir"; log_info "所有执行记录已清除"
+        if [ -n "$schema" ]; then
+            confirm "确认重置模式 ${schema} 的全部 SQL 执行记录?"
+            rm -rf "${executed_dir}/${schema}"; log_info "模式 ${schema} 的执行记录已清除 (可重新 omf sql init --schema ${schema})"
+        else
+            confirm "确认重置所有 SQL 执行记录?"
+            rm -rf "$executed_dir"; log_info "所有执行记录已清除"
+        fi
     else
-        rm -f "${executed_dir}/${name}"; log_info "已清除执行记录: $name"
+        if [ -n "$schema" ]; then
+            rm -f "${executed_dir}/${schema}/${name}"; log_info "已清除模式 ${schema} 的执行记录: $name"
+        else
+            rm -f "${executed_dir}/${name}"; log_info "已清除执行记录: $name"
+        fi
     fi
 }

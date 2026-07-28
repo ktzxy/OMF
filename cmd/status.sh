@@ -55,6 +55,20 @@ SQL" 2>/dev/null); then
     fi
     echo ""
 
+    echo "──── Data Guard ────"
+    if omf_dg_enabled; then
+        local dg_role; dg_role="$(omf_db_role 2>/dev/null)"
+        if [ -n "$dg_role" ]; then
+            printf "  %-16s %s\n" "DG 配置:" "已启用 (ENABLE_DG=true)"
+            printf "  %-16s %s\n" "数据库角色:" "${dg_role}"
+        else
+            printf "  %-16s %s\n" "DG 配置:" "已启用 (ENABLE_DG=true), 但数据库未连接"
+        fi
+    else
+        printf "  %-16s %s\n" "DG 配置:" "未启用 (ENABLE_DG=false)"
+    fi
+    echo ""
+
     echo "──── 磁盘 ────"
     for p in "${ORACLE_DATA_BASE}" "${ORACLE_BACKUP}" "/"; do
         if [ -d "$p" ]; then

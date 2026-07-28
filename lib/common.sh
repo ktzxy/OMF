@@ -176,6 +176,18 @@ $script"
     fi
 }
 
+# ---- Data Guard 助手 ----
+# 返回当前数据库角色 (PRIMARY / PHYSICAL STANDBY / LOGICAL STANDBY / SNAPSHOT STANDBY)
+#   数据库未起/不可连时返回空
+omf_db_role() {
+    as_oracle "echo \"select database_role from v\\\$database;\" | sqlplus -s / as sysdba" 2>/dev/null \
+        | grep -iE 'PRIMARY|STANDBY' | head -1
+}
+# 配置是否启用 DG (conf 中 ENABLE_DG=true)
+omf_dg_enabled() {
+    [ "${ENABLE_DG:-false}" = "true" ]
+}
+
 # ---- 文件锁, 防止并发执行 ----
 acquire_lock() {
     local lock_name="${1:-omf}"

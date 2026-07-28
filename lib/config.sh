@@ -210,7 +210,17 @@ set_config() {
 #===============================================================================
 omf_schema_list() {
     local s="${APP_SCHEMAS:-${OMF_CONFIG[APP_SCHEMAS]:-}}"
-    [ -z "$s" ] && s="${APP_USER:-${OMF_CONFIG[APP_USER]:-dherp}}"
+    if [ -z "$s" ]; then
+        # 单模式: 回退到主模式 APP_USER
+        s="${APP_USER:-${OMF_CONFIG[APP_USER]:-dherp}}"
+    else
+        # 多模式: 自动把主模式 APP_USER 纳入列表, 避免"配了 APP_SCHEMAS 却漏写主模式"
+        # 导致主库不被创建 (omf sql init 只遍历列表). 顺序: 主模式在前.
+        local au="${APP_USER:-${OMF_CONFIG[APP_USER]:-}}"
+        local found=0
+        for _x in $s; do [ "$_x" = "$au" ] && found=1; done
+        [ "$found" -eq 0 ] && s="$au $s"
+    fi
     echo "$s"
 }
 

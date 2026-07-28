@@ -84,7 +84,7 @@ usage() {
   omf env prepare                # 准备系统环境
   omf install software <zip>     # 安装 Oracle 软件
   omf db create                  # 创建数据库
-  omf sql run --all              # 导入并执行 SQL
+  omf sql init                  # 初始化(建模式/表空间 + 逐目录执行 SQL)
   omf backup schedule setup      # 配置定时备份
   omf clean schedule setup       # 配置定时清理
   omf status                     # 一键总览

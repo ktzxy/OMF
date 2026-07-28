@@ -411,7 +411,11 @@ sql_import() {
     # ---- 解析目标模式 (默认主模式 APP_USER) ----
     #   --schema <name> 指定导入到某个已配置模式(如 lsdherp); 框架自动解析其
     #   用户/表空间/密码, 确保该模式存在, 并授予目录与跨模式导入权限。
+    #   注意: impdp 始终以 tgt_user 连接, 当 --remap 的目标模式 != 连接用户,
+    #   或显式 --schema 指定了其它模式时, 该连接用户需 IMP_FULL_DATABASE 才能在
+    #   目标模式内建对象; 否则报 ORA-31631/ORA-39149 权限不足. 故统一按条件授权.
     local tgt_user tgt_ts tgt_pw
+    tgt_user="$APP_USER"; tgt_ts="$APP_TABLESPACE"; tgt_pw="$APP_PASSWORD"
     if [ -n "$schema" ]; then
         tgt_user=$(omf_schema_user "$schema")
         tgt_ts=$(omf_schema_tablespace "$schema")
@@ -419,13 +423,12 @@ sql_import() {
         log_info "目标模式: ${schema} -> 用户=${tgt_user} 表空间=${tgt_ts}"
         # 自举: 若目标用户尚未创建, 按模板自动建好(幂等)
         _ensure_schema_exists "$schema"
-        # 确保目标用户有目录读写的权限 (否则 impdp 报 ORA-39070)
-        ensure_dump_dir_object "$tgt_user"
-        # 授予跨模式 remap 所需权限 (impdp 以该用户连接并 remap 到其它模式)
+    fi
+    # 确保当前连接用户有数据泵目录读写权限 (否则 impdp 报 ORA-39070)
+    ensure_dump_dir_object "$tgt_user"
+    # 跨模式 remap (目标模式 != 连接用户) 或 --schema 时, 授予 IMP_FULL_DATABASE
+    if [ -n "$remap" ] || [ -n "$schema" ]; then
         _grant_import_privs "$tgt_user"
-    else
-        tgt_user="$APP_USER"; tgt_ts="$APP_TABLESPACE"; tgt_pw="$APP_PASSWORD"
-        ensure_dump_dir_object
     fi
 
     # 确保 OS 层数据泵目录存在且属主 oracle

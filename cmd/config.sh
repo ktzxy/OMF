@@ -105,8 +105,23 @@ validate_config() {
 
     echo ""
     echo "--- 模式(多库)解析 ---"
-    local _s _u _ts _dd
+    local _s _u _ts _dd _seen="" _dup=0 _inv=0
     for _s in $(omf_schema_list); do
+        # 校验: 非空 / 合法 Oracle 标识符 / 不重复
+        if [ -z "$_s" ]; then
+            echo "  ✗ 模式名存在空项 (APP_SCHEMAS 可能含多余空格)"; errors=$((errors+1)); continue
+        fi
+        if ! printf '%s' "$_s" | grep -qE '^[A-Za-z_][A-Za-z0-9_#$]*$'; then
+            echo "  ✗ 模式名 '${_s}' 不是合法 Oracle 用户名(标识符)"; errors=$((errors+1)); _inv=1
+        fi
+        # 重复检测: 与已出现的每个模式名精确比较 (避免子串误判, 如 dherp vs dherp2)
+        _dup=0
+        for _p in $_seen; do [ "$_p" = "$_s" ] && _dup=1; done
+        if [ "$_dup" -eq 1 ]; then
+            echo "  ✗ 模式名 '${_s}' 重复"; errors=$((errors+1)); _inv=1
+        fi
+        _seen="$_seen $_s"
+        [ "$_inv" -eq 1 ] && { _inv=0; continue; }
         _u=$(omf_schema_user "$_s"); _ts=$(omf_schema_tablespace "$_s"); _dd=$(omf_schema_datadir "$_s")
         echo "  ✓ 模式[${_s}] -> 用户=${_u} 表空间=${_ts} 数据目录=${_dd}"
     done

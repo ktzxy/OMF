@@ -92,7 +92,7 @@ omf install software /home/oracle/LINUX.X64_193000_db_home.zip
 
 ```bash
 omf db create              # 创建数据库 (含内存优化前置)
-omf sql run --all          # 导入并执行准备好的 SQL (失败即停, 支持断点续跑)
+omf sql init              # 初始化: 按 APP_SCHEMAS 建模式/表空间并逐目录执行 SQL (失败即停, 支持断点续跑)
 omf backup schedule setup  # 配置定时备份
 omf clean schedule setup   # 配置定时清理
 omf status                 # 一键总览
@@ -293,7 +293,7 @@ omf check all                       # 健康检查含内存项 (可用内存过�
 | `omf backup cleanup [--logical\|--physical] [-d N \| --all] [-p\|list] [-y]` | 清理备份：`--logical` 仅逻辑备份(dump)、`--physical` 仅物理备份(RMAN)，默认两者；`-d N` 删 N 天前的；`--all` 删全部；`-p\|list` 仅预览不删；`-y` 免确认直接执行 |
 | `omf backup list [all\|expdp\|rman]` | 查看备份列表，并按 `BACKUP_RETENTION_DAYS` 高亮"即将过期"(剩余≤阈值标黄)/"已过期(将清理)"(标红)；阈值 `BACKUP_WARN_DAYS`(默认保留期1/5，钳制2~7天) |
 | `omf backup validate [--all\|--root\|--pdb a,b]` | 校验备份可恢复性 (RESTORE VALIDATE) |
-| `omf backup restore <file> [--pdb <PDB>]` | 逻辑恢复 (impdp)，默认恢复到 `PDB_NAME`，可指定目标 PDB |
+| `omf backup restore <file> [--pdb <PDB>] [--schema <模式名>]` | 逻辑恢复 (impdp)，默认恢复到 `PDB_NAME`；`--schema` 仅恢复指定模式（多库场景，其余模式不受影响） |
 | `omf backup restore --rman [--all\|--root\|--pdb a,b] [--scn N] [--time '...']` | 物理恢复（整库/PDB/root），支持 SCN/时间点不完全恢复 |
 | `omf backup restore --rman [--all\|--root\|--pdb a,b] --validate` | 物理备份校验（按范围） |
 
@@ -479,30 +479,46 @@ omf db dg status        # broker 未配置会报 ORA-16532 (工具判失败), �
 将 `.sql` 文件放入对应目录，执行 `omf sql scan --auto` 即可自动按序执行:
 
 ```
-sql/init/       → omf sql init        # 初始化
+sql/init/       → omf sql init        # 初始化(必跑: 先按 APP_SCHEMAS 建模式/表空间, 再跑本目录脚本)
 sql/upgrade/    → omf sql run --all   # 升级
 sql/patch/      → omf sql run --all   # 补丁
 sql/custom/     → omf sql run --all   # 自定义
 ```
 
+> 说明：`omf sql init` 会**遍历全部 4 个目录**执行（模板 `_*.sql` 除外），故日常直接 `omf sql init` 即可；
+> 仅想重跑 upgrade/patch/custom 而不重跑 init 脚本时，可用 `omf sql run --all`（已成功的脚本因 `.executed` 记录不会重复执行）。
+
 已执行的脚本记录在 `sql/.executed/` 下，不会重复执行。
 
 ## SQL 初始化与数据导入指南
 
-`omf sql init` 通过 `sql/init/01_create_app_schema.sql` 为后续数据导入准备**目标模式**。
-在 Oracle 中「模式 = 用户」，创建用户即创建其模式，因此只需配置 `APP_USER` 一处。
+`omf sql init` 遍历 `conf/omf.conf` 的 `APP_SCHEMAS`（空格分隔的模式名列表）为后续数据导入准备**目标模式**；单模式时 `APP_SCHEMAS` 留空，框架回退到 `APP_USER` 单模式行为。
+在 Oracle 中「模式 = 用户」，创建用户即创建其模式，因此只需在列表中给出模式名。
+
+### 0. 多模式（多库）配置
+
+```bash
+# conf/omf.conf
+APP_SCHEMAS="dherp lsdherp miserp"   # 空格分隔, 想加第 N 个直接追加
+LSDHERP_PASSWORD="ls_pwd"            # 每个模式的个别覆盖 (键名 = 大写模式名 + 后缀)
+LSDHERP_TABLESPACE="ls_ts"           #   缺省: 用户名/表空间=模式名, 密码=全局 APP_PASSWORD
+MISERP_DATA_DIR="/data/oracle/oradata/ARTERY/miserp"
+```
+每个模式用 `<大写名>_USER` / `_PASSWORD` / `_TABLESPACE` / `_DATA_DIR` 个别覆盖；缺省用户名=表空间名=模式名，密码回退全局 `APP_PASSWORD`，**数据文件按 `<SID>/<模式名>/` 子目录隔离**——彻底避免多个表空间同名数据文件冲突（`ORA-01537`）。`omf sql import --schema <模式名>` 可指定导入到某个模式。
 
 ### 1. 初始化脚本做了什么
+
+`sql/init/_create_schema.sql` 是参数化模板（文件名以 `_` 开头，被 `omf sql run --all` / `sql scan` 自动跳过），由 `omf sql init` 按 `APP_SCHEMAS` 列表**逐个调用**，每次注入不同的 `&APP_USER` / `&APP_PASSWORD` / `&APP_TABLESPACE` / `&APP_DATA_DIR`。
 
 | 步骤 | 动作 | 幂等 |
 |------|------|------|
 | 1 | `ALTER SESSION SET CONTAINER = &PDB_NAME` 切到目标 PDB（PDB 须 OPEN） | — |
-| 2 | 建表空间 `&APP_TABLESPACE`（11 个 1G 数据文件，路径 `&ORACLE_DATA/&ORACLE_SID/dataNN.dbf`，自动扩展） | 吞 `ORA-01543` |
+| 2 | 建表空间 `&APP_TABLESPACE`（11 个 1G 数据文件，路径 `&APP_DATA_DIR/dataNN.dbf`，自动扩展） | 吞 `ORA-01543` |
 | 3 | 建用户 `&APP_USER`（默认表空间 `&APP_TABLESPACE`，配额 UNLIMITED） | 吞 `ORA-01920` |
 | 4 | 授权 `CONNECT/RESOURCE` + `CREATE SESSION/TABLE/VIEW/SEQUENCE/PROCEDURE/TRIGGER/SYNONYM/UNLIMITED TABLESPACE` | 可重复 |
 | 5 | 建目录对象 `oracle_dumps`（路径取 `&ORACLE_DUMP_DIR`，默认 `/data/oracle/oracle_dumps`；对应 OS 目录由 `omf sql init` 自动建好并 chown oracle）并 `GRANT READ, WRITE` 给 `&APP_USER` | `CREATE OR REPLACE` |
 
-**可配置项**（在 `conf/omf.conf` 修改，无需改脚本）：`APP_USER` / `APP_PASSWORD` / `APP_TABLESPACE`（默认 `dherp` / `dherp_skzy` / `dherp`），数据文件路径由 `ORACLE_DATA` + `ORACLE_SID` 推导，数据泵目录由 `ORACLE_DUMP_DIR`（默认 `/data/oracle/oracle_dumps`）指定，`omf sql init` 会自动创建该 OS 目录并归属 `oracle:oinstall`。
+**可配置项**（在 `conf/omf.conf` 修改，无需改脚本）：`APP_USER` / `APP_PASSWORD` / `APP_TABLESPACE` / `APP_SCHEMAS`（默认 `dherp` / `dherp_skzy` / `dherp` / 留空=单模式），数据文件路径由 `ORACLE_DATA` + `ORACLE_SID` 推导为 `<SID>/<模式名>/dataNN.dbf`，数据泵目录由 `ORACLE_DUMP_DIR`（默认 `/data/oracle/oracle_dumps`）指定，`omf sql init` 会自动创建该 OS 目录并归属 `oracle:oinstall`。
 
 ### 2. 执行初始化
 
@@ -511,7 +527,9 @@ omf sql init                 # 扫描 init 并执行 (交互确认)
 omf sql status               # 查看执行记录 (成功 1 失败 0)
 ```
 
-如需重跑：`omf sql rollback 01_create_app_schema.sql` 清记录后再次 `omf sql init`（脚本幂等，重跑安全）。
+如需重跑：直接再次 `omf sql init` 即可（模板幂等，重跑安全，已存在的模式会跳过）。
+多模式时 `omf sql init` 会按 `APP_SCHEMAS` **逐个重建/补齐**所有模式；只想补建某一个模式，
+也可 `omf sql import <dump> --schema <模式名>`，导入命令会**自动按模板创建**该模式（含表空间/目录授权）。
 
 ### 3. 初始化验证清单（已验证通过）
 
@@ -591,6 +609,13 @@ omf sql import /root/dherp_202606290300.dmp --remap 源模式[:目标模式]
 vi sql/.import/dherp_202606290300.dmp.par   # 必要时改端口/密码/remap/表空间
 omf sql import /root/dherp_202606290300.dmp --apply
 #   → 也可显式指定 parfile: omf sql import <dump> --apply /path/to/xxx.par
+
+# 场景 E: 导入到【另一个模式】(多库/多模式, 如连锁库 lsdherp)
+#   --schema <模式名> 指定目标模式; 框架自动解析其用户/表空间/密码,
+#   确保该模式存在(不存在则按模板创建), 并授予目录与跨模式 remap 权限。
+omf sql import /root/lsdherp_202606290300.dmp --schema lsdherp
+#   → 自动 remap 进 lsdherp 模式 (源模式名不同也行, 用 --remap 指定)
+#   → 如需单独密码/表空间, 在 conf 配 LSDHERP_PASSWORD / LSDHERP_TABLESPACE
 ```
 
 **手动高级用法**：`sql/imp.par.example` 是参考模板，一键命令会复制它并按配置填充生成真正可用的 parfile（单一来源，无需手改模板）。完全手动时：
@@ -601,7 +626,7 @@ runuser -u oracle -- impdp parfile=/tmp/imp.par
 ```
 
 - 连接串端口取 `conf/omf.conf` 的 `LISTENER_PORT`（默认 `1521`，本环境 `1522`）。
-- 导入前框架会**自动确保** `oracle_dumps` 目录对象在目标 PDB 存在并授权 `APP_USER`，因此**不必先跑 `omf sql init`** 也能直接导入（init 仍负责建表空间/用户等目标结构）。
+- 导入前框架会**自动确保** `oracle_dumps` 目录对象在目标 PDB 存在并授权**目标模式用户**；`--schema <模式名>` 时还会自动建好该模式（用户/表空间/目录）并授予跨模式 `remap` 所需的 `IMP_FULL_DATABASE`，因此**不必先跑 `omf sql init`** 也能直接导入到任意已配置模式。
 - 若用 `sqlldr` / 普通 SQL 入库，连接串同样用 `dherp/dherp_skzy@//localhost:1522/ARTERYPDB`。
 
 ### 5. 注意事项

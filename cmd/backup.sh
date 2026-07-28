@@ -422,7 +422,8 @@ backup_restore() {
     fi
     if [ -z "$arg" ]; then
         echo "用法:"
-        echo "  omf backup restore <dumpfile> [--pdb <PDB>]                  逻辑恢复(impdp)"
+        echo "  omf backup restore <dumpfile> [--pdb <PDB>] [--schema <模式名>]  逻辑恢复(impdp)"
+        echo "    --schema <模式名>  仅恢复指定模式(多库场景), 不传则整库 FULL 恢复"
         echo "  omf backup restore --rman [--all|--root|--pdb a,b] [--scn <SCN>] [--time 'YYYY-MM-DD HH24:MI:SS']  物理恢复"
         echo "  omf backup restore --rman [--all|--root|--pdb a,b] --validate 校验备份可恢复性"
         echo ""
@@ -437,10 +438,12 @@ backup_restore() {
 #   用法: omf backup restore <dump> [--pdb <name>]
 #   默认恢复到配置 PDB_NAME; --pdb 指定恢复到目标 PDB
 restore_logical() {
-    local dump_arg="" pdb=""
+    local dump_arg="" pdb="" schema=""
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --pdb) pdb="$2"; shift 2;;
+            # 多模式(多库)场景: 仅恢复某个 ERP 库(模式), 而非整库 FULL 恢复
+            --schema) schema="$2"; shift 2;;
             *)     dump_arg="$1"; shift;;
         esac
     done
@@ -469,7 +472,9 @@ restore_logical() {
 
     [ -z "$pdb" ] && pdb="$PDB_NAME"
 
-    confirm "确认逻辑恢复 ${dump_file} -> PDB=${pdb}? 这将覆盖现有数据!"
+    local _scope_desc="PDB=${pdb} (整库 FULL 恢复)"
+    [ -n "$schema" ] && _scope_desc="PDB=${pdb} 仅模式=${schema}"
+    confirm "确认逻辑恢复 ${dump_file} -> ${_scope_desc}? 这将覆盖现有数据!"
     log_step "开始逻辑恢复: $dump_file -> PDB=${pdb}"
     ensure_dump_dir
 
@@ -489,6 +494,13 @@ FULL=Y
 TABLE_EXISTS_ACTION=REPLACE
 PARALLEL=${BACKUP_PARALLEL}
 EOF
+    # 多模式恢复: --schema 仅恢复指定模式(其余模式不受影响), 否则整库 FULL 恢复
+    if [ -n "$schema" ]; then
+        log_info "仅恢复模式(模式): ${schema} (其余模式不受影响)"
+        # 移除 FULL=Y, 改用 SCHEMAS= 限制恢复范围
+        sed -i '/^[[:space:]]*FULL=Y[[:space:]]*$/d' "$parfile"
+        echo "SCHEMAS=${schema}" >> "$parfile"
+    fi
     chown oracle:oinstall "$parfile" 2>/dev/null || true
     chmod 600 "$parfile"
     set +e

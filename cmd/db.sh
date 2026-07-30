@@ -106,7 +106,7 @@ SQL
             require_db_user
             log_step "关闭归档模式 (NOARCHIVELOG)"
             log_warn "关闭归档后将无法进行 RMAN 在线备份与时间点恢复; 此操作将重启数据库"
-            confirm "确认关闭归档模式?"
+            confirm_danger "确认关闭归档模式? (关闭后将无法 RMAN 在线备份与时间点恢复)" || return 1
 
             set +e
             oracle_su "

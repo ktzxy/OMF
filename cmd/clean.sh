@@ -20,7 +20,7 @@ cmd_clean() {
         case "$1" in
             -h|--help) cmd_help clean; exit 0;;
             -d|--days) CLEAN_DAYS="${2:-}"; shift 2;;
-            --all|-a|--force) CLEAN_ALL="true"; shift;;
+            --all|-a) CLEAN_ALL="true"; shift;;
             -p|--preview) CLEAN_PREVIEW="true"; shift;;
             -y|--yes) CLEAN_YES="true"; shift;;
             -*) log_error "未知选项: $1"; exit 1;;
@@ -152,7 +152,7 @@ clean_logs() {
     fi
 
     if [ "$days" -eq 0 ]; then
-        confirm "确认清理【全部】OMF 日志? (所有运行日志 / alert 备份 / tmp 安装日志)"
+        confirm_danger "清理【全部】OMF 日志 (所有运行日志 / alert 备份 / tmp 安装日志)" || return 1
         log_step "清理全部 OMF 日志 (--all)"
         find "${OMF_HOME}/logs" -name "*.log" -delete 2>/dev/null || true
         find "${OMF_CONFIG[ORACLE_BASE]}/diag/rdbms" -name "alert_*.bak" -delete 2>/dev/null || true
@@ -209,7 +209,7 @@ clean_trace() {
 
     if [ -d "$trace_dir" ]; then
         if [ "$days" -eq 0 ]; then
-            confirm "确认清理【全部】trace 文件? (${trace_dir})"
+            confirm_danger "清理【全部】trace 文件 (${trace_dir})" || return 1
             log_step "清理全部 trace 文件"
             find "$trace_dir" -name "*.trc" -delete 2>/dev/null || true
             find "$trace_dir" -name "*.trm" -delete 2>/dev/null || true
@@ -257,7 +257,7 @@ clean_audit() {
     fi
 
     if [ "$days" -eq 0 ]; then
-        confirm "确认清理【全部】审计文件?"
+        confirm_danger "清理【全部】审计文件?" || return 1
         log_step "清理全部审计文件"
         [ -d "$audit_dir" ] && find "$audit_dir" -name "*.aud" -delete 2>/dev/null || true
         [ -d "$xml_audit_dir" ] && find "$xml_audit_dir" -name "*.xml" -delete 2>/dev/null || true
@@ -294,7 +294,7 @@ clean_archive() {
     fi
 
     if [ "$retention" -eq 0 ]; then
-        confirm "确认清理【全部】归档日志? (将删除所有归档, 影响可恢复性)"
+        confirm_danger "清理【全部】归档日志? (将删除所有归档, 影响可恢复性)" || return 1
         log_step "清理全部归档日志 (--all)"
     else
         _clean_archive_preview summary "$retention" "$warn"

@@ -130,6 +130,36 @@ confirm() {
     esac
 }
 
+# ---- 危险操作确认 (不受全局 -y 影响) ----
+# 用于不可逆 / 影响可恢复性的操作 (如全量清理归档日志、关闭归档模式).
+# 与 confirm() 不同: 即使 OMF_ASSUME_YES=true (全局 --yes), 也强制二次确认,
+#   防止自动化 / cron / 误用 -y 时静默执行破坏:
+#     - 交互环境:  必须显式输入 YES 才放行;
+#     - 非交互环境 (管道 / cron): 默认中止并返回非0, 打印提示 (避免静默误删).
+#   确需脚本化的危险操作: 显式导出 OMF_ALLOW_DANGEROUS=1 才跳过确认.
+confirm_danger() {
+    local prompt="${1:-危险操作, 确认继续?}"
+    if [ "${OMF_ALLOW_DANGEROUS:-0}" = "1" ]; then
+        log_warn "OMF_ALLOW_DANGEROUS=1 已设, 放行危险操作: ${prompt}"
+        return 0
+    fi
+    echo -e "${RED}════════ 危险操作 ════════${NC}"
+    echo -e "  ${prompt}"
+    echo -e "${YELLOW}此操作不可逆或影响可恢复性. 即使已使用 -y, 仍需显式确认.${NC}"
+    if [ -t 0 ]; then
+        local ans
+        read -r -p "  输入 YES 继续, 其它任意键中止: " ans
+        if [ "$ans" = "YES" ]; then
+            return 0
+        fi
+        echo "已取消"
+        return 1
+    else
+        log_warn "危险操作在非交互环境中被自动中止 (防止自动化误执行): ${prompt} —— 如需执行请交互运行, 或设 OMF_ALLOW_DANGEROUS=1"
+        return 1
+    fi
+}
+
 check_cmd() {
     command -v "$1" &>/dev/null || log_error "命令不存在: $1"
 }

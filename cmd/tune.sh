@@ -282,11 +282,47 @@ tune_apply() {
     pga_target=$(( oracle_mem - sga_target ))
     [ "$pga_target" -lt 512 ] && pga_target=512
 
+    # 查询 SPFILE 与当前运行值, 用于"值未变则跳过重启"的短路判断 (避免无谓停机)
+    local q cur_sga_sp cur_sga_run cur_pga_sp cur_pga_run
+    q=$(oracle_su "
+export ORACLE_SID=${OMF_CONFIG[ORACLE_SID]}
+export ORACLE_HOME=${OMF_CONFIG[ORACLE_HOME]}
+export PATH=\$ORACLE_HOME/bin:\$PATH
+sqlplus -s / as sysdba <<'SQL'
+SET PAGES 0 FEEDBACK OFF HEADING OFF
+SELECT 'SGA='||NVL((SELECT value FROM v\$spparameter WHERE name='sga_target' AND sid='*'),'0')||'|'||NVL(value,'0')
+FROM v\$parameter WHERE name='sga_target';
+SELECT 'PGA='||NVL((SELECT value FROM v\$spparameter WHERE name='pga_aggregate_target' AND sid='*'),'0')||'|'||NVL(value,'0')
+FROM v\$parameter WHERE name='pga_aggregate_target';
+EXIT;
+SQL" 2>/dev/null)
+    cur_sga_sp=$(echo "$q"  | awk -F'[=|]' '/^SGA=/{printf "%.0f", $2/1048576+0}')
+    cur_sga_run=$(echo "$q" | awk -F'[=|]' '/^SGA=/{printf "%.0f", $3/1048576+0}')
+    cur_pga_sp=$(echo "$q"  | awk -F'[=|]' '/^PGA=/{printf "%.0f", $2/1048576+0}')
+    cur_pga_run=$(echo "$q" | awk -F'[=|]' '/^PGA=/{printf "%.0f", $3/1048576+0}')
+
+    local need_restart=0 reasons=""
+    if [ "$scope" = "memory" ] || [ "$scope" = "sga" ]; then
+        if [ "${cur_sga_sp:-0}" != "$sga_target" ] || [ "${cur_sga_run:-0}" != "$sga_target" ]; then
+            need_restart=1; reasons="${reasons} SGA(sp=${cur_sga_sp:-0}/run=${cur_sga_run:-0} -> ${sga_target})"
+        fi
+    fi
+    if [ "$scope" = "memory" ] || [ "$scope" = "pga" ]; then
+        if [ "${cur_pga_sp:-0}" != "$pga_target" ] || [ "${cur_pga_run:-0}" != "$pga_target" ]; then
+            need_restart=1; reasons="${reasons} PGA(sp=${cur_pga_sp:-0}/run=${cur_pga_run:-0} -> ${pga_target})"
+        fi
+    fi
+
+    if [ "$need_restart" -eq 0 ]; then
+        log_info "内存参数已处于建议值 (SGA=${sga_target}MB, PGA=${pga_target}MB), 无需调整与重启"
+        return 0
+    fi
+
     local msg
     case "$scope" in
-        sga)  msg="确认仅调整 SGA=${sga_target}MB (需重启数据库)?";;
-        pga)  msg="确认仅调整 PGA=${pga_target}MB (需重启数据库)?";;
-        *)    msg="确认应用内存调优 (SGA=${sga_target}MB, PGA=${pga_target}MB, 需重启)?";;
+        sga)  msg="确认仅调整 SGA=${sga_target}MB (需重启数据库)?${reasons}";;
+        pga)  msg="确认仅调整 PGA=${pga_target}MB (需重启数据库)?${reasons}";;
+        *)    msg="确认应用内存调优 (SGA=${sga_target}MB, PGA=${pga_target}MB, 需重启)?${reasons}";;
     esac
     confirm "$msg"
 

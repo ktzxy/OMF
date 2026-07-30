@@ -1,0 +1,34 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  # 主门禁: 纯静态自检, 不依赖 Oracle 环境 (任意装有 bash 的 runner 即可)
+  selftest:
+    name: OMF 框架自检 (语法 / 分发一致性)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 运行 omf selftest
+        env:
+          OMF_HOME: ${{ github.workspace }}
+        run: bash omf.sh selftest
+
+  # 可选增强: shellcheck 静态分析 (仅 error 级失败, 避免风格噪声阻断构建)
+  # 如出现预存量问题想先观察, 可临时将 continue-on-error 设为 true
+  shellcheck:
+    name: ShellCheck 静态分析
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: 安装 shellcheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+      - name: 扫描脚本
+        run: |
+          mapfile -t files < <(find . -name '*.sh' -not -path './.git/*')
+          shellcheck -S error "${files[@]}"

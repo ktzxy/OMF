@@ -1,5 +1,9 @@
 # 版本变更记录
 
+## v1.20 关键改进（CI / 静态门禁）
+- **新增 GitHub Actions CI**（`.github/workflows/ci.yml`）：对每次 `push`/`pull_request` 到 `main` 运行 `omf selftest` 作为**门禁**（纯静态检查，无需 Oracle，任意装 bash 的 runner 即可），并在独立 job 跑 `shellcheck`（`-S error` 仅 error 级失败，避免风格噪声阻断构建）。CI 范围刻意**不含 `omf deploy`**——部署 Oracle 需授权介质/root/大资源，需自托管 runner，属集成测试而非 CI 守卫。
+- **`omf selftest` 退出码修复**：因 `omf.sh` 分发在 `case` 列表内，bash 的 `set -e` 对其失效，原函数 `return 1` 会被吞掉导致 CI 误判通过；改为失败时显式 `exit 1`（走 EXIT trap 清理），确保 CI 门禁能正确感知失败。本地实跑：35 项全过、0 失败。
+
 ## v1.19 关键改进（监控告警 / 外部 webhook 对接）
 - **`send_notification` 新增通用 webhook 渠道**（命中你点名的**监控**维度 — `monitor --alert` 可直接对外告警）：配置 `OMF_NOTIFY_WEBHOOK` 即启用，`OMF_NOTIFY_WEBHOOK_FMT` 指定 `raw`（默认，推送 `{"title","content"}`）/ `dingtalk`（text）/ `wechat`（markdown），**兼容 Prometheus Alertmanager、钉钉、企业微信**的入站 webhook。三个渠道（自定义钩子 `conf/notify.sh` → webhook → 邮件兜底）可叠加。
 - 配套：新增 `conf/notify.sh.example`（演示对接钉钉/企微/Alertmanager 的 curl 写法，含 Alertmanager 的 `severity` 判定），`omf.conf.example` 增补告警通知配置段。

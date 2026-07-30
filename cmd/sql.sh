@@ -15,8 +15,9 @@ cmd_sql() {
         import)    sql_import "$@";;
         init)     sql_init "$@";;
         status)   sql_status "$@";;
+        usage)    sql_usage "$@";;
         rollback) sql_rollback "$@";;
-        *) echo "用法: omf sql {scan|run|import|init|status|rollback}"; exit 1;;
+        *) echo "用法: omf sql {scan|run|import|init|status|usage|rollback}"; exit 1;;
     esac
 }
 
@@ -728,4 +729,25 @@ sql_rollback() {
             rm -f "${executed_dir}/${name}"; log_info "已清除执行记录: $name"
         fi
     fi
+}
+
+#===============================================================================
+# 多模式空间使用 / 无效对象一览 (命中"多模式"维度)
+#   遍历 APP_SCHEMAS, 逐个输出该模式的段空间占用、无效对象数与对象类型分布
+#===============================================================================
+sql_usage() {
+    log_step "多模式空间使用与无效对象一览"
+    sql_preflight
+    local names; names="$(omf_schema_list)"
+    [ -z "$names" ] && { log_warn "未配置任何模式 (APP_SCHEMAS 为空)"; return 0; }
+    local name u
+    for name in $names; do
+        u=$(omf_schema_user "$name")
+        echo ""
+        echo "=== 模式[${name}] 用户=${u} @ ${PDB_NAME} ==="
+        # sql_execute_inline 已自动切到 PDB, 此处无需再 ALTER SESSION
+        sql_execute_inline "SELECT '段空间(MB):' AS metric, ROUND(SUM(bytes)/1024/1024,2) AS val FROM dba_segments WHERE owner='${u}';
+SELECT '无效对象:' AS metric, COUNT(*) AS val FROM dba_objects WHERE owner='${u}' AND status='INVALID';
+SELECT object_type, COUNT(*) AS cnt FROM dba_objects WHERE owner='${u}' GROUP BY object_type ORDER BY 2 DESC;"
+    done
 }

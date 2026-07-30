@@ -74,14 +74,33 @@ log_init() {
 }
 
 # ---- 通知 (可选) ----
-# 1) 若存在可执行钩子 conf/notify.sh, 调用它 (可对接邮件/钉钉/企业微信)
-# 2) 否则若配置了 OMF_NOTIFY_MAIL 且系统有 mail, 发邮件
+# 渠道 (可叠加):
+#   1) 可执行钩子 conf/notify.sh (优先级最高, 可对接任意自定义: 邮件/钉钉/企微/alertmanager)
+#   2) 通用 webhook: OMF_NOTIFY_WEBHOOK 设 URL 即启用, OMF_NOTIFY_WEBHOOK_FMT 指定
+#      raw(默认, {"title","content"}) / dingtalk(text) / wechat(markdown) —— 兼容 alertmanager/钉钉/企微
+#   3) 邮件兜底: OMF_NOTIFY_MAIL 设收件人且系统有 mail
 send_notification() {
     local subject="$1"; local body="$2"
     local hook="${OMF_HOME}/conf/notify.sh"
     if [ -x "$hook" ]; then
         "$hook" "$subject" "$body" &>/dev/null &
-    elif command -v mail &>/dev/null && [ -n "${OMF_NOTIFY_MAIL:-}" ]; then
+    fi
+    # 通用 webhook 渠道
+    local wh="${OMF_NOTIFY_WEBHOOK:-}"
+    if [ -n "$wh" ] && command -v curl &>/dev/null; then
+        local fmt="${OMF_NOTIFY_WEBHOOK_FMT:-raw}"
+        # JSON 转义: 反斜杠/双引号/换行
+        local s; s="${subject//\\/\\\\}"; s="${s//\"/\\\"}"; s="${s//$'\n'/\\n}"
+        local b; b="${body//\\/\\\\}"; b="${b//\"/\\\"}"; b="${b//$'\n'/\\n}"
+        local payload
+        case "$fmt" in
+            dingtalk) payload="{\"msgtype\":\"text\",\"text\":{\"content\":\"${s}\n${b}\"}}";;
+            wechat)   payload="{\"msgtype\":\"markdown\",\"markdown\":{\"content\":\"**${s}**\n${b}\"}}";;
+            *)        payload="{\"title\":\"${s}\",\"content\":\"${b}\"}";;
+        esac
+        curl -s -m 10 -H 'Content-Type: application/json' -X POST -d "$payload" "$wh" &>/dev/null &
+    fi
+    if command -v mail &>/dev/null && [ -n "${OMF_NOTIFY_MAIL:-}" ]; then
         echo "$body" | mail -s "[OMF] $subject" "${OMF_NOTIFY_MAIL}" &>/dev/null &
     fi
 }

@@ -1,0 +1,44 @@
+#!/bin/bash
+#===============================================================================
+# OMF 自定义通知钩子 (可选, 优先级最高)
+# 用法: cp conf/notify.sh.example conf/notify.sh && chmod +x conf/notify.sh
+# 当存在可执行的 conf/notify.sh 时, omf 的所有 send_notification 都会调用本脚本,
+# 参数为: $1=标题(subject)  $2=正文(body)
+# 你可以在这里对接任意渠道: 钉钉/企业微信/飞书/Alertmanager/SNMP/短信网关...
+# 下方给出三个常见示例, 取消注释其一即可 (也可自由组合)。
+#===============================================================================
+subject="$1"
+body="$2"
+
+#-------------------------------------------------------------------------------
+# 示例 1: 钉钉群机器人 (自定义机器人 webhook, 支持加签/关键字/IP 白名单)
+#-------------------------------------------------------------------------------
+# DING_WEBHOOK="https://oapi.dingtalk.com/robot/send?access_token=YOUR_TOKEN"
+# if command -v curl &>/dev/null && [ -n "$DING_WEBHOOK" ]; then
+#     # 钉钉 text 类型: content 为纯文本(支持 \n 换行)
+#     payload="{\"msgtype\":\"text\",\"text\":{\"content\":\"${subject}\n${body}\"}}"
+#     curl -s -m 10 -H 'Content-Type: application/json' -X POST -d "$payload" "$DING_WEBHOOK" >/dev/null 2>&1
+# fi
+
+#-------------------------------------------------------------------------------
+# 示例 2: 企业微信群机器人 (markdown 类型, 支持加粗/列表)
+#-------------------------------------------------------------------------------
+# WECHAT_WEBHOOK="https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=YOUR_KEY"
+# if command -v curl &>/dev/null && [ -n "$WECHAT_WEBHOOK" ]; then
+#     payload="{\"msgtype\":\"markdown\",\"markdown\":{\"content\":\"**${subject}**\n${body}\"}}"
+#     curl -s -m 10 -H 'Content-Type: application/json' -X POST -d "$payload" "$WECHAT_WEBHOOK" >/dev/null 2>&1
+# fi
+
+#-------------------------------------------------------------------------------
+# 示例 3: 对接 Prometheus Alertmanager (POST 到 /api/v2/alerts)
+#   注意: Alertmanager 期望数组, 且 labels/annotations 值为字符串。
+#-------------------------------------------------------------------------------
+# AM_URL="http://alertmanager:9093/api/v2/alerts"
+# if command -v curl &>/dev/null && [ -n "$AM_URL" ]; then
+#     # 用 severity 区分: 标题含 ALERT 视为 critical, 否则 warning
+#     sev="warning"; [[ "$subject" == *"ALERT"* ]] && sev="critical"
+#     payload="[{\"labels\":{\"alertname\":\"OMFMonitor\",\"severity\":\"${sev}\",\"instance\":\"$(hostname)\"},\"annotations\":{\"summary\":\"${subject}\",\"description\":\"${body}\"},\"generatorURL\":\"\"}]"
+#     curl -s -m 10 -H 'Content-Type: application/json' -X POST -d "$payload" "$AM_URL" >/dev/null 2>&1
+# fi
+
+exit 0

@@ -1,5 +1,9 @@
 # 版本变更记录
 
+## v1.19 关键改进（监控告警 / 外部 webhook 对接）
+- **`send_notification` 新增通用 webhook 渠道**（命中你点名的**监控**维度 — `monitor --alert` 可直接对外告警）：配置 `OMF_NOTIFY_WEBHOOK` 即启用，`OMF_NOTIFY_WEBHOOK_FMT` 指定 `raw`（默认，推送 `{"title","content"}`）/ `dingtalk`（text）/ `wechat`（markdown），**兼容 Prometheus Alertmanager、钉钉、企业微信**的入站 webhook。三个渠道（自定义钩子 `conf/notify.sh` → webhook → 邮件兜底）可叠加。
+- 配套：新增 `conf/notify.sh.example`（演示对接钉钉/企微/Alertmanager 的 curl 写法，含 Alertmanager 的 `severity` 判定），`omf.conf.example` 增补告警通知配置段。
+
 ## v1.18 关键改进（多模式可见性 / 表空间维度）
 - **`omf sql usage` 增加表空间维度明细**：每个模式除原有"段空间(MB)/无效对象/对象类型分布"外，新增**按表空间的段占用拆分**（`tablespace_name, mb`），便于定位某模式的大头落在哪个表空间（如数据 vs 索引表空间）；末尾附**全库表空间容量概览**（总量/已用/空闲/使用率，按使用率降序），一眼看出哪个表空间快满。
 

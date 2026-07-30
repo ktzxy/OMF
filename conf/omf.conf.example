@@ -101,3 +101,21 @@ OMF_UPDATE_SHA256="${OMF_UPDATE_SHA256:-}"
 LOG_RETENTION_DAYS="7"
 AUDIT_RETENTION_DAYS="30"
 TRACE_RETENTION_DAYS="7"
+
+# ===== 告警通知 (omf check monitor --alert 等触发) =====
+# 通用 webhook: 设 URL 即启用, 兼容 alertmanager / 钉钉 / 企业微信 的入站 webhook
+#   OMF_NOTIFY_WEBHOOK_FMT 取值: raw(默认, 推送 {"title","content"}) / dingtalk(text) / wechat(markdown)
+#   例(钉钉群机器人):
+#     OMF_NOTIFY_WEBHOOK="https://oapi.dingtalk.com/robot/send?access_token=xxxx"
+#     OMF_NOTIFY_WEBHOOK_FMT="dingtalk"
+#   例(企业微信群机器人):
+#     OMF_NOTIFY_WEBHOOK="https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=xxxx"
+#     OMF_NOTIFY_WEBHOOK_FMT="wechat"
+#   例(对接 Prometheus Alertmanager 的 webhook receiver):
+#     OMF_NOTIFY_WEBHOOK="http://alertmanager:9093/api/v2/alerts"
+#     OMF_NOTIFY_WEBHOOK_FMT="raw"
+#OMF_NOTIFY_WEBHOOK=""
+#OMF_NOTIFY_WEBHOOK_FMT="raw"
+# 邮件兜底 (需系统有 mail 命令): 设收件人即启用
+#OMF_NOTIFY_MAIL=""
+# 自定义钩子: 把 conf/notify.sh.example 复制为 conf/notify.sh 并 chmod +x 即可接管全部通知

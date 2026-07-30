@@ -114,7 +114,7 @@ cmd_help() {
         self-update) echo "用法: omf self-update [version|force]";;
         selftest)  echo "用法: omf selftest";;
         info)      echo "用法: omf info";;
-        deploy)     echo "用法: omf deploy [--zip <db_home.zip>] [--edition EE|SE]";;
+        deploy)     echo "用法: omf deploy [--zip <db_home.zip>] [--edition EE|SE] [--from <序号|步骤>] [--skip <序号|步骤>[,...]] [--list]";;
         *)          usage;;
     esac
 }

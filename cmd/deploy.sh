@@ -10,11 +10,14 @@
 cmd_deploy() {
     require_root
 
-    local zip="" edition=""
+    local zip="" edition="" from_step="" skip_csv="" list_only=0
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --zip)     zip="$2"; shift 2;;
             --edition) edition="$2"; shift 2;;
+            --from)    from_step="$2"; shift 2;;
+            --skip)    skip_csv="${skip_csv:+$skip_csv,}$2"; shift 2;;
+            --list)    list_only=1; shift;;
             # 全局 -y 已在 omf.sh 入口解析并设置 OMF_ASSUME_YES, 这里吞掉以免被当参数传给子命令
             -y|--yes|--assume-yes) shift;;
             -*) shift;;   # 忽略其它未知选项
@@ -35,11 +38,69 @@ cmd_deploy() {
     steps+=("sql init:初始化 (建模式/表空间 + 执行初始化 SQL)")
     steps+=("backup auto:首次备份 (按 BACKUP_MODE: 逻辑/物理)")
 
+    # 解析 --from / --skip 为待跳过的步骤下标集合 (1-based)
+    # 支持: 序号(3) / 命令(db create) / 逗号分隔 / 重复 --skip
+    local -a skip_idx=()
+    _deploy_resolve_skip() {
+        local spec="$1" i cmd desc key
+        local -a toks
+        IFS=',' read -ra toks <<< "$spec"
+        for key in "${toks[@]}"; do
+            [ -z "$key" ] && continue
+            if [[ "$key" =~ ^[0-9]+$ ]]; then
+                skip_idx[$key]=1
+            else
+                i=1
+                for s in "${steps[@]}"; do
+                    cmd="${s%%:*}"; desc="${s##*:}"
+                    if [ "$key" = "$cmd" ] || [ "$key" = "$desc" ]; then
+                        skip_idx[$i]=1; break
+                    fi
+                    i=$((i+1))
+                done
+            fi
+        done
+    }
+    local resolved_from=0
+    if [ -n "$from_step" ]; then
+        if [[ "$from_step" =~ ^[0-9]+$ ]]; then
+            resolved_from=$from_step
+        else
+            local i=1 cmd
+            for s in "${steps[@]}"; do
+                cmd="${s%%:*}"
+                if [ "$from_step" = "$cmd" ]; then resolved_from=$i; break; fi
+                i=$((i+1))
+            done
+        fi
+        [ "$resolved_from" -ge 1 ] 2>/dev/null || log_error "无法识别 --from 步骤: $from_step (可用 omf deploy --list 查看)"
+    fi
+    [ -n "$skip_csv" ] && _deploy_resolve_skip "$skip_csv"
+    # --from N: 跳过 N 之前的所有步骤
+    if [ "$resolved_from" -gt 0 ]; then
+        local j
+        for (( j=1; j<resolved_from; j++ )); do skip_idx[$j]=1; done
+    fi
+
+    if [ "$list_only" -eq 1 ]; then
+        log_step "========== OMF 部署步骤清单 =========="
+        local n=1
+        for s in "${steps[@]}"; do
+            echo "  ${n}) omf ${s%%:*}  -  ${s##*:}"
+            n=$((n+1))
+        done
+        echo "";
+        echo "用法: omf deploy [--from <序号|步骤>] [--skip <序号|步骤>[,...]] [--zip <zip>] [--edition EE|SE]"
+        return 0
+    fi
+
     log_step "========== OMF 一键部署编排 =========="
-    log_info "将依次执行 ${#steps[@]} 个步骤:"
+    log_info "将依次执行 ${#steps[@]} 个步骤 (--from=$from_step --skip=$skip_csv):"
     local n=1
     for s in "${steps[@]}"; do
-        log_info "  ${n}) ${s##*:}  (omf ${s%%:*})"
+        local tag=""
+        [ "${skip_idx[$n]:-0}" = "1" ] && tag=" [跳过]"
+        log_info "  ${n}) ${s##*:}  (omf ${s%%*})${tag}"
         n=$((n+1))
     done
     [ -n "$zip" ]     && log_info "安装包(zip): $zip"
@@ -49,6 +110,10 @@ cmd_deploy() {
     local i=1 total=${#steps[@]}
     for s in "${steps[@]}"; do
         local cmd="${s%%:*}" desc="${s##*:}"
+        if [ "${skip_idx[$i]:-0}" = "1" ]; then
+            log_info "↷ [${i}/${total}] 跳过: ${desc}  (omf ${cmd})"
+            i=$((i+1)); continue
+        fi
         # install software 透传 zip / edition 参数
         local full="$cmd"
         if [ "$cmd" = "install software" ]; then
@@ -64,6 +129,8 @@ cmd_deploy() {
             log_info "✓ 完成: ${desc}"
         else
             log_error "✗ 步骤 [${i}/${total}] ${desc} 失败, 部署中止。可单独修复后重跑: omf -y ${full}"
+            echo "----------------------------------------"
+            return 1
         fi
         echo "----------------------------------------"
         i=$((i+1))

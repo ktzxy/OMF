@@ -80,6 +80,7 @@ usage() {
   self-update 框架自更新 (需配置 OMF_UPDATE_URL)
   selftest   框架自检 (语法/健全性, 不依赖 Oracle 环境)
   info       实例信息总览 (路径/端口/IP/连接串/内存)
+  deploy     一键部署编排 (预检→环境→安装→建库→初始化→首次备份)
 
 快速开始:
   omf config validate            # 校验配置
@@ -113,6 +114,7 @@ cmd_help() {
         self-update) echo "用法: omf self-update [version|force]";;
         selftest)  echo "用法: omf selftest";;
         info)      echo "用法: omf info";;
+        deploy)     echo "用法: omf deploy [--zip <db_home.zip>] [--edition EE|SE]";;
         *)          usage;;
     esac
 }
@@ -172,6 +174,7 @@ main() {
         self-update|self_update) source "${OMF_HOME}/cmd/self_update.sh"; cmd_self_update "$@";;
         selftest)  source "${OMF_HOME}/cmd/selftest.sh"; cmd_selftest "$@";;
         info)      source "${OMF_HOME}/cmd/info.sh";      cmd_info "$@";;
+        deploy)     source "${OMF_HOME}/cmd/deploy.sh";    cmd_deploy "$@";;
         *)
             log_error "未知命令: $cmd"
             usage

@@ -9,37 +9,21 @@ cmd_check() {
     local subcmd="${1:-all}"
     shift || true
 
+    # 退出码透传: omf.sh 用 set -e, 而 case 命令列表中的失败不会触发 set -e,
+    # 故子检查的返回码(如 check_all 出错返回 2 / monitor --alert 告警返回 1)会被吞掉,
+    # 导致 omf check 始终退出 0, cron 无法据此判障. 这里用 "cmd || rc=$?" 捕获并显式 exit.
+    local rc=0
     case "$subcmd" in
-        all)
-            check_all "$@"
-            ;;
-        db)
-            check_db "$@"
-            ;;
-        disk)
-            check_disk "$@"
-            ;;
-        perf)
-            check_perf "$@"
-            ;;
-        alert)
-            check_alert "$@"
-            ;;
-        listener)
-            check_listener "$@"
-            ;;
-        preflight)
-            check_preflight "$@"
-            ;;
-        schemas)
-            check_schemas "$@"
-            ;;
-        dg)
-            check_dg "$@"
-            ;;
-        monitor)
-            check_monitor "$@"
-            ;;
+        all)        check_all "$@"       || rc=$?;;
+        db)         check_db "$@"        || rc=$?;;
+        disk)       check_disk "$@"      || rc=$?;;
+        perf)       check_perf "$@"      || rc=$?;;
+        alert)      check_alert "$@"     || rc=$?;;
+        listener)   check_listener "$@"  || rc=$?;;
+        preflight)  check_preflight "$@" || rc=$?;;
+        schemas)    check_schemas "$@"   || rc=$?;;
+        dg)         check_dg "$@"        || rc=$?;;
+        monitor)    check_monitor "$@"   || rc=$?;;
         *)
             echo "用法: omf check {all|db|disk|perf|alert|listener|preflight|schemas|dg|monitor}"
             echo "  monitor 额外参数: [json|prom] [--watch 秒] [--alert]"
@@ -48,6 +32,8 @@ cmd_check() {
             exit 1
             ;;
     esac
+    # monitor 的 json/prom 正常输出应保持退出 0; --alert 告警时 rc=1 会透传, 便于 cron 判定
+    exit "$rc"
 }
 
 #===============================================================================

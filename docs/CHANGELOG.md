@@ -1,5 +1,8 @@
 # 版本变更记录
 
+## v1.21 关键改进（健康检查 / 退出码透传）
+- **`omf check` 退出码透传**（自动化致命修复）：`cmd_check` 在 `case` 列表内调用子检查，bash `set -e` 对 `case` 命令列表失效，原实现导致 `omf check all`/`monitor --alert` 即使出错/告警也**始终退出 0**，cron 无法据此告警。现改为 `cmd || rc=$?` 捕获并显式 `exit $rc`：`all`/`db`/`preflight` 等有错返回 2，`monitor --alert` 超阈值返回 1，正常返回 0。可直接接入 cron：如 `omf -y check all || 告警`。
+
 ## v1.20 关键改进（CI / 静态门禁）
 - **新增 GitHub Actions CI**（`.github/workflows/ci.yml`）：对每次 `push`/`pull_request` 到 `main` 运行 `omf selftest` 作为**门禁**（纯静态检查，无需 Oracle，任意装 bash 的 runner 即可），并在独立 job 跑 `shellcheck`（`-S error` 仅 error 级失败，避免风格噪声阻断构建）。CI 范围刻意**不含 `omf deploy`**——部署 Oracle 需授权介质/root/大资源，需自托管 runner，属集成测试而非 CI 守卫。
 - **`omf selftest` 退出码修复**：因 `omf.sh` 分发在 `case` 列表内，bash 的 `set -e` 对其失效，原函数 `return 1` 会被吞掉导致 CI 误判通过；改为失败时显式 `exit 1`（走 EXIT trap 清理），确保 CI 门禁能正确感知失败。本地实跑：35 项全过、0 失败。

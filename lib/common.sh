@@ -256,6 +256,30 @@ get_disk_usage_pct() {
     df "$path" 2>/dev/null | awk 'NR==2 {print $5}' | tr -d '%'
 }
 
+# ---- 字节数转人类可读 (B/K/M/G) ----
+human_size() {
+    local bytes="${1:-0}"
+    [ -z "${bytes}" ] && bytes=0
+    awk -v b="$bytes" 'BEGIN{
+        if(b<1024) printf "%.0fB", b;
+        else if(b<1048576) printf "%.1fK", b/1024;
+        else if(b<1073741824) printf "%.1fM", b/1048576;
+        else printf "%.1fG", b/1073741824;
+    }'
+}
+
+# ---- 分钟数转人类可读时长 (Xd Yh Zm / Yh Zm / Zm) ----
+fmt_duration() {
+    local mins="${1:-}"
+    if [ -z "$mins" ] || [ "$mins" -lt 0 ] 2>/dev/null; then
+        echo "N/A"; return
+    fi
+    local d=$((mins/1440)) h=$(((mins%1440)/60)) m=$((mins%60))
+    if [ "$d" -gt 0 ]; then echo "${d}天${h}时${m}分"
+    elif [ "$h" -gt 0 ]; then echo "${h}时${m}分"
+    else echo "${m}分"; fi
+}
+
 # ---- 内存前置检查 (安装/建库前调用) ----
 # 校验: 内存下限 / SGA 不超过物理内存 / 推荐 HugePages
 # $1 (可选, 忽略)  $2=fatal: true(默认, 不足即退出) / false(仅返回1, 供预检汇总)

@@ -369,6 +369,26 @@ backup_list() {
     fi
     local now_ts; now_ts=$(date +%s)
 
+    # ---- RPO (恢复点目标) 概览: 距上次成功备份的时长 ----
+    # 逻辑 RPO = 最新 dump 文件的 mtime; 物理 RPO = V\$BACKUP_SET 最大完成时间
+    # 综合 RPO 取两者较旧者 (更保守, 反映最坏情况可能丢失的数据时长)
+    local rpo_logical_min="" rpo_physical_min="" newest_dmp=""
+    if [ "$type" = "all" ] || [ "$type" = "expdp" ]; then
+        newest_dmp=$(ls -t "${ORACLE_BACKUP}/dump/"*.dmp 2>/dev/null | head -1)
+        if [ -n "$newest_dmp" ]; then
+            local m; m=$(stat -c %Y "$newest_dmp" 2>/dev/null || echo "$now_ts")
+            rpo_logical_min=$(( (now_ts - m) / 60 ))
+        fi
+    fi
+    if [ "$type" = "all" ] || [ "$type" = "rman" ]; then
+        local max_bs
+        max_bs=$(as_oracle "echo \"set pagesize 0 feedback off heading off SELECT TO_CHAR(MAX(completion_time),'YYYY-MM-DD HH24:MI:SS') FROM v\\\$backup_set;\" | sqlplus -s / as sysdba" 2>/dev/null | tr -d ' ')
+        if [ -n "$max_bs" ] && [ "$max_bs" != "-" ]; then
+            local bs_ts; bs_ts=$(date -d "$max_bs" +%s 2>/dev/null)
+            [ -n "$bs_ts" ] && rpo_physical_min=$(( (now_ts - bs_ts) / 60 ))
+        fi
+    fi
+
     # 计算文件 mtime 距今天数 -> _age
     local _age=0
     _file_age_days() {
@@ -388,11 +408,32 @@ backup_list() {
     }
 
     echo ""
+    echo "========== 备份 RPO / 恢复点目标概览 =========="
+    if [ -n "$rpo_logical_min" ]; then
+        echo -e "  逻辑备份 RPO: ${BOLD}$(fmt_duration "$rpo_logical_min")${NC}  (最新 dump: $(basename "$newest_dmp"))"
+    fi
+    if [ -n "$rpo_physical_min" ]; then
+        echo -e "  物理备份 RPO: ${BOLD}$(fmt_duration "$rpo_physical_min")${NC}  (基于 V\$BACKUP_SET)"
+    fi
+    if [ -z "$rpo_logical_min" ] && [ -z "$rpo_physical_min" ]; then
+        echo "  (暂无备份, RPO 不可评估)"
+    else
+        local overall=""
+        if [ -n "$rpo_logical_min" ] && [ -n "$rpo_physical_min" ]; then
+            if [ "$rpo_logical_min" -gt "$rpo_physical_min" ]; then overall=$rpo_logical_min
+            else overall=$rpo_physical_min; fi
+        elif [ -n "$rpo_logical_min" ]; then overall=$rpo_logical_min
+        elif [ -n "$rpo_physical_min" ]; then overall=$rpo_physical_min; fi
+        echo -e "  ⇒ 综合 RPO (最坏情况): ${BOLD}${RED}$(fmt_duration "$overall")${NC}"
+    fi
+
+    echo ""
     echo "========== 备份文件列表 =========="
     echo -e "保留策略: ${BOLD}BACKUP_RETENTION_DAYS=${retention} 天${NC}  |  即将过期: 剩余 ≤ ${warn_days} 天标黄, ≤ 0 天标红"
 
     if [ "$type" = "all" ] || [ "$type" = "expdp" ]; then
         echo ""; echo "[Expdp 逻辑备份] (${ORACLE_BACKUP}/dump)"
+        echo "  $(printf '%-40s %9s  %6s   %s' '文件名' '大小' '年龄' '保留状态')"
         local any=0 f_name
         shopt -s nullglob
         for f in "${ORACLE_BACKUP}/dump/"*.dmp; do
@@ -400,7 +441,8 @@ backup_list() {
             _file_age_days "$f"
             local rem=$(( retention - _age ))
             f_name="$(basename "$f")"
-            printf "  %-46s %6s天前  %s\n" "$f_name" "$_age" "$(_retain_tag "$rem")"
+            local sz; sz=$(stat -c %s "$f" 2>/dev/null || echo 0)
+            printf "  %-40s %9s  %5s天前  %s\n" "$f_name" "$(human_size "$sz")" "$_age" "$(_retain_tag "$rem")"
         done
         shopt -u nullglob
         [ "$any" -eq 0 ] && echo "  (空)"

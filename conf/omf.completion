@@ -3,7 +3,8 @@
 #   1) 当前会话临时启用:  source /path/to/OMF/conf/omf.completion
 #   2) 全局永久启用:      cp conf/omf.completion /etc/bash_completion.d/omf
 #                         # 或加入 ~/.bashrc:  source /path/to/OMF/conf/omf.completion
-# 说明: 仅补全一级命令与已知子命令; 选项 (如 -y/-d) 不在此补全范围内.
+# 说明: 支持一级命令、多级子命令 (如 omf db dg broker) 与全局选项 (-y/-d/-h 等) 补全.
+#       -c/--config 之后补全文件路径; 其余位置补全对应子命令 + 全局选项.
 
 _omf() {
     local cur prev
@@ -12,27 +13,49 @@ _omf() {
     prev="${COMP_WORDS[COMP_CWORD-1]}"
 
     local commands="env install db backup sql tune check status listener log clean config selftest self-update"
-    local subcmds=""
+    local global_opts="-y --yes -d --debug -c --config -h --help"
 
+    # -c/--config 之后补全文件路径
     case "$prev" in
-        env)         subcmds="prepare user kernel deps dirs vars firewall all";;
-        install)     subcmds="software listener check";;
-        db)          subcmds="create start stop restart status pdb dg archivelog";;
-        backup)      subcmds="logical physical incremental archive auto schedule list validate restore cleanup";;
-        sql)         subcmds="scan run init status rollback import";;
-        tune)        subcmds="memory storage session analyze awr apply";;
-        check)       subcmds="all db disk perf alert listener preflight schemas dg monitor";;
-        listener)    subcmds="status start stop restart port";;
-        status)      subcmds="history";;
-        log)         subcmds="view tail rotate clean";;
-        clean)       subcmds="logs trace audit archive backup all schedule";;
-        config)      subcmds="get set list validate show";;
-        self-update) subcmds="version force";;
-        selftest)    subcmds="";;
-        *)           COMPREPLY=( $(compgen -W "${commands}" -- "${cur}") ); return 0;;
+        -c|--config) COMPREPLY=( $(compgen -f -- "${cur}") ); return 0;;
     esac
 
-    COMPREPLY=( $(compgen -W "${subcmds}" -- "${cur}") )
+    # 已输入以 - 开头, 直接补全全局选项
+    if [[ "$cur" == -* ]]; then
+        COMPREPLY=( $(compgen -W "${global_opts}" -- "${cur}") )
+        return 0
+    fi
+
+    # 词 -> 子命令映射 (含多级, 如 dg 是 db 的子命令且有自己的子命令)
+    local -A submap=(
+        [env]="prepare user kernel deps dirs vars firewall all"
+        [install]="software listener check"
+        [db]="create start stop restart status pdb dg archivelog"
+        [dg]="config enable standby wallet broker switchover failover reinstate apply gap validate status"
+        [backup]="logical physical incremental archive auto schedule list validate restore cleanup"
+        [sql]="scan run init status rollback import"
+        [tune]="memory storage session analyze awr apply"
+        [check]="all db disk perf alert listener preflight schemas dg monitor"
+        [listener]="status start stop restart port"
+        [status]="history"
+        [log]="view tail rotate clean"
+        [clean]="logs trace audit archive backup all schedule"
+        [config]="get set list validate show"
+        [self-update]="version force"
+        [selftest]=""
+    )
+
+    # 一级 (omf 之后): 命令 + 全局选项
+    case "$prev" in
+        omf|omf.sh|"") COMPREPLY=( $(compgen -W "${commands} ${global_opts}" -- "${cur}") ); return 0;;
+    esac
+
+    # 已知命令/子命令: 补其子命令 + 全局选项; 否则仅补全局选项
+    if [[ -n "${submap[$prev]+x}" ]]; then
+        COMPREPLY=( $(compgen -W "${submap[$prev]} ${global_opts}" -- "${cur}") )
+    else
+        COMPREPLY=( $(compgen -W "${global_opts}" -- "${cur}") )
+    fi
     return 0
 }
 

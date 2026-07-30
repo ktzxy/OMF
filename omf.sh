@@ -134,6 +134,13 @@ main() {
         fi
     done
 
+    # 全局 -h/--help (omf -h <cmd> / omf --help <cmd>): 仅打印帮助并退出, 绝不执行命令本身
+    # (全局选项循环里 -h 会 break, 此时 $@ 已是命令名, 若不清这里直接 dispatch 会误执行命令)
+    if [ "${OMF_SHOW_HELP:-false}" = "true" ]; then
+        if [ -n "$cmd" ]; then cmd_help "$cmd"; else usage; fi
+        exit 0
+    fi
+
     # 为每个命令初始化集中日志 (命令名作为日志前缀)
     log_init "$cmd"
 

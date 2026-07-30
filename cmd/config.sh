@@ -146,6 +146,27 @@ validate_config() {
     check_path "${OMF_CONFIG[ORACLE_HOME]}/bin/rman"    "rman"
 
     echo ""
+    echo "--- 密码安全 ---"
+    # 判断给定口令是否为出厂默认/已知弱口令(返回0)或过短(返回2); 否则返回1
+    _omf_is_weak_pw() {
+        local pw="$1"
+        case "$pw" in
+            Qiyuan!960#123|dherp_skzy|ChangeMe_123|oracle|password|admin|123456|"") return 0;;
+        esac
+        [ "${#pw}" -lt 8 ] && return 2
+        return 1
+    }
+    for p in ORACLE_PASSWORD SYSTEM_PASSWORD PDB_PASSWORD APP_PASSWORD; do
+        local pv="${OMF_CONFIG[$p]:-}"
+        _omf_is_weak_pw "$pv"
+        case $? in
+            0) echo "  ✗ $p 仍为出厂默认/弱口令, 存在安全风险, 请修改 conf/omf.conf"; errors=$((errors+1));;
+            2) echo "  ⚠ $p 长度不足 8 位, 建议增强复杂度";;
+            *) echo "  ✓ $p: 复杂度 OK";;
+        esac
+    done
+
+    echo ""
     echo "--- 磁盘空间 ---"
     local paths=("${OMF_CONFIG[ORACLE_DATA_BASE]}" "${OMF_CONFIG[ORACLE_BACKUP]}" "/tmp")
     for p in "${paths[@]}"; do

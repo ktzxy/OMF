@@ -1,5 +1,11 @@
 # 版本变更记录
 
+## v1.6 关键改进（缺陷修复 / 安全加固 / 运维健壮性）
+
+- **修复全局 `--help` 误执行**：`omf -h <cmd>` / `omf --help <cmd>` 此前会先真正执行该命令再打印帮助（如 `omf -h db` 会连接数据库跑 `db status`）。现在在 dispatch 前拦截，仅打印帮助并退出，避免危险/只读命令被误触发。
+- **OMF 运行日志自动清理**：`lib/common.sh` 的 `log_init` 每次运行顺手清理 `${OMF_HOME}/logs/omf_*.log` 中超过 `LOG_RETENTION_DAYS`（默认 30 天）的旧日志，防止长期运行的服务器被运行日志撑满磁盘；仅清理一级日志、不影响 `awr` 等子目录，本次新建日志为当天不会被误删。
+- **配置校验增强密码安全**：`omf config validate` 新增「密码安全」段，检测 `ORACLE_PASSWORD`/`SYSTEM_PASSWORD`/`PDB_PASSWORD`/`APP_PASSWORD` 是否仍为出厂弱口令（`Qiyuan!960#123`、`dherp_skzy`、`ChangeMe_123` 等）或过短（<8 位），部署前即暴露风险。
+
 ## v1.5 关键改进（DG 切换自动化 / DG 感知启停 / DG 健康检查）
 
 - **DG Broker 自动化**：`omf db dg broker` 一键创建/重建 Broker 配置（幂等，switchover/failover 的前置）。

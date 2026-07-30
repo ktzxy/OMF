@@ -51,12 +51,25 @@ log_error() {
     exit 1
 }
 
+# 自动清理 OMF 自身运行日志, 防止长期运行撑满磁盘
+#   策略: 仅删 ${OMF_HOME}/logs 一级的 omf_*.log; 保留期优先 LOG_RETENTION_DAYS, 否则 30 天.
+#   不影响子目录(awr / monitor_history 等, 它们有各自生命周期); 本次新建的日志是当天, 不会被误删.
+omf_prune_own_logs() {
+    local dir="${OMF_HOME}/logs"
+    [ -d "$dir" ] || return 0
+    local days="${OMF_CONFIG[LOG_RETENTION_DAYS]:-30}"
+    [ "$days" -lt 1 ] 2>/dev/null && days=30
+    find "$dir" -maxdepth 1 -name 'omf_*.log' -mtime "+$((days-1))" -delete 2>/dev/null || true
+}
+
 # 初始化本次运行的集中日志
 log_init() {
     local cmd="$1"
     mkdir -p "${OMF_HOME}/logs"
     OMF_RUN_LOG="${OMF_HOME}/logs/omf_${cmd}_$(date +%Y%m%d_%H%M%S).log"
     export OMF_RUN_LOG
+    # 每次运行顺手清理过期 OMF 日志 (无副作用, 失败忽略)
+    omf_prune_own_logs
     log_debug "运行日志: $OMF_RUN_LOG"
 }
 

@@ -1,5 +1,10 @@
 # 版本变更记录
 
+## v1.9 关键改进（可维护性 / 文档完善）
+
+- **`omf selftest` 增加命令分发一致性校验**（`cmd/selftest.sh`）：在原有语法/shebang 检查基础上，新增正向校验（`omf.sh` 分发的每个命令，其引用的 `cmd/<x>.sh` 必须存在且定义了被调用的 `cmd_<x>` 函数）与反向校验（`cmd/` 下每个脚本都应被分发，否则提示疑似死代码），可在开发期快速发现框架内部「分发了但没实现 / 实现了没接入」的不一致。
+- **README 完善**：功能大纲表补充 `omf selftest`；新增「进阶用法」小节，说明 `omf selftest` 与 bash 自动补全（`conf/omf.completion`）的启用方式。
+
 ## v1.8 关键改进（可维护性 / 体验增量）
 
 - **新增 `omf selftest` 自检命令**（`cmd/selftest.sh`）：纯静态检查，不依赖 Oracle 环境，遍历 `omf.sh`/`lib/*.sh`/`cmd/*.sh` 执行 `bash -n` 语法检查与 shebang 检查，便于 CI 与批量部署前快速发现框架自身问题；已加入只读/静态命令白名单（跳过并发锁）。

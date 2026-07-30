@@ -20,6 +20,7 @@ Oracle 数据库（CDB 系列：18c / 19c / 21c / 23ai）全生命周期管理�
 | 日志/清理 | `omf log` `omf clean` | 日志与定时清理 | [docs/CHECK.md](docs/CHECK.md) |
 | 配置 | `omf config` | 查看/校验/设置 | [docs/CONFIG.md](docs/CONFIG.md) |
 | 自更新 | `omf self-update` | 框架升级（需 `OMF_UPDATE_URL`） | — |
+| 自检 | `omf selftest` | 语法/分发一致性静态自检（不依赖 Oracle） | — |
 
 ## 安装
 
@@ -61,6 +62,16 @@ omf status                     # 一键总览
 ## Data Guard 一句话
 
 `omf db dg config` 配置主库 → 备库 `omf db dg wallet` + `omf db dg standby` 建备 → 主库 `omf db dg enable` + `omf db dg broker` 建 Broker → `omf db dg switchover` 计划切换 / `omf db dg failover` 灾难切换 / `omf check dg` 健康检查。详见 [docs/DATAGUARD.md](docs/DATAGUARD.md)。
+
+## 进阶用法
+
+- **框架自检**：`omf selftest` 对 `omf.sh`/`lib/*.sh`/`cmd/*.sh` 做 `bash -n` 语法检查、shebang 检查与「命令分发一致性」校验（可发现「分发了但没实现」或「实现了但未分发」的死代码），不依赖 Oracle 环境，适合 CI 与批量部署前快速体检。
+- **Bash 自动补全**：复制或 source `conf/omf.completion` 即可补全一级命令与子命令（选项如 `-y/-d` 不在补全范围）。
+  ```bash
+  source conf/omf.completion                         # 当前会话临时启用
+  # 或全局安装 (需 root):
+  cp conf/omf.completion /etc/bash_completion.d/omf
+  ```
 
 ## 版本与变更
 

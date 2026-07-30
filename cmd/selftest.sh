@@ -45,6 +45,33 @@ cmd_selftest() {
     done
 
     echo ""
+    echo "--- 命令分发一致性 (omf.sh 分发 <-> cmd/*.sh 实现) ---"
+    local line sf fn
+    # 正向: omf.sh 里分发的每个命令, 其引用的 cmd/<x>.sh 应存在且定义了被调用的 cmd_<x> 函数
+    while IFS= read -r line; do
+        sf=$(printf '%s' "$line" | grep -oE 'cmd/[a-zA-Z_]+\.sh')
+        fn=$(printf '%s' "$line" | grep -oE 'cmd_[a-zA-Z_]+')
+        [ -z "$sf" ] && continue
+        if [ ! -f "${OMF_HOME}/${sf}" ]; then
+            echo "  ✗ 分发引用 ${sf} 但文件不存在"; fail=$((fail+1)); continue
+        fi
+        if grep -qE "^[[:space:]]*${fn}[[:space:]]*\(\)|^[[:space:]]*${fn}[[:space:]]*\([[:space:]]*\)" "${OMF_HOME}/${sf}"; then
+            echo "  ✓ ${sf} -> ${fn}"
+            pass=$((pass+1))
+        else
+            echo "  ✗ ${sf} 未定义分发所调用的函数 ${fn}"
+            fail=$((fail+1))
+        fi
+    done < <(grep 'source "${OMF_HOME}/cmd/' "${OMF_HOME}/omf.sh")
+    # 反向: cmd/ 下每个脚本都应在 omf.sh 中分发, 否则成了死代码
+    for f in "${OMF_HOME}/cmd"/*.sh; do
+        [ -f "$f" ] || continue
+        if ! grep -q "cmd/$(basename "$f")" "${OMF_HOME}/omf.sh"; then
+            echo "  ⚠ $(basename "$f") 存在但未在 omf.sh 中分发 (疑似死代码)"
+        fi
+    done
+
+    echo ""
     echo "══════════════════════════════════════════════════════════"
     echo "自检结果: ✓ $pass 通过  ✗ $fail 失败"
     echo "══════════════════════════════════════════════════════════"

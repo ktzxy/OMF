@@ -192,28 +192,73 @@ log_clean() {
 }
 
 #===============================================================================
-# 错误汇总: 最近 N 天 Alert / 监听器日志中的 ORA-/TNS-/ASM- 错误 (生产排障快速入口)
+# 错误汇总: 最近 N 天 Alert / 监听器日志中的 ORA-/TNS-/ASM- 错误, 并按错误码聚合 Top N
 # 用法: omf log errors [天数]   默认 1 天
+#   时间过滤: 支持 19c XML (time='YYYY-MM-DDTHH:MM:SS') 与文本 (Day Mon DD HH:MM:SS YYYY)
+#             alert 日志格式; 取不到时间戳(或 date 不支持)时回退为全量统计, 不丢数据.
 #===============================================================================
+_log_errors_scan() {
+    local f="$1" label="$2" days="$3"
+    local cutoff; cutoff=$(date -d "${days} days ago" +%s 2>/dev/null || echo 0)
+    if [ ! -f "$f" ]; then
+        echo "[$label: 不存在 ($f)]"
+        return
+    fi
+    echo "[$label: $f]"
+    local out
+    out=$(awk -v cutoff="$cutoff" '
+function iso2ts(s){
+  y=substr(s,1,4); m=substr(s,6,2); d=substr(s,9,2);
+  H=substr(s,12,2); M=substr(s,15,2); S=substr(s,18,2);
+  return mktime(y" "m" "d" "H" "M" "S);
+}
+BEGIN{
+  split("Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec",mo," ");
+  for(i=1;i<=12;i++) mm[mo[i]]=i;
+}
+{
+  line=$0;
+  if(match(line,/time=.([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2})/)){
+    t=iso2ts(substr(line,RSTART+6,19)); if(t>0) ts=t;
+  }
+  if($5 ~ /^[0-9]{4}$/ && ($2 in mm)){
+    H=substr($4,1,2); M=substr($4,4,2); S=substr($4,7,2);
+    t=mktime($5" "mm[$2]" "$3" "H" "M" "S); if(t>0) ts=t;
+  }
+  if(match(line,/(ORA|TNS|ASM)-[0-9]{5}/)){
+    code=substr(line,RSTART,RLENGTH);
+    if(cutoff==0 || ts==0 || ts>=cutoff){ cnt[code]++; total++; }
+  }
+}
+END{
+  printf("TOTAL\t%d\n", total);
+  for(c in cnt) printf("%s\t%d\n", c, cnt[c]);
+}' "$f" 2>/dev/null)
+
+    local total=0; local -a rows=()
+    while IFS=$'\t' read -r code cnt; do
+        [ -z "$code" ] && continue
+        if [ "$code" = "TOTAL" ]; then total="$cnt"
+        else rows+=("$cnt $code"); fi
+    done <<< "$out"
+
+    if [ "${total:-0}" -gt 0 ]; then
+        echo "  错误总数(最近 ${days} 天): ${total}"
+        echo "  Top 错误码 (按出现次数):"
+        if [ ${#rows[@]} -gt 0 ]; then
+            printf '%s\n' "${rows[@]}" | sort -nr | head -10 | \
+                while read -r c code; do printf "    %-12s %s 次\n" "$code" "$c"; done
+        fi
+    else
+        echo "  最近 ${days} 天无 ORA-/TNS-/ASM- 错误"
+    fi
+}
+
 log_errors() {
     local days="${1:-1}"
     echo ""
     echo "──── 最近的 Oracle 错误汇总 (最近 ${days} 天) ────"
-
-    local alert; alert=$(get_alert_log 2>/dev/null)
-    if [ -f "$alert" ]; then
-        echo "[Alert 日志: $alert]"
-        local cnt; cnt=$(grep -ciE 'ORA-[0-9]{5}|TNS-[0-9]{5}|ASM-[0-9]{5}' "$alert" 2>/dev/null || echo 0)
-        echo "  错误标记总数: ${cnt} (以下显示最近若干):"
-        grep -iE 'ORA-[0-9]{5}|TNS-[0-9]{5}|ASM-[0-9]{5}|Errors in file' "$alert" 2>/dev/null | tail -30 | sed 's/^/    /'
-    else
-        echo "[Alert 日志: 不存在 ($alert)]"
-    fi
-
-    local ll; ll=$(get_listener_log 2>/dev/null)
-    if [ -f "$ll" ]; then
-        echo "[监听器日志: $ll]"
-        grep -iE 'TNS-[0-9]{5}|ORA-[0-9]{5}' "$ll" 2>/dev/null | tail -15 | sed 's/^/    /'
-    fi
+    _log_errors_scan "$(get_alert_log 2>/dev/null)" "Alert 日志" "$days"
+    _log_errors_scan "$(get_listener_log 2>/dev/null)" "监听器日志" "$days"
     echo ""
 }

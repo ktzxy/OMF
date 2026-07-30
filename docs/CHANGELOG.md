@@ -1,5 +1,8 @@
 # 版本变更记录
 
+## v1.22 关键改进（日志错误汇总 / 天数过滤 + Top N）
+- **`omf log errors [days]` 修复并增强**：原实现 `days` 参数被完全忽略（实际 grep 整个日志），且只罗列末尾若干行。现改为**真正按天数过滤**（兼容 19c XML `time='...'` 与文本 `Day Mon DD HH:MM:SS YYYY` 两种 alert 日志格式；取不到时间戳时回退全量，不丢数据），并**按错误码聚合 Top 10**（出现次数降序），更利于定位高频故障。已用样本日志验证：07-29 条目被正确排除、07-30 条目保留。
+
 ## v1.21 关键改进（健康检查 / 退出码透传）
 - **`omf check` 退出码透传**（自动化致命修复）：`cmd_check` 在 `case` 列表内调用子检查，bash `set -e` 对 `case` 命令列表失效，原实现导致 `omf check all`/`monitor --alert` 即使出错/告警也**始终退出 0**，cron 无法据此告警。现改为 `cmd || rc=$?` 捕获并显式 `exit $rc`：`all`/`db`/`preflight` 等有错返回 2，`monitor --alert` 超阈值返回 1，正常返回 0。可直接接入 cron：如 `omf -y check all || 告警`。
 

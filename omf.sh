@@ -78,6 +78,7 @@ usage() {
   clean      定时清理
   config     配置管理
   self-update 框架自更新 (需配置 OMF_UPDATE_URL)
+  selftest   框架自检 (语法/健全性, 不依赖 Oracle 环境)
 
 快速开始:
   omf config validate            # 校验配置
@@ -109,6 +110,7 @@ cmd_help() {
         clean)      echo "用法: omf clean {logs|trace|audit|archive|backup|all|schedule} [-d 天数 | --all] [-p|--preview] [-y]"; echo "  backup: ≡ omf backup cleanup (清理旧备份), 支持 --logical/--physical/-d N/--all/-p/-y";;
         config)     echo "用法: omf config {get|set|list|validate|show}";;
         self-update) echo "用法: omf self-update [version|force]";;
+        selftest)  echo "用法: omf selftest";;
         *)          usage;;
     esac
 }
@@ -146,7 +148,7 @@ main() {
 
     # 防并发锁 (按一级命令隔离); 只读命令不加锁, 避免阻塞并发查询
     case "$cmd" in
-        check|status|log|config) ;;   # 只读命令, 跳过锁
+        check|status|log|config|selftest) ;;   # 只读/静态命令, 跳过锁
         *) acquire_lock "$cmd";;
     esac
 
@@ -166,6 +168,7 @@ main() {
         clean)    source "${OMF_HOME}/cmd/clean.sh";    cmd_clean "$@";;
         config)   source "${OMF_HOME}/cmd/config.sh";   cmd_config "$@";;
         self-update|self_update) source "${OMF_HOME}/cmd/self_update.sh"; cmd_self_update "$@";;
+        selftest)  source "${OMF_HOME}/cmd/selftest.sh"; cmd_selftest "$@";;
         *)
             log_error "未知命令: $cmd"
             usage

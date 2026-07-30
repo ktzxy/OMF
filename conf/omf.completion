@@ -1,0 +1,39 @@
+# OMF bash 自动补全
+# 启用方式 (任选其一):
+#   1) 当前会话临时启用:  source /path/to/OMF/conf/omf.completion
+#   2) 全局永久启用:      cp conf/omf.completion /etc/bash_completion.d/omf
+#                         # 或加入 ~/.bashrc:  source /path/to/OMF/conf/omf.completion
+# 说明: 仅补全一级命令与已知子命令; 选项 (如 -y/-d) 不在此补全范围内.
+
+_omf() {
+    local cur prev
+    COMPREPLY=()
+    cur="${COMP_WORDS[COMP_CWORD]}"
+    prev="${COMP_WORDS[COMP_CWORD-1]}"
+
+    local commands="env install db backup sql tune check status listener log clean config selftest self-update"
+    local subcmds=""
+
+    case "$prev" in
+        env)         subcmds="prepare user kernel deps dirs vars firewall all";;
+        install)     subcmds="software listener check";;
+        db)          subcmds="create start stop restart status pdb dg archivelog";;
+        backup)      subcmds="logical physical incremental archive auto schedule list validate restore cleanup";;
+        sql)         subcmds="scan run init status rollback import";;
+        tune)        subcmds="memory storage session analyze awr apply";;
+        check)       subcmds="all db disk perf alert listener preflight schemas dg monitor";;
+        listener)    subcmds="status start stop restart port";;
+        status)      subcmds="history";;
+        log)         subcmds="view tail rotate clean";;
+        clean)       subcmds="logs trace audit archive backup all schedule";;
+        config)      subcmds="get set list validate show";;
+        self-update) subcmds="version force";;
+        selftest)    subcmds="";;
+        *)           COMPREPLY=( $(compgen -W "${commands}" -- "${cur}") ); return 0;;
+    esac
+
+    COMPREPLY=( $(compgen -W "${subcmds}" -- "${cur}") )
+    return 0
+}
+
+complete -F _omf omf omf.sh

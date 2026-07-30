@@ -1,5 +1,10 @@
 # 版本变更记录
 
+## v1.8 关键改进（可维护性 / 体验增量）
+
+- **新增 `omf selftest` 自检命令**（`cmd/selftest.sh`）：纯静态检查，不依赖 Oracle 环境，遍历 `omf.sh`/`lib/*.sh`/`cmd/*.sh` 执行 `bash -n` 语法检查与 shebang 检查，便于 CI 与批量部署前快速发现框架自身问题；已加入只读/静态命令白名单（跳过并发锁）。
+- **新增 bash 自动补全脚本**（`conf/omf.completion`）：补全一级命令与已知子命令（选项如 `-y/-d` 不在补全范围）。启用方式：`source conf/omf.completion` 临时启用，或 `cp conf/omf.completion /etc/bash_completion.d/omf` 全局安装。
+
 ## v1.7 关键改进（健壮性 / 可读性与可维护性）
 
 - **DG 日志传输状态解析重构**（`cmd/check.sh` `check_dg_inner`）：原代码用 `case "VALID\|*"` 这类转义 `\|` 匹配（数据格式为 `STATUS|ERROR`，`\|` 是字面管道符）。该写法可读性差、易误改坏（一旦错改成 `VALID|*`，`|` 会变成 case 模式分隔符导致匹配失效）。现改为先 `dest_status="${dest2%%|*}"` 截取状态字段，再用纯 `case VALID)`/`DEFERRED)` 匹配，语义更清晰、更健壮。

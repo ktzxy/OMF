@@ -1,5 +1,10 @@
 # 版本变更记录
 
+## v1.14 关键改进（内存调优 / 当前对比 + 大页建议）
+- **`omf tune memory` 增强**（命中你点名的 **内存优化** 维度）：
+  - 新增 **当前 vs 建议对比**：查询当前生效的 `SGA_TARGET`/`PGA_AGGREGATE_TARGET`，与框架建议值并排展示差值，一眼看出需要调大/调小多少。
+  - 新增 **大页(HugePages)配置建议**：读取系统当前 `HugePages_Total/Free` 与页大小，结合 `omf_hugepages_count()` 给出建议的 `vm.nr_hugepages` 值，并在不足时提示写入 `/etc/sysctl.conf` 的修复命令。
+
 ## v1.13 关键改进（监控增强 / 持续采样 + 阈值告警）
 - **`omf check monitor` 增强**（命中你点名的 **监控** 维度）：
   - 新增 **`--watch N` 持续采样**：每 N 秒输出一次快照（json/prom 格式可指定），便于人工盯屏或外部轮询。

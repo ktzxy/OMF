@@ -91,8 +91,34 @@ SQL
     echo "Oracle 可用: ${oracle_mem}MB (已为 OS 预留 $(( total_mem - oracle_mem ))MB)"
     echo "建议 SGA:    ${sga_target}MB"
     echo "建议 PGA:    ${pga_target}MB"
+
+    # 当前生效值对比 (未显式设 sga_target/pga_aggregate_target 时显示 0, 即 AMM 自动管理)
+    local cur_sga cur_pga
+    cur_sga=$(as_oracle "echo \"set pagesize 0 feedback off heading off SELECT NVL(value,0)/1024/1024 FROM v\\\$parameter WHERE name='sga_target';\" | sqlplus -s / as sysdba" 2>/dev/null | tr -d ' \n' | awk '{printf "%.0f", $1+0}')
+    cur_pga=$(as_oracle "echo \"set pagesize 0 feedback off heading off SELECT NVL(value,0)/1024/1024 FROM v\\\$parameter WHERE name='pga_aggregate_target';\" | sqlplus -s / as sysdba" 2>/dev/null | tr -d ' \n' | awk '{printf "%.0f", $1+0}')
     echo ""
-    echo "执行 'omf tune apply' 应用建议配置"
+    echo "=== 当前 vs 建议 (单位 MB) ==="
+    echo "  SGA_TARGET:        当前 ${cur_sga:-0}  建议 ${sga_target}  (差 $(( sga_target - ${cur_sga:-0} )) )"
+    echo "  PGA_AGGREGATE_TGT: 当前 ${cur_pga:-0}  建议 ${pga_target}  (差 $(( pga_target - ${cur_pga:-0} )) )"
+
+    # 大页(HugePages)建议
+    local hp_total hp_free page_kb hp
+    hp_total=$(awk '/HugePages_Total/ {print int($2)}' /proc/meminfo)
+    hp_free=$(awk '/HugePages_Free/ {print int($2)}' /proc/meminfo)
+    page_kb=$(awk '/Hugepagesize/ {print int($2)}' /proc/meminfo)
+    hp=$(omf_hugepages_count)
+    echo ""
+    echo "=== 大页(HugePages)建议 ==="
+    echo "  系统: HugePages_Total=${hp_total:-0}  Free=${hp_free:-0}  (页大小 ${page_kb:-0}KB)"
+    echo "  建议 vm.nr_hugepages = ${hp}  (覆盖 SGA ${sga_target}MB, 页 2MB)"
+    if [ "${hp_total:-0}" -lt "$hp" ]; then
+        echo "  ⚠ 大页不足, 建议调大: echo 'vm.nr_hugepages=${hp}' >> /etc/sysctl.conf && sysctl -p"
+    else
+        echo "  ✓ 当前大页数量已满足 SGA 需求"
+    fi
+
+    echo ""
+    echo "执行 'omf tune apply' 应用建议配置 (修改后需重启生效)"
 }
 
 #===============================================================================

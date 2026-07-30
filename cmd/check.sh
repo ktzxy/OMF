@@ -42,6 +42,9 @@ cmd_check() {
             ;;
         *)
             echo "用法: omf check {all|db|disk|perf|alert|listener|preflight|schemas|dg|monitor}"
+            echo "  monitor 额外参数: [json|prom] [--watch 秒] [--alert]"
+            echo "    --watch 秒  持续采样 (每 N 秒输出一次, Ctrl-C 退出)"
+            echo "    --alert      阈值告警 (超阈值返回非0并发送通知, 便于 cron 接入)"
             exit 1
             ;;
     esac
@@ -609,11 +612,44 @@ lsnrctl services
 # 用于对接 Prometheus / 外部监控, 不做人类排版
 #===============================================================================
 check_monitor() {
-    local fmt="${1:-json}"
+    local fmt="json" watch=0 alert_mode=0
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            json|prom) fmt="$1"; shift;;
+            --watch)   watch="${2:-10}"; shift 2;;
+            --alert)   alert_mode=1; shift;;
+            *)         shift;;
+        esac
+    done
+
+    # 阈值 (conf 可覆盖, 回退默认): 磁盘使用率 / 可用内存率
+    local d_warn="${OMF_CONFIG[MONITOR_DISK_WARN_PCT]:-85}"
+    local d_err="${OMF_CONFIG[MONITOR_DISK_ERR_PCT]:-92}"
+    local m_warn="${OMF_CONFIG[MONITOR_MEM_WARN_PCT]:-20}"
+    local m_err="${OMF_CONFIG[MONITOR_MEM_ERR_PCT]:-10}"
+
+    if [ "$alert_mode" -eq 1 ]; then
+        _monitor_alert "$d_warn" "$d_err" "$m_warn" "$m_err"
+        return $?
+    fi
+
+    if [ "$watch" -gt 0 ]; then
+        echo "持续采样模式: 每 ${watch}s 输出一次 (Ctrl-C 退出)"
+        while true; do
+            _monitor_run_once "$fmt"
+            sleep "$watch" 2>/dev/null || break
+        done
+        return 0
+    fi
+    _monitor_run_once "$fmt"
+}
+
+# 采集一次, 结果写入全局 _MC_* 变量 (供 run_once 输出与 alert 判定的复用, 避免重复连库)
+_monitor_collect() {
+    _MC_DB_UP=0; _MC_MEM=0; _MC_ORA=0; _MC_STATUS="ok"; _MC_DISK=""; _MC_DP_JSON=""
     local db_up=0 mem_free_pct=0 ora_errors=0 status="ok" u=""
     local mps=("/" "${OMF_CONFIG[ORACLE_DATA_BASE]}" "${OMF_CONFIG[ORACLE_BACKUP]}")
 
-    # 1. 数据库存活
     if oracle_su "
 export ORACLE_SID=${OMF_CONFIG[ORACLE_SID]}
 export ORACLE_HOME=${OMF_CONFIG[ORACLE_HOME]}
@@ -622,7 +658,6 @@ echo 'SELECT 1 FROM v\$instance;' | sqlplus -s / as sysdba" &>/dev/null; then
         db_up=1
     fi
 
-    # 2. 内存可用率 (空闲大页计入可用, 避免 SGA 走大页时误报)
     local mem_free mem_total hp_free page_kb
     mem_free=$(awk '/MemAvailable/ {print int($2/1024)}' /proc/meminfo)
     mem_total=$(get_total_memory_mb)
@@ -631,7 +666,6 @@ echo 'SELECT 1 FROM v\$instance;' | sqlplus -s / as sysdba" &>/dev/null; then
     mem_free=$(( mem_free + hp_free * page_kb / 1024 ))
     [ "${mem_total:-0}" -gt 0 ] && mem_free_pct=$((mem_free * 100 / mem_total))
 
-    # 3. Alert 日志 ORA- 错误数 (仅计本次启动以来, 与 check alert 口径一致, 避免历史错误致监控持续 warn)
     local alert_log="$(get_alert_log)"
     if [ -f "$alert_log" ]; then
         local start_ln
@@ -643,31 +677,44 @@ echo 'SELECT 1 FROM v\$instance;' | sqlplus -s / as sysdba" &>/dev/null; then
         fi
     fi
 
-    # 4. 状态判定
     if [ "$db_up" -eq 0 ] || [ "$mem_free_pct" -lt 10 ]; then
         status="err"
     elif [ "$mem_free_pct" -lt 20 ] || [ "$ora_errors" -gt 0 ]; then
         status="warn"
     fi
 
-    # 5. 持久化快照 (供 omf status history 趋势展示, 写入失败不影响监控输出)
-    local hist="${OMF_HOME}/logs/monitor_history.jsonl"
-    mkdir -p "$(dirname "$hist")" 2>/dev/null || true
-    local dp_json="" dp_first=1 dp_u
+    local dp_json="" dp_first=1 p pu
     for p in "${mps[@]}"; do
         [ -d "$p" ] || continue
-        dp_u=$(get_disk_usage_pct "$p" 2>/dev/null || echo 0)
-        if [ "$dp_first" -eq 1 ]; then dp_json="\"$(basename "$p")\":${dp_u}"; dp_first=0
-        else dp_json="${dp_json}, \"$(basename "$p")\":${dp_u}"; fi
+        pu=$(get_disk_usage_pct "$p" 2>/dev/null || echo 0)
+        _MC_DISK="${_MC_DISK}${p}:${pu} "
+        if [ "$dp_first" -eq 1 ]; then dp_json="\"$(basename "$p")\":${pu}"; dp_first=0
+        else dp_json="${dp_json}, \"$(basename "$p")\":${pu}"; fi
     done
-    echo "{\"ts\":\"$(date '+%Y-%m-%dT%H:%M:%S')\",\"db_up\":${db_up},\"mem_free_pct\":${mem_free_pct},\"ora_errors\":${ora_errors},\"status\":\"${status}\",\"disk\":{${dp_json}}}" >> "$hist" 2>/dev/null || true
+
+    _MC_DB_UP=$db_up; _MC_MEM=$mem_free_pct; _MC_ORA=$ora_errors
+    _MC_STATUS=$status; _MC_DP_JSON="$dp_json"
+}
+
+# 单次采样 + 输出 (json/prom) + 持久化快照 (fmt=none 时仅采集, 由 alert 复用)
+_monitor_run_once() {
+    local fmt="${1:-json}"
+    _monitor_collect
+    local db_up=$_MC_DB_UP mem_free_pct=$_MC_MEM ora_errors=$_MC_ORA status=$_MC_STATUS
+
+    if [ "$fmt" != "none" ]; then
+        local hist="${OMF_HOME}/logs/monitor_history.jsonl"
+        mkdir -p "$(dirname "$hist")" 2>/dev/null || true
+        echo "{\"ts\":\"$(date '+%Y-%m-%dT%H:%M:%S')\",\"db_up\":${db_up},\"mem_free_pct\":${mem_free_pct},\"ora_errors\":${ora_errors},\"status\":\"${status}\",\"disk\":{${_MC_DP_JSON}}}" >> "$hist" 2>/dev/null || true
+    fi
 
     case "$fmt" in
         prom)
             echo "# HELP omf_db_up Oracle 实例是否存活 (1=up, 0=down)"
             echo "# TYPE omf_db_up gauge"
             echo "omf_db_up $db_up"
-            for p in "${mps[@]}"; do
+            local p u
+            for p in "/" "${OMF_CONFIG[ORACLE_DATA_BASE]}" "${OMF_CONFIG[ORACLE_BACKUP]}"; do
                 [ -d "$p" ] || continue
                 u=$(get_disk_usage_pct "$p" 2>/dev/null || echo 0)
                 echo "omf_disk_usage_pct{mount=\"$p\"} $u"
@@ -676,9 +723,9 @@ echo 'SELECT 1 FROM v\$instance;' | sqlplus -s / as sysdba" &>/dev/null; then
             echo "omf_alert_ora_errors $ora_errors"
             echo "omf_status{state=\"$status\"} 1"
             ;;
-        *)
+        json)
             local first=1 disk_json=""
-            for p in "${mps[@]}"; do
+            for p in "/" "${OMF_CONFIG[ORACLE_DATA_BASE]}" "${OMF_CONFIG[ORACLE_BACKUP]}"; do
                 [ -d "$p" ] || continue
                 u=$(get_disk_usage_pct "$p" 2>/dev/null || echo 0)
                 if [ "$first" -eq 1 ]; then disk_json="\"$p\":${u}"; first=0
@@ -693,4 +740,34 @@ echo 'SELECT 1 FROM v\$instance;' | sqlplus -s / as sysdba" &>/dev/null; then
             echo "}"
             ;;
     esac
+}
+
+# 阈值告警模式: 超阈值返回非0 并发送通知, 便于 cron 接入
+_monitor_alert() {
+    local d_warn="$1" d_err="$2" m_warn="$3" m_err="$4"
+    _monitor_collect
+    local alerts=0 lines=""
+
+    [ "$_MC_DB_UP" -eq 0 ] && { alerts=$((alerts+1)); lines="${lines}ALERT: 数据库不可用(db_up=0)\n"; }
+
+    local kv p pu
+    for kv in ${_MC_DISK}; do
+        [ -n "$kv" ] || continue
+        p="${kv%%:*}"; pu="${kv##*:}"
+        [ -z "$pu" ] && continue
+        if [ "${pu:-0}" -gt "$d_err" ]; then alerts=$((alerts+1)); lines="${lines}ALERT[${p}]: 磁盘 ${pu}% > ${d_err}%\n"; fi
+        if [ "${pu:-0}" -gt "$d_warn" ]; then alerts=$((alerts+1)); lines="${lines}WARN[${p}]: 磁盘 ${pu}% > ${d_warn}%\n"; fi
+    done
+
+    if [ "$_MC_MEM" -lt "$m_err" ]; then alerts=$((alerts+1)); lines="${lines}ALERT: 可用内存 ${_MC_MEM}% < ${m_err}%\n"; fi
+    if [ "$_MC_MEM" -lt "$m_warn" ]; then alerts=$((alerts+1)); lines="${lines}WARN: 可用内存 ${_MC_MEM}% < ${m_warn}%\n"; fi
+    if [ "$_MC_ORA" -gt 0 ]; then alerts=$((alerts+1)); lines="${lines}WARN: Alert 日志本次启动以来 ${_MC_ORA} 个 ORA- 错误\n"; fi
+
+    if [ "$alerts" -gt 0 ]; then
+        printf "%b" "$lines"
+        send_notification "OMF 监控告警 (${alerts} 项)" "$(printf '%b' "$lines")"
+        return 1
+    fi
+    echo "OK: 所有监控指标在阈值内 (disk_warn=${d_warn}% disk_err=${d_err}% mem_warn=${m_warn}% mem_err=${m_err}%)"
+    return 0
 }

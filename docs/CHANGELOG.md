@@ -1,5 +1,10 @@
 # 版本变更记录
 
+## v1.13 关键改进（监控增强 / 持续采样 + 阈值告警）
+- **`omf check monitor` 增强**（命中你点名的 **监控** 维度）：
+  - 新增 **`--watch N` 持续采样**：每 N 秒输出一次快照（json/prom 格式可指定），便于人工盯屏或外部轮询。
+  - 新增 **`--alert` 阈值告警模式**：按阈值（磁盘使用率 `MONITOR_DISK_WARN_PCT`/`MONITOR_DISK_ERR_PCT`、可用内存率 `MONITOR_MEM_WARN_PCT`/`MONITOR_MEM_ERR_PCT`，conf 可覆盖）判定，超阈值返回非 0 并调用 `send_notification`，便于直接接入 cron：如 `omf -y check monitor --alert || 告警`。采集逻辑抽为 `_monitor_collect`，供输出与告警复用，避免重复连库。
+
 ## v1.12 关键改进（备份可见性 / RPO）
 - **`omf backup list` 增强**（命中你点名的 **备份** 维度）：
   - 新增 **RPO（恢复点目标）概览**：分别给出逻辑备份 RPO（最新 dump 文件的 mtime）与物理备份 RPO（基于 `V$BACKUP_SET` 最大完成时间），并给出**综合 RPO（最坏情况，取两者较旧者）**。运维一眼可见"当前若崩溃最多丢失多少数据时长"。

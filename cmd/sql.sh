@@ -746,8 +746,23 @@ sql_usage() {
         echo ""
         echo "=== 模式[${name}] 用户=${u} @ ${PDB_NAME} ==="
         # sql_execute_inline 已自动切到 PDB, 此处无需再 ALTER SESSION
+        # 段空间 + 无效对象 + 对象类型分布 + 按表空间拆分 (表空间维度明细)
         sql_execute_inline "SELECT '段空间(MB):' AS metric, ROUND(SUM(bytes)/1024/1024,2) AS val FROM dba_segments WHERE owner='${u}';
 SELECT '无效对象:' AS metric, COUNT(*) AS val FROM dba_objects WHERE owner='${u}' AND status='INVALID';
-SELECT object_type, COUNT(*) AS cnt FROM dba_objects WHERE owner='${u}' GROUP BY object_type ORDER BY 2 DESC;"
+SELECT object_type, COUNT(*) AS cnt FROM dba_objects WHERE owner='${u}' GROUP BY object_type ORDER BY 2 DESC;
+SELECT tablespace_name, ROUND(SUM(bytes)/1024/1024,2) AS mb FROM dba_segments WHERE owner='${u}' GROUP BY tablespace_name ORDER BY 2 DESC;"
     done
+
+    # 全 PDB 表空间容量概览 (总量/已用/空闲/使用率)
+    echo ""
+    echo "=== 全库表空间容量概览 (PDB=${PDB_NAME}) ==="
+    sql_execute_inline "SELECT t.tablespace_name,
+       ROUND(NVL(d.total,0)/1024/1024,2)  AS total_mb,
+       ROUND(NVL(d.total,0)/1024/1024 - NVL(f.free,0)/1024/1024,2) AS used_mb,
+       ROUND(NVL(f.free,0)/1024/1024,2)   AS free_mb,
+       ROUND((NVL(d.total,0) - NVL(f.free,0)) / NULLIF(NVL(d.total,0),0) * 100,1) AS used_pct
+FROM (SELECT tablespace_name, SUM(bytes) AS total FROM dba_data_files GROUP BY tablespace_name) d
+LEFT JOIN (SELECT tablespace_name, SUM(bytes) AS free FROM dba_free_space GROUP BY tablespace_name) f
+  ON d.tablespace_name = f.tablespace_name
+ORDER BY used_pct DESC NULLS LAST;"
 }

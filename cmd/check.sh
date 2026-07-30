@@ -425,10 +425,12 @@ check_dg_inner() {
         local dest2
         dest2=$(as_oracle "echo \"set pagesize 0 feedback off heading off
 SELECT status || '|' || NVL(error,'-') FROM v\\\$archive_dest_status WHERE dest_id=2;\" | sqlplus -s / as sysdba" 2>/dev/null | tr -d ' ' | head -1)
-        case "$dest2" in
-            VALID\|*)    check_item "日志传输 dest_2: VALID" ok;;
-            DEFERRED\|*) check_item "日志传输 dest_2: DEFERRED (未启用, 执行 omf db dg enable)" warn;;
-            *)           check_item "日志传输 dest_2: ${dest2:-未知} (检查 omf db dg gap)" err;;
+        # 取 '|' 前的状态字段 (如 VALID / DEFERRED), 避免 case 中用转义 '\|' 匹配, 可读性差且易误改坏
+        local dest_status="${dest2%%|*}"
+        case "$dest_status" in
+            VALID)      check_item "日志传输 dest_2: VALID" ok;;
+            DEFERRED)   check_item "日志传输 dest_2: DEFERRED (未启用, 执行 omf db dg enable)" warn;;
+            *)          check_item "日志传输 dest_2: ${dest2:-未知} (检查 omf db dg gap)" err;;
         esac
         # 归档间隙 (主库视角: 备库 applied 落后)
         local gap

@@ -98,6 +98,47 @@ RMANEOF" 2>/dev/null)
     fi
 
     echo ""
+    echo "──── 健康风险 ────"
+    local hr_out
+    if hr_out=$(as_oracle "sqlplus -s / as sysdba <<'SQL'
+SET PAGES 0 FEEDBACK OFF
+SELECT 'INVALID='||COUNT(*) FROM dba_objects WHERE status='INVALID';
+SELECT tablespace_name||'='||ROUND((df.bytes-NVL(fs.bytes,0))*100/df.bytes,1)
+FROM (SELECT tablespace_name,SUM(bytes) bytes FROM dba_data_files GROUP BY tablespace_name) df
+LEFT JOIN (SELECT tablespace_name,SUM(bytes) bytes FROM dba_free_space GROUP BY tablespace_name) fs USING(tablespace_name)
+WHERE (df.bytes-NVL(fs.bytes,0))*100/df.bytes > 85;
+EXIT;
+SQL" 2>/dev/null); then
+        local inv tslist=""
+        inv=$(echo "$hr_out" | grep '^INVALID=' | sed 's/INVALID=//')
+        tslist=$(echo "$hr_out" | grep -E '^[A-Za-z0-9_]+=' | grep -v '^INVALID=')
+        if [ "${inv:-0}" -gt 0 ]; then
+            echo "  无效对象: ${inv} 个 (建议 omf sql usage 排查模式, 或重新编译)"
+        else
+            echo "  无效对象: 0"
+        fi
+        if [ -n "$tslist" ]; then
+            echo "  表空间使用率 >85%:"
+            echo "$tslist" | while IFS= read -r l; do
+                [ -z "$l" ] && continue
+                printf "    %-24s %s%%\n" "${l%%=*}" "${l##*=}"
+            done
+        else
+            echo "  表空间使用率: 均 < 85%"
+        fi
+        # 上次逻辑备份时间 (健康度信号: 多久没备份了)
+        local last_dmp
+        last_dmp=$(ls -t "${ORACLE_BACKUP}/dump/"*.dmp 2>/dev/null | head -1)
+        if [ -n "$last_dmp" ]; then
+            echo "  上次逻辑备份: $(basename "$last_dmp") ($(stat -c %y "$last_dmp" 2>/dev/null | cut -d. -f1))"
+        else
+            echo "  上次逻辑备份: (无)"
+        fi
+    else
+        echo "  数据库未运行或无法连接, 跳过健康风险检查"
+    fi
+
+    echo ""
     echo "──── 最近运行日志 ────"
     if ls -t "${OMF_HOME}/logs"/omf_*.log >/dev/null 2>&1; then
         local latest

@@ -22,8 +22,11 @@ cmd_log() {
         clean)
             log_clean "$@"
             ;;
+        errors)
+            log_errors "$@"
+            ;;
         *)
-            echo "用法: omf log {view|tail|rotate|clean}"
+            echo "用法: omf log {view|tail|rotate|clean|errors}"
             exit 1
             ;;
     esac
@@ -186,4 +189,31 @@ log_clean() {
     fi
 
     log_info "日志清理完成"
+}
+
+#===============================================================================
+# 错误汇总: 最近 N 天 Alert / 监听器日志中的 ORA-/TNS-/ASM- 错误 (生产排障快速入口)
+# 用法: omf log errors [天数]   默认 1 天
+#===============================================================================
+log_errors() {
+    local days="${1:-1}"
+    echo ""
+    echo "──── 最近的 Oracle 错误汇总 (最近 ${days} 天) ────"
+
+    local alert; alert=$(get_alert_log 2>/dev/null)
+    if [ -f "$alert" ]; then
+        echo "[Alert 日志: $alert]"
+        local cnt; cnt=$(grep -ciE 'ORA-[0-9]{5}|TNS-[0-9]{5}|ASM-[0-9]{5}' "$alert" 2>/dev/null || echo 0)
+        echo "  错误标记总数: ${cnt} (以下显示最近若干):"
+        grep -iE 'ORA-[0-9]{5}|TNS-[0-9]{5}|ASM-[0-9]{5}|Errors in file' "$alert" 2>/dev/null | tail -30 | sed 's/^/    /'
+    else
+        echo "[Alert 日志: 不存在 ($alert)]"
+    fi
+
+    local ll; ll=$(get_listener_log 2>/dev/null)
+    if [ -f "$ll" ]; then
+        echo "[监听器日志: $ll]"
+        grep -iE 'TNS-[0-9]{5}|ORA-[0-9]{5}' "$ll" 2>/dev/null | tail -15 | sed 's/^/    /'
+    fi
+    echo ""
 }

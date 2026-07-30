@@ -79,6 +79,7 @@ usage() {
   config     配置管理
   self-update 框架自更新 (需配置 OMF_UPDATE_URL)
   selftest   框架自检 (语法/健全性, 不依赖 Oracle 环境)
+  info       实例信息总览 (路径/端口/IP/连接串/内存)
 
 快速开始:
   omf config validate            # 校验配置
@@ -111,6 +112,7 @@ cmd_help() {
         config)     echo "用法: omf config {get|set|list|validate|show}";;
         self-update) echo "用法: omf self-update [version|force]";;
         selftest)  echo "用法: omf selftest";;
+        info)      echo "用法: omf info";;
         *)          usage;;
     esac
 }
@@ -148,7 +150,7 @@ main() {
 
     # 防并发锁 (按一级命令隔离); 只读命令不加锁, 避免阻塞并发查询
     case "$cmd" in
-        check|status|log|config|selftest) ;;   # 只读/静态命令, 跳过锁
+        check|status|log|config|selftest|info) ;;   # 只读/静态命令, 跳过锁
         *) acquire_lock "$cmd";;
     esac
 
@@ -169,6 +171,7 @@ main() {
         config)   source "${OMF_HOME}/cmd/config.sh";   cmd_config "$@";;
         self-update|self_update) source "${OMF_HOME}/cmd/self_update.sh"; cmd_self_update "$@";;
         selftest)  source "${OMF_HOME}/cmd/selftest.sh"; cmd_selftest "$@";;
+        info)      source "${OMF_HOME}/cmd/info.sh";      cmd_info "$@";;
         *)
             log_error "未知命令: $cmd"
             usage

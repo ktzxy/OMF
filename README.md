@@ -21,6 +21,7 @@ Oracle 数据库（CDB 系列：18c / 19c / 21c / 23ai）全生命周期管理�
 | 配置 | `omf config` | 查看/校验/设置 | [docs/CONFIG.md](docs/CONFIG.md) |
 | 自更新 | `omf self-update` | 框架升级（需 `OMF_UPDATE_URL`） | — |
 | 自检 | `omf selftest` | 语法/分发一致性静态自检（不依赖 Oracle） | — |
+| 信息总览 | `omf info` | 路径/端口/IP/连接串/内存一键总览（排障/交接） | — |
 
 ## 安装
 

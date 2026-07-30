@@ -1,5 +1,10 @@
 # 版本变更记录
 
+## v1.11 关键改进（生产可见性 / 排障增强）
+
+- **新增 `omf info` 实例信息总览**（`cmd/info.sh`）：集中展示生产排障、部署验证与交接最关心的信息——主机名/IP、OS、Oracle 关键路径（ORACLE_HOME/BASE、数据/备份目录、Alert/监听器日志、SPFILE）、监听器状态与端口/HOST、实例与库基本信息（版本/状态/角色/归档/服务名/归档目标）、**各 PDB 的 EZCONNECT 连接串**（`//host:port/pdb`）、内存概要（SGA/PGA target 与系统大页）。已加入只读命令白名单。
+- **新增 `omf log errors [天数]`**（`cmd/log.sh`）：汇总最近 N 天（默认 1 天）Alert 与监听器日志中的 `ORA-/TNS-/ASM-` 错误，作为生产排障快速入口；`omf log` 用法提示同步更新为 `{view|tail|rotate|clean|errors}`。
+
 ## v1.10 关键改进（体验增量 / 自动补全增强）
 
 - **`conf/omf.completion` 补全能力增强**：由"仅一级命令+已知子命令"升级为支持多级子命令（如 `omf db dg broker`、`omf sql import` 后接文件/选项）与全局选项（`-y/-d/-c/-h` 等）补全；`-c/--config` 之后补全文件路径；已输入以 `-` 开头时直接列出全局选项。启用方式不变（`source conf/omf.completion` 或 `cp` 到 `/etc/bash_completion.d/omf`）。

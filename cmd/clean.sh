@@ -7,7 +7,7 @@
 # 两种模式 (对所有子命令统一):
 #   -d N / --days N   清理 N 天前的数据 (默认取配置中的保留天数)
 #   --all / -a        清理【全部】(不按天数), 高风险操作需确认
-# 子命令: logs | trace | audit | archive | backup | all | schedule
+# 子命令: logs | trace | audit | archive | backup | recyclebin | all | schedule
 #===============================================================================
 
 cmd_clean() {
@@ -41,10 +41,11 @@ cmd_clean() {
         audit)     clean_audit;;
         archive)   clean_archive;;
         backup)    backup_cleanup;;       # 实现位于 lib/common.sh, 与 omf backup cleanup 共用
+        recyclebin) clean_recyclebin;;
         all)       clean_all;;
         schedule)  clean_schedule "${rest[@]}";;
         *)
-            echo "用法: omf clean {logs|trace|audit|archive|backup|all|schedule} [-d 天数 | --all] [-p|--preview]"
+            echo "用法: omf clean {logs|trace|audit|archive|backup|recyclebin|all|schedule} [-d 天数 | --all] [-p|--preview]"
             exit 1
             ;;
     esac
@@ -352,17 +353,32 @@ clean_all() {
     clean_audit
     clean_archive
 
-    if [ "${CLEAN_PREVIEW:-false}" = "true" ]; then
-        echo -e "[预览] 以下将在正式清理时执行: 清空监听器日志, 清空数据库回收站 (PURGE DBA_RECYCLEBIN)"
-    else
-        # 清理监听器日志
-        if [ -f "${OMF_CONFIG[ORACLE_BASE]}/diag/tnslsnr/$(hostname)/LISTENER/trace/listener.log" ]; then
-            > "${OMF_CONFIG[ORACLE_BASE]}/diag/tnslsnr/$(hostname)/LISTENER/trace/listener.log"
-            log_info "监听器日志已清空"
-        fi
+    local listener_log="${OMF_CONFIG[ORACLE_BASE]}/diag/tnslsnr/$(hostname)/LISTENER/trace/listener.log"
 
-        # 清理回收站
-        oracle_su "
+    if [ "${CLEAN_PREVIEW:-false}" = "true" ]; then
+        echo -e "[预览] 以下将在正式清理时执行:"
+        echo -e "  - 清空监听器日志 (${listener_log})"
+        if [ "${CLEAN_ALL:-false}" = "true" ]; then
+            echo -e "  - ${RED}全量清理: 清空数据库回收站 (PURGE DBA_RECYCLEBIN)${NC} [高危, 需二次确认]"
+        else
+            echo -e "  - 回收站清理已剥离为独立子命令 ${YELLOW}omf clean recyclebin${NC} (常规按天清理不再触碰, 避免静默永久删除可恢复对象)"
+        fi
+        return
+    fi
+
+    # 监听器日志清空 (低危: 仅截断, listener 进程持续写入新日志, 不影响可恢复性)
+    if [ -f "$listener_log" ]; then
+        > "$listener_log"
+        log_info "监听器日志已清空"
+    fi
+
+    # 回收站清理: 影响可恢复性的不可逆操作, 不随常规按天清理隐式执行;
+    #   仅 --all 全量清理时经 confirm_danger 二次确认后才执行
+    if [ "${CLEAN_ALL:-false}" = "true" ]; then
+        local do_purge=0
+        confirm_danger "清空数据库回收站 (PURGE DBA_RECYCLEBIN, 将永久删除所有可恢复对象)?" && do_purge=1
+        if [ "$do_purge" -eq 1 ]; then
+            oracle_su "
 export ORACLE_SID=${OMF_CONFIG[ORACLE_SID]}
 export ORACLE_HOME=${OMF_CONFIG[ORACLE_HOME]}
 export PATH=\$ORACLE_HOME/bin:\$PATH
@@ -372,11 +388,38 @@ PURGE DBA_RECYCLEBIN;
 EXIT;
 SQL
 " 2>/dev/null
-        log_info "回收站已清空"
+            log_info "回收站已清空 (PURGE DBA_RECYCLEBIN)"
+        else
+            log_warn "已跳过回收站清理"
+        fi
     fi
 
     echo ""
     log_info "全面清理完成!"
+}
+
+#===============================================================================
+# 清空数据库回收站 (PURGE DBA_RECYCLEBIN) —— 显式高危子命令
+# 从 clean all 剥离: 回收站可能含误删、待 flashback 恢复的对象, 不应随按天清理静默清空
+# 此命令为显式命名危险操作, 运维主动调用即知情同意 (-y 下亦执行, 但打印醒目警告)
+#===============================================================================
+clean_recyclebin() {
+    if [ "${CLEAN_PREVIEW:-false}" = "true" ]; then
+        echo -e "[预览] 将执行: ${RED}PURGE DBA_RECYCLEBIN${NC} (永久删除所有回收站对象)"
+        return
+    fi
+    log_warn "即将永久清空数据库回收站 (PURGE DBA_RECYCLEBIN), 此操作不可恢复"
+    oracle_su "
+export ORACLE_SID=${OMF_CONFIG[ORACLE_SID]}
+export ORACLE_HOME=${OMF_CONFIG[ORACLE_HOME]}
+export PATH=\$ORACLE_HOME/bin:\$PATH
+
+sqlplus -s / as sysdba <<'SQL'
+PURGE DBA_RECYCLEBIN;
+EXIT;
+SQL
+" 2>/dev/null
+    log_info "回收站已清空 (PURGE DBA_RECYCLEBIN)"
 }
 
 #===============================================================================
@@ -390,11 +433,15 @@ clean_schedule() {
         setup)
             cat > /etc/cron.d/omf_clean << EOF
 # OMF 定时清理任务
-# 每天凌晨 4:00 - 清理日志和 trace (按保留天数)
+# 每天凌晨 4:00 - 清理日志/trace/audit/归档 (按保留天数); 回收站清理已不再隐式执行
 0 4 * * * oracle ${OMF_HOME}/omf.sh -y clean all >> ${OMF_HOME}/logs/omf_clean_cron.log 2>&1
 
 # 每周日凌晨 5:00 - 清理过期归档
 0 5 * * 0 oracle ${OMF_HOME}/omf.sh -y clean archive >> ${OMF_HOME}/logs/omf_clean_cron.log 2>&1
+
+# 回收站清理已剥离为独立子命令 omf clean recyclebin (PURGE DBA_RECYCLEBIN, 不可逆).
+# 如需定期清空回收站 (将永久删除可恢复对象), 取消下一行注释 (建议仅在确认无需 flashback 恢复时启用):
+# 0 6 * * 0 oracle ${OMF_HOME}/omf.sh -y clean recyclebin >> ${OMF_HOME}/logs/omf_clean_cron.log 2>&1
 EOF
             chmod 644 /etc/cron.d/omf_clean
             systemctl restart crond 2>/dev/null || service cron restart 2>/dev/null || true

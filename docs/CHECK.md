@@ -70,6 +70,7 @@ omf check monitor prom     # Prometheus 格式
 | `omf clean audit [-d N \| --all] [-p]` | 清理审计 |
 | `omf clean archive [-d N \| --all] [-p]` | 清理归档日志 |
 | `omf clean backup [-d N \| --all] [--logical\|--physical] [-p] [-y]` | 清理备份（同 `omf backup cleanup`）|
+| `omf clean recyclebin` | 清空数据库回收站 (`PURGE DBA_RECYCLEBIN`, 不可逆, 需显式调用) |
 | `omf clean schedule setup` | 配置定时清理 |
 
 `-p/--preview` 仅预览并按保留天数高亮"即将过期/将清理"，不删除；`-y` 免确认。

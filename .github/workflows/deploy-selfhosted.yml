@@ -1,0 +1,95 @@
+name: Deploy (self-hosted E2E smoke)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 自托管 Runner 端到端冒烟示例 (deploy 编排 + 库连通校验)
+#
+# 前置条件 (runner 机器需提前准备好):
+#   - 已注册 GitHub 自托管 runner, 且打上标签 `oracle` (见下方 runs-on)
+#   - 系统已建好 oracle 用户, 且其 login shell (sudo -i -u oracle) 能解析
+#     ORACLE_BASE / ORACLE_HOME / ORACLE_SID / PATH 等基础环境
+#   - Oracle 安装介质 zip 包就绪, 通过 workflow_dispatch 的 `zip` 输入传入
+#   - runner 进程对 oracle 用户具备免密 sudo (sudo -i -u oracle)
+#
+# 触发方式: 仓库 Actions 页面手动 "Run workflow"
+#   - 默认 run_deploy=false: 仅对已有库做冒烟校验 (状态/健康/连通/监听)
+#   - 设 run_deploy=true 才真正执行 omf deploy (建库 + 开归档 + 初始化 + 首次备份)
+#   真正部署代价高, 默认关闭, 避免误触。
+# ─────────────────────────────────────────────────────────────────────────────
+on:
+  workflow_dispatch:
+    inputs:
+      run_deploy:
+        description: "是否真正执行 omf deploy (建库/开归档/初始化/首次备份). 默认仅冒烟."
+        type: boolean
+        default: false
+        required: false
+      edition:
+        description: "Oracle 版本 EE | SE"
+        type: choice
+        options: [EE, SE]
+        default: EE
+        required: false
+      zip:
+        description: "Oracle 安装介质 zip 包路径 (run_deploy=true 时必填)"
+        type: string
+        default: ""
+        required: false
+
+jobs:
+  e2e-smoke:
+    name: 自托管 E2E 冒烟 (deploy 编排 + 库连通校验)
+    # self-hosted + oracle 标签: 仅在注册了对应自托管 runner 的仓库才会调度;
+    # 公共 runner 无法满足 Oracle 依赖, 亦不会误触发本工作流。
+    runs-on: [self-hosted, oracle]
+
+    steps:
+      - name: 检出 OMF 代码
+        uses: actions/checkout@v4
+
+      - name: 设置 OMF_HOME 并自检
+        env:
+          OMF_HOME: ${{ github.workspace }}
+        run: |
+          bash omf.sh selftest
+
+      - name: 环境预检 (oracle 用户 / 基础变量)
+        run: |
+          id oracle || { echo "::error::未找到 oracle 用户, 请先在 runner 上准备基础环境"; exit 1; }
+          [ -n "$ORACLE_BASE" ] && echo "ORACLE_BASE=$ORACLE_BASE" || echo "提示: ORACLE_BASE 未导出 (deploy 步骤将按需设置)"
+          [ -n "$ORACLE_HOME" ] && echo "ORACLE_HOME=$ORACLE_HOME" || true
+          [ -n "$ORACLE_SID" ]  && echo "ORACLE_SID=$ORACLE_SID"   || true
+
+      - name: 预览部署步骤 (不执行)
+        env:
+          OMF_HOME: ${{ github.workspace }}
+        run: |
+          bash omf.sh deploy --list
+
+      - name: 执行 omf deploy (建库 + 开归档 + 初始化 + 首次备份)
+        if: ${{ inputs.run_deploy }}
+        env:
+          OMF_HOME: ${{ github.workspace }}
+        run: |
+          ZIP_ARG=""
+          [ -n "${{ inputs.zip }}" ] && ZIP_ARG="--zip ${{ inputs.zip }}"
+          bash omf.sh -y deploy --edition ${{ inputs.edition }} $ZIP_ARG
+
+      - name: 冒烟校验 - 状态总览
+        env:
+          OMF_HOME: ${{ github.workspace }}
+        run: |
+          bash omf.sh status
+
+      - name: 冒烟校验 - 健康检查
+        env:
+          OMF_HOME: ${{ github.workspace }}
+        run: |
+          bash omf.sh check || true
+
+      - name: 冒烟校验 - 数据库连通 (SELECT 1 FROM dual)
+        run: |
+          sudo -i -u oracle bash -c 'echo "SELECT 1 FROM dual;" | sqlplus -s / as sysdba'
+
+      - name: 冒烟校验 - 监听器状态
+        run: |
+          sudo -i -u oracle lsnrctl status || true

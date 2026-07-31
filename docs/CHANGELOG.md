@@ -1,5 +1,10 @@
 # 版本变更记录
 
+## v1.26 关键改进（clean all 回收站剥离 / 部署端到端冒烟示例）
+- **回收站清理从 `clean all` 中剥离（高危操作脱敏）**：原 `omf clean all` 在常规按天清理（cron 用 `-y` 静默跑）中**无条件执行 `PURGE DBA_RECYCLEBIN`**——这是影响可恢复性的不可逆高危操作（会永久删除误删、待 `flashback` 恢复的对象），随 cron 静默执行是隐患。现改为：①常规 `omf clean all`（按天）**不再触碰回收站**；②仅 `omf clean all --all`（全量）经 `confirm_danger` 二次确认后才 purge；③新增独立子命令 **`omf clean recyclebin`** 供运维显式调用（名称本身警示危险），cron 模板同步改为可选注释行，不再隐式清空回收站。
+- **监听器日志清空保留于 `clean all`（低危）**：仅 `>` 截断，listener 进程持续写入新日志，不影响可恢复性，维持常规执行；预览提示已区分 `--all`/常规差异。
+- **新增 `.github/workflows/deploy-selfhosted.yml`（自托管 Runner 端到端冒烟示例）**：在已备好 Oracle 介质的自托管 runner（`self-hosted,oracle` 标签）上，对 `omf deploy` 编排做端到端冒烟：默认仅校验（status / check / `SELECT 1 FROM dual` / 监听状态），`workflow_dispatch` 输入 `run_deploy=true` 才真正执行完整部署。手动触发，避免误跑重操作；与既有 `ci.yml`（纯静态自检）互补。
+
 ## v1.25 关键改进（高危操作 / 二次确认防护）
 - **新增 `confirm_danger()`（高风险操作防护）**：普通 `confirm()` 在全局 `-y`（`OMF_ASSUME_YES=true`）下会直接放行，导致 `omf -y clean archive --all` 等"全量删除"操作**跳过确认直接执行**，对自动化/cron 是隐患。新增 `confirm_danger()`：即使 `-y` 也强制交互输入 `YES` 才放行；非交互环境（管道/cron）**默认中止并返回非0**，避免静默误删；确需脚本化时显式 `export OMF_ALLOW_DANGEROUS=1` 才跳过。已应用于：`clean logs/trace/audit/archive --all`（全量清理）、`db archivelog disable`（关闭归档，影响可恢复性）。
 - **移除 `clean --force` 别名**：原 `--force` 实际是"全量删除"的别名（与 `CLEAN_ALL` 等价），语义极易误导（用户以为"强制确认"实则"全量删除"），已移除，统一用 `--all`/`-a` 表达全量。

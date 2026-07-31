@@ -217,7 +217,7 @@ db_create() {
         fi
     done
 
-    confirm "确认创建数据库?"
+    confirm_danger "确认创建数据库? 此操作将 SHUTDOWN ABORT 并删除现有 SID 的数据文件/FRA/admin 后重建 (数据不可逆丢失)!" || return 1
 
     # 创建目录
     mkdir -p "${OMF_CONFIG[ORACLE_DATA]}/${OMF_CONFIG[ORACLE_SID]}"
@@ -444,6 +444,8 @@ SQL
 #===============================================================================
 db_stop() {
     log_step "停止数据库..."
+    log_warn "此操作将停止数据库 (SHUTDOWN IMMEDIATE), 期间数据库不可用"
+    confirm "确认停止数据库?"
 
     local role=""
     if omf_dg_enabled; then
@@ -786,7 +788,7 @@ db_dg_failover() {
     log_warn "  - 若 Flashback 未开, 旧主库只能重建 (omf db dg standby)"
     [ "$immediate" = "true" ] && log_warn "  - IMMEDIATE 模式: 不等待剩余 redo 应用, 【可能丢失数据】!"
     echo ""
-    confirm "确认主库已不可恢复, 执行 failover 到 ${target}?"
+    confirm_danger "确认主库已不可恢复, 执行 failover 到 ${target}? (灾难切换: 旧主库需 reinstate 或重建, 可能造成数据差异/脑裂)" || return 1
 
     local fo_cmd="failover to ${target}"
     [ "$immediate" = "true" ] && fo_cmd="failover to ${target} immediate"

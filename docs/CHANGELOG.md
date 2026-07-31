@@ -1,5 +1,10 @@
 # 版本变更记录
 
+## v1.28 关键改进（db.sh 高危操作二次确认）
+- **`omf db create` 升级为 `confirm_danger`（防 -y 误删库）**：原 `db create` 仅用普通 `confirm`，在 `-y` 下会直接通过并执行 `SHUTDOWN ABORT` + 删除现有 SID 的数据文件/FRA/admin 后重建——**数据不可逆丢失**。现改为 `confirm_danger`：即使 `-y` 也强制交互输入 `YES`，非交互环境默认中止；`omf deploy` 编排中以 `OMF_ALLOW_DANGEROUS=1` 显式放行（部署即重建语义，脚本化预期）。
+- **`omf db dg failover` 升级为 `confirm_danger`（防自动化误触发灾难切换）**：failover 是脑裂/数据差异风险极高的灾难操作，原普通 `confirm` 在 `-y`/自动化下可能被静默触发。现强制二次确认，即便主库确认宕机也需显式 `YES`；确需脚本化时 `OMF_ALLOW_DANGEROUS=1` 放行。
+- **`omf db stop` / `restart` 增加停机确认**：原 `db stop`/`restart` **无任何确认**即执行 `SHUTDOWN IMMEDIATE` 停机，误调用即停生产库。现加普通 `confirm` + 停机警告（停机属可用性影响、可逆，故用普通 `confirm` 以兼容 cron 维护窗口；与 `archivelog enable` 风格统一）。
+
 ## v1.27 关键改进（监听器日志安全轮换）
 - **监听器日志清空改用 `lsnrctl` 安全轮换（修复文件空洞）**：原 `clean all`/`clean all --all` 直接用 `> listener.log` 截断。长生命周期 listener 仍持有旧 fd，会按原 offset 续写，导致文件中间出现 0 字节"空洞"且内容错位，难以排查。现优先 `lsnrctl set log_status off` 暂停日志写入 → 安全清空 → `set log_status on` 恢复（listener 重新打开日志 fd，从源头写、无空洞）；当 `lsnrctl` 不可用（如 listener 未启动）时降级为直接截断并告警，仍释放磁盘。
 

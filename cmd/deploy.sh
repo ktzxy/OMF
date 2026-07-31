@@ -114,18 +114,27 @@ cmd_deploy() {
             log_info "↷ [${i}/${total}] 跳过: ${desc}  (omf ${cmd})"
             i=$((i+1)); continue
         fi
-        # install software 透传 zip / edition 参数
-        local full="$cmd"
+        # install software / db create 透传参数与危险放行
+        local full="$cmd" dangerous=0
         if [ "$cmd" = "install software" ]; then
             [ -n "$zip" ]     && full="$full $zip"
             [ -n "$edition" ] && full="$full $edition"
         fi
+        # db create 会 SHUTDOWN ABORT 并删除现有 SID 数据后重建 (不可逆); 其 confirm_danger
+        #   在 -y/非交互下默认中止, 故 deploy 以 OMF_ALLOW_DANGEROUS=1 显式放行 (部署即重建语义)
+        [ "$cmd" = "db create" ] && dangerous=1
 
         log_step "== [${i}/${total}] ${desc} =="
         log_info "执行: omf -y ${full}"
         echo "----------------------------------------"
         # 子进程非零退出码在 if 条件中, 不会触发父进程 set -e; 每步独立进程/日志, 错误隔离
-        if "$self" -y $full; then
+        local rc_dep
+        if [ "$dangerous" -eq 1 ]; then
+            OMF_ALLOW_DANGEROUS=1 "$self" -y $full; rc_dep=$?
+        else
+            "$self" -y $full; rc_dep=$?
+        fi
+        if [ "$rc_dep" -eq 0 ]; then
             log_info "✓ 完成: ${desc}"
         else
             log_error "✗ 步骤 [${i}/${total}] ${desc} 失败, 部署中止。可单独修复后重跑: omf -y ${full}"

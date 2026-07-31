@@ -366,10 +366,24 @@ clean_all() {
         return
     fi
 
-    # 监听器日志清空 (低危: 仅截断, listener 进程持续写入新日志, 不影响可恢复性)
+    # 监听器日志清空 (低危, 不影响可恢复性)
+    #   注意: 直接用 `> listener.log` 截断时, 长生命周期 listener 仍持有旧 fd,
+    #   会按原 offset 继续写, 导致文件中间出现 0 字节"空洞"且内容错位.
+    #   故优先用 lsnrctl 暂停日志写入 -> 安全清空 -> 恢复, 避免空洞;
+    #   lsnrctl 不可用 (listener 未启动等) 时降级为直接截断 (仍释放磁盘).
     if [ -f "$listener_log" ]; then
-        > "$listener_log"
-        log_info "监听器日志已清空"
+        local lsnr_ok=0
+        if oracle_su "export ORACLE_HOME=${OMF_CONFIG[ORACLE_HOME]}; export PATH=\$ORACLE_HOME/bin:\$PATH; lsnrctl set log_status off" >/dev/null 2>&1; then
+            > "$listener_log"
+            oracle_su "export ORACLE_HOME=${OMF_CONFIG[ORACLE_HOME]}; export PATH=\$ORACLE_HOME/bin:\$PATH; lsnrctl set log_status on" >/dev/null 2>&1 || true
+            lsnr_ok=1
+        fi
+        if [ "$lsnr_ok" -eq 1 ]; then
+            log_info "监听器日志已清空 (lsnrctl 安全轮换)"
+        else
+            > "$listener_log"
+            log_warn "监听器日志已直接截断 (lsnrctl 不可用, 长生命周期下可能存在空洞)"
+        fi
     fi
 
     # 回收站清理: 影响可恢复性的不可逆操作, 不随常规按天清理隐式执行;

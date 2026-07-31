@@ -1,8 +1,11 @@
 # 版本变更记录
 
+## v1.27 关键改进（监听器日志安全轮换）
+- **监听器日志清空改用 `lsnrctl` 安全轮换（修复文件空洞）**：原 `clean all`/`clean all --all` 直接用 `> listener.log` 截断。长生命周期 listener 仍持有旧 fd，会按原 offset 续写，导致文件中间出现 0 字节"空洞"且内容错位，难以排查。现优先 `lsnrctl set log_status off` 暂停日志写入 → 安全清空 → `set log_status on` 恢复（listener 重新打开日志 fd，从源头写、无空洞）；当 `lsnrctl` 不可用（如 listener 未启动）时降级为直接截断并告警，仍释放磁盘。
+
 ## v1.26 关键改进（clean all 回收站剥离 / 部署端到端冒烟示例）
 - **回收站清理从 `clean all` 中剥离（高危操作脱敏）**：原 `omf clean all` 在常规按天清理（cron 用 `-y` 静默跑）中**无条件执行 `PURGE DBA_RECYCLEBIN`**——这是影响可恢复性的不可逆高危操作（会永久删除误删、待 `flashback` 恢复的对象），随 cron 静默执行是隐患。现改为：①常规 `omf clean all`（按天）**不再触碰回收站**；②仅 `omf clean all --all`（全量）经 `confirm_danger` 二次确认后才 purge；③新增独立子命令 **`omf clean recyclebin`** 供运维显式调用（名称本身警示危险），cron 模板同步改为可选注释行，不再隐式清空回收站。
-- **监听器日志清空保留于 `clean all`（低危）**：仅 `>` 截断，listener 进程持续写入新日志，不影响可恢复性，维持常规执行；预览提示已区分 `--all`/常规差异。
+- **监听器日志清空保留于 `clean all`（低危）**：仅清空、不影响可恢复性，维持常规执行；实现已改用 `lsnrctl` 安全轮换避免 `>` 截断造成的 fd 空洞（详见 v1.27）；预览提示已区分 `--all`/常规差异。
 - **新增 `.github/workflows/deploy-selfhosted.yml`（自托管 Runner 端到端冒烟示例）**：在已备好 Oracle 介质的自托管 runner（`self-hosted,oracle` 标签）上，对 `omf deploy` 编排做端到端冒烟：默认仅校验（status / check / `SELECT 1 FROM dual` / 监听状态），`workflow_dispatch` 输入 `run_deploy=true` 才真正执行完整部署。手动触发，避免误跑重操作；与既有 `ci.yml`（纯静态自检）互补。
 
 ## v1.25 关键改进（高危操作 / 二次确认防护）

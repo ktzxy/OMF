@@ -1,5 +1,9 @@
 # 版本变更记录
 
+## v1.29 关键改进（pdb close / dg apply stop 补确认）
+- **`omf db pdb close` 增加确认**：原实现**无任何确认**即执行 `ALTER PLUGGABLE DATABASE <pdb> CLOSE IMMEDIATE`，会回滚未提交事务并断开该 PDB 上所有会话，误调用即中断业务。现加普通 `confirm` + 业务中断警告（关闭属可用性影响、可逆——`omf db pdb open` 即恢复，故用普通 `confirm`，与 `db stop` 风格一致）。
+- **`omf db dg apply stop` 增加确认与后果提示**：原实现无确认即 `RECOVER MANAGED STANDBY DATABASE CANCEL`。停止 MRP 后备库不再追平主库，**长期停止会累积应用延迟与归档间隙，主库归档可能因备库未确认而堆积撑满 FRA**（是运维中常见的"停了忘记开"事故）。现加 `confirm` 并醒目提示"维护完成后请及时 `omf db dg apply start`"。
+
 ## v1.28 关键改进（db.sh 高危操作二次确认）
 - **`omf db create` 升级为 `confirm_danger`（防 -y 误删库）**：原 `db create` 仅用普通 `confirm`，在 `-y` 下会直接通过并执行 `SHUTDOWN ABORT` + 删除现有 SID 的数据文件/FRA/admin 后重建——**数据不可逆丢失**。现改为 `confirm_danger`：即使 `-y` 也强制交互输入 `YES`，非交互环境默认中止；`omf deploy` 编排中以 `OMF_ALLOW_DANGEROUS=1` 显式放行（部署即重建语义，脚本化预期）。
 - **`omf db dg failover` 升级为 `confirm_danger`（防自动化误触发灾难切换）**：failover 是脑裂/数据差异风险极高的灾难操作，原普通 `confirm` 在 `-y`/自动化下可能被静默触发。现强制二次确认，即便主库确认宕机也需显式 `YES`；确需脚本化时 `OMF_ALLOW_DANGEROUS=1` 放行。

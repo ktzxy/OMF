@@ -495,6 +495,9 @@ SQL
             log_info "PDB $pdb 已打开"
             ;;
         close)
+            # CLOSE IMMEDIATE 会回滚未提交事务并断开该 PDB 上所有会话, 业务立即中断 (可逆: pdb open 恢复)
+            log_warn "此操作将关闭 PDB ${pdb} (CLOSE IMMEDIATE), 该 PDB 上的业务会话将被中断"
+            confirm "确认关闭 PDB ${pdb}?"
             oracle_su "
 export ORACLE_SID=${OMF_CONFIG[ORACLE_SID]}
 export ORACLE_HOME=${OMF_CONFIG[ORACLE_HOME]}
@@ -864,6 +867,11 @@ SQL"
             log_info "MRP 已开启 (实时应用)"
             ;;
         stop)
+            # 停止 MRP 后备库不再追平主库: 长期不重启应用会累积应用延迟与归档间隙,
+            #   主库归档可能因备库未确认而堆积撑满 FRA (可逆: apply start 恢复并自动追平)
+            log_warn "此操作将停止备库 MRP 应用, 备库不再追平主库; 长期停止会累积归档间隙并可能撑满 FRA"
+            log_warn "维护完成后请及时执行: omf db dg apply start"
+            confirm "确认停止备库应用 (MRP CANCEL)?"
             log_step "停止备库应用 (MRP CANCEL)"
             as_oracle "sqlplus -s / as sysdba <<'SQL'
 ALTER DATABASE RECOVER MANAGED STANDBY DATABASE CANCEL;

@@ -119,3 +119,21 @@ TRACE_RETENTION_DAYS="7"
 # 邮件兜底 (需系统有 mail 命令): 设收件人即启用
 #OMF_NOTIFY_MAIL=""
 # 自定义钩子: 把 conf/notify.sh.example 复制为 conf/notify.sh 并 chmod +x 即可接管全部通知
+
+# ===== 监控告警阈值 (omf check monitor --alert) =====
+# 磁盘/内存阈值 (原有关键项):
+#MONITOR_DISK_WARN_PCT="85"
+#MONITOR_DISK_ERR_PCT="92"
+#MONITOR_MEM_WARN_PCT="20"
+#MONITOR_MEM_ERR_PCT="10"
+# 扩展阈值 (本轮新增, 覆盖无效对象/表空间/备份时效/DG延迟):
+#   无效对象数: warn 触发 WARN, err 触发 ALERT
+#MONITOR_INVALID_WARN="20"
+#MONITOR_INVALID_ERR="100"
+#   表空间最大使用率 (%): 取所有表空间中最高使用率
+#MONITOR_TBS_WARN_PCT="85"
+#MONITOR_TBS_ERR_PCT="92"
+#   备份时效: 最近一次成功全量备份距今天数超过此值触发 WARN; 0 或留空=不检查
+#MONITOR_BACKUP_MAX_DAYS="1"
+#   DG 应用延迟 (秒): 仅 ENABLE_DG=true 时采集; 超过此秒数触发 WARN (默认 600=10分钟)
+#MONITOR_DG_LAG_WARN_SEC="600"

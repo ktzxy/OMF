@@ -613,6 +613,11 @@ check_monitor() {
     local d_err="${OMF_CONFIG[MONITOR_DISK_ERR_PCT]:-92}"
     local m_warn="${OMF_CONFIG[MONITOR_MEM_WARN_PCT]:-20}"
     local m_err="${OMF_CONFIG[MONITOR_MEM_ERR_PCT]:-10}"
+    # 扩展阈值 (--alert 使用, 详见 _monitor_alert):
+    #   MONITOR_INVALID_WARN/ERR  无效对象数
+    #   MONITOR_TBS_WARN_PCT/ERR_PCT  表空间最大使用率
+    #   MONITOR_BACKUP_MAX_DAYS   备份时效 (全量备份最久天数, 0/未配=不检查)
+    #   MONITOR_DG_LAG_WARN_SEC   DG 应用延迟秒数
 
     if [ "$alert_mode" -eq 1 ]; then
         _monitor_alert "$d_warn" "$d_err" "$m_warn" "$m_err"
@@ -633,6 +638,7 @@ check_monitor() {
 # 采集一次, 结果写入全局 _MC_* 变量 (供 run_once 输出与 alert 判定的复用, 避免重复连库)
 _monitor_collect() {
     _MC_DB_UP=0; _MC_MEM=0; _MC_ORA=0; _MC_STATUS="ok"; _MC_DISK=""; _MC_DP_JSON=""
+    _MC_INVAL=0; _MC_TS_MAX=0; _MC_BACKUP_AGE=-1; _MC_DG_LAG=-1
     local db_up=0 mem_free_pct=0 ora_errors=0 status="ok" u=""
     local mps=("/" "${OMF_CONFIG[ORACLE_DATA_BASE]}" "${OMF_CONFIG[ORACLE_BACKUP]}")
 
@@ -660,6 +666,50 @@ echo 'SELECT 1 FROM v\$instance;' | sqlplus -s / as sysdba" &>/dev/null; then
             ora_errors=$(tail -n +"$start_ln" "$alert_log" | grep -c "ORA-" 2>/dev/null || true)
         else
             ora_errors=$(grep -c "ORA-" "$alert_log" 2>/dev/null || true)
+        fi
+    fi
+
+    # ---- 额外告警维度 (仅数据库可用时采集) ----
+    if [ "$db_up" -eq 1 ]; then
+        # 无效对象数
+        _MC_INVAL=$(as_oracle "echo \"set pagesize 0 feedback off heading off
+SELECT COUNT(*) FROM dba_objects WHERE status='INVALID';\" | sqlplus -s / as sysdba" 2>/dev/null | tr -d ' ')
+        [ -z "$_MC_INVAL" ] && _MC_INVAL=0
+
+        # 表空间最大使用率
+        _MC_TS_MAX=$(as_oracle "echo \"set pagesize 0 feedback off heading off
+SELECT NVL(MAX(ROUND((SUM(bytes)-SUM(free_bytes))*100/SUM(bytes),1)),0) FROM (
+  SELECT tablespace_name, bytes, 0 AS free_bytes FROM dba_data_files
+  UNION ALL
+  SELECT tablespace_name, 0 AS bytes, bytes AS free_bytes FROM dba_free_space
+) GROUP BY tablespace_name;\" | sqlplus -s / as sysdba" 2>/dev/null | tr -d ' ')
+        [ -z "$_MC_TS_MAX" ] && _MC_TS_MAX=0
+
+        # 最近一次成功全量备份距今天数 (无备份则为 -1, 由 alert 判定为告警)
+        local last_bk
+        last_bk=$(as_oracle "echo \"set pagesize 0 feedback off heading off
+SELECT TO_CHAR(MAX(start_time),'YYYY-MM-DD HH24:MI') FROM v\\\$rman_backup_job_details
+WHERE input_type='DB FULL' AND status='COMPLETED';\" | sqlplus -s / as sysdba" 2>/dev/null | tr -d ' ')
+        if [ -n "$last_bk" ] && [ "$last_bk" != "-" ]; then
+            local bk_ts; bk_ts=$(date -d "$last_bk" +%s 2>/dev/null)
+            [ -n "$bk_ts" ] && _MC_BACKUP_AGE=$(( ( $(date +%s) - bk_ts ) / 86400 ))
+        else
+            _MC_BACKUP_AGE=-1
+        fi
+
+        # DG 应用延迟 (秒): 仅启用 DG 时采集; 解析 +DD HH:MM:SS → 秒
+        if omf_dg_enabled; then
+            local lag_raw
+            lag_raw=$(as_oracle "echo \"set pagesize 0 feedback off heading off
+SELECT NVL(MAX(value),'-') FROM v\\\$dataguard_stats WHERE name='apply lag';\" | sqlplus -s / as sysdba" 2>/dev/null | tr -d ' ' | head -1)
+            if [ -n "$lag_raw" ] && [ "$lag_raw" != "-" ]; then
+                # 格式 +DD HH:MM:SS (如 +00 00:05:30) → 提取天数/时/分/秒累计秒
+                local dd hhmmss d h m s
+                dd="${lag_raw%% *}"; dd="${dd#+}"
+                hhmmss="${lag_raw#* }"
+                h="${hhmmss%%:*}"; mmss="${hhmmss#*:}"; m="${mmss%%:*}"; s="${mmss#*:}"
+                _MC_DG_LAG=$(( ${dd:-0}*86400 + ${h:-0}*3600 + ${m:-0}*60 + ${s:-0} ))
+            fi
         fi
     fi
 
@@ -734,6 +784,15 @@ _monitor_alert() {
     _monitor_collect
     local alerts=0 lines=""
 
+    # 扩展阈值 (conf 可覆盖, 回退默认):
+    #   无效对象数 / 表空间水位 / 备份时效 / DG 应用延迟
+    local i_warn="${OMF_CONFIG[MONITOR_INVALID_WARN]:-20}"
+    local i_err="${OMF_CONFIG[MONITOR_INVALID_ERR]:-100}"
+    local t_warn="${OMF_CONFIG[MONITOR_TBS_WARN_PCT]:-85}"
+    local t_err="${OMF_CONFIG[MONITOR_TBS_ERR_PCT]:-92}"
+    local b_max="${OMF_CONFIG[MONITOR_BACKUP_MAX_DAYS]:-1}"
+    local g_warn="${OMF_CONFIG[MONITOR_DG_LAG_WARN_SEC]:-600}"   # 默认 10 分钟
+
     [ "$_MC_DB_UP" -eq 0 ] && { alerts=$((alerts+1)); lines="${lines}ALERT: 数据库不可用(db_up=0)\n"; }
 
     local kv p pu
@@ -748,6 +807,21 @@ _monitor_alert() {
     if [ "$_MC_MEM" -lt "$m_err" ]; then alerts=$((alerts+1)); lines="${lines}ALERT: 可用内存 ${_MC_MEM}% < ${m_err}%\n"; fi
     if [ "$_MC_MEM" -lt "$m_warn" ]; then alerts=$((alerts+1)); lines="${lines}WARN: 可用内存 ${_MC_MEM}% < ${m_warn}%\n"; fi
     if [ "$_MC_ORA" -gt 0 ]; then alerts=$((alerts+1)); lines="${lines}WARN: Alert 日志本次启动以来 ${_MC_ORA} 个 ORA- 错误\n"; fi
+
+    # 无效对象数
+    if [ "$_MC_INVAL" -ge "$i_err" ]; then alerts=$((alerts+1)); lines="${lines}ALERT: 无效对象 ${_MC_INVAL} >= ${i_err}\n"; \
+    elif [ "$_MC_INVAL" -ge "$i_warn" ]; then alerts=$((alerts+1)); lines="${lines}WARN: 无效对象 ${_MC_INVAL} >= ${i_warn}\n"; fi
+
+    # 表空间水位
+    if [ "${_MC_TS_MAX:-0}" -gt "$t_err" ]; then alerts=$((alerts+1)); lines="${lines}ALERT: 表空间最大使用率 ${_MC_TS_MAX}% > ${t_err}%\n"; \
+    elif [ "${_MC_TS_MAX:-0}" -gt "$t_warn" ]; then alerts=$((alerts+1)); lines="${lines}WARN: 表空间最大使用率 ${_MC_TS_MAX}% > ${t_warn}%\n"; fi
+
+    # 备份时效 (RPO 风险): -1 表示无备份
+    if [ "$_MC_BACKUP_AGE" -lt 0 ]; then alerts=$((alerts+1)); lines="${lines}ALERT: 无已完成的全量备份 (RPO 风险! 执行 omf backup auto)\n"; \
+    elif [ "${b_max:-1}" -gt 0 ] && [ "$_MC_BACKUP_AGE" -gt "$b_max" ]; then alerts=$((alerts+1)); lines="${lines}WARN: 最近全量备份 ${_MC_BACKUP_AGE} 天前 > ${b_max} 天 (RPO 偏大)\n"; fi
+
+    # DG 应用延迟 (>0 表示已采集)
+    if [ "$_MC_DG_LAG" -gt "$g_warn" ]; then alerts=$((alerts+1)); lines="${lines}WARN: DG 应用延迟 ${_MC_DG_LAG}s > ${g_warn}s\n"; fi
 
     if [ "$alerts" -gt 0 ]; then
         printf "%b" "$lines"

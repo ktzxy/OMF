@@ -51,6 +51,26 @@ omf check monitor prom     # Prometheus 格式
 
 每次运行自动持久化快照到 `logs/monitor_history.jsonl`，供 `omf status history` 展示趋势。状态判定：库 down 或内存可用率 <10% → `err`；内存 <20% 或存在 ORA- 错误 → `warn`。
 
+### 阈值告警模式 (`--alert`)
+
+`omf check monitor --alert` 按阈值判定，**超阈值返回非 0 并调用 `send_notification`**（webhook/邮件/自定义钩子），便于直接接入 cron：
+
+```bash
+omf -y check monitor --alert || echo "监控告警, 请查看通知"   # 推荐: 接入 cron 定时跑
+```
+
+覆盖维度与可配置阈值（conf 中覆盖，详见 `omf.conf.example`）：
+
+| 维度 | 阈值配置 | 默认 | 说明 |
+|------|----------|------|------|
+| 磁盘使用率 | `MONITOR_DISK_WARN_PCT` / `MONITOR_DISK_ERR_PCT` | 85 / 92 | 各挂载点 |
+| 可用内存率 | `MONITOR_MEM_WARN_PCT` / `MONITOR_MEM_ERR_PCT` | 20 / 10 | 空闲大页计入 |
+| Alert ORA- 错误 | （固定） | >0 | 本次启动以来 |
+| **无效对象数** | `MONITOR_INVALID_WARN` / `MONITOR_INVALID_ERR` | 20 / 100 | 新增 |
+| **表空间最大使用率** | `MONITOR_TBS_WARN_PCT` / `MONITOR_TBS_ERR_PCT` | 85 / 92 | 新增 |
+| **备份时效 (RPO)** | `MONITOR_BACKUP_MAX_DAYS` | 1（天） | 新增；无备份直接 ALERT |
+| **DG 应用延迟** | `MONITOR_DG_LAG_WARN_SEC` | 600（秒） | 新增；仅 `ENABLE_DG=true` |
+
 ## 4. 日志管理 (`omf log`)
 
 | 命令 | 说明 |

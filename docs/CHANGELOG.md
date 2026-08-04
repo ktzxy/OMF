@@ -1,5 +1,14 @@
 # 版本变更记录
 
+## v1.31 关键改进（check monitor 阈值告警扩展）
+- **`omf check monitor --alert` 新增 4 类告警维度（主动推送，不再仅展示）**：原 `--alert` 仅覆盖磁盘/内存/ORA-错误，`check_db` 虽已采集无效对象、表空间、备份时效却只展示不告警。本轮 `_monitor_collect` 新增采集并在 `_monitor_alert` 加阈值判定：
+  - **无效对象数**（`dba_objects status='INVALID'`，阈值 `MONITOR_INVALID_WARN=20`/`ERR=100`）；
+  - **表空间最大使用率**（所有表空间最高水位，阈值 `MONITOR_TBS_WARN_PCT=85`/`ERR_PCT=92`）；
+  - **备份时效/RPO 风险**（最近成功全量备份距今天数 `MONITOR_BACKUP_MAX_DAYS`，默认 1 天；无备份则直接 ALERT）；
+  - **DG 应用延迟**（仅 `ENABLE_DG=true` 采集，`v$dataguard_stats` 的 `+DD HH:MM:SS` 解析为秒，`MONITOR_DG_LAG_WARN_SEC=600` 即 10 分钟，超限 WARN）。
+  - 全部阈值 conf 可覆盖（见 `omf.conf.example`），超阈值仍沿用 `send_notification`（webhook/邮件/自定义钩子），cron 接 `omf -y check monitor --alert || 告警` 即可主动通知。
+- **`omf.conf.example` 补全告警阈值注释**：新增上述 4 类扩展阈值与说明。
+
 ## v1.30 关键改进（backup 健壮性：空间预检 + 失败重试）
 - **`omf backup auto` 新增备份前空间预检（防盘满损坏备份集）**：物理/增量备份若目录剩余空间不足以容纳估算备份集（数据文件体量 ÷3 再叠加 `BACKUP_SPACE_SAFETY` 默认 20% 安全余量），会**直接中止并发送告警**，避免在"盘满"下写出损坏备份集——这是生产上最常见的"备份中途失败"事故。逻辑备份（expdp 增量追加、体量较小）不强制预检。`BACKUP_SPACE_SAFETY` 可在配置中调高阈值。
 - **物理/增量备份新增失败重试（缓解偶发瞬断误报）**：封装 `rman_run` 辅助函数，RMAN 因网络存储抖动等偶发瞬断失败时**自动重试 1 次（共最多 2 次）**，消除误报失败；成功判定仍为 `rc=0 且无 RMAN-/ORA- 错误`。重试仍保留"成功后才清 obsolete / 失败才通知"的既有语义，且**失败绝不删旧备**。

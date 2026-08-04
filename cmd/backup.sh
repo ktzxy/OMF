@@ -89,14 +89,54 @@ scope_clause() {
     esac
 }
 
+# 备份前空间预检: 估算数据库数据文件体量, 与备份目录可用空间比较.
+#   物理/增量备份会新增一个完整备份集(压缩后约为数据量 20%~40%), 若目录剩余空间
+#   不足以容纳即必然盘满导致备份集损坏——这是生产上最常见的"备份中途失败"事故.
+#   直接查询 v$datafile 字节数(不含临时文件), 作为最坏情况的估算下限.
+#   余量阈值 BACKUP_SPACE_SAFETY (默认 20%, 即可用空间须 >= 估算备份量 ×(1+阈值)),
+#   不足则中止备份并告警 (返回 1), 避免浪费一次注定失败的备份.
+backup_spatial_check() {
+    local backup_dir="${ORACLE_BACKUP:-/backup/oracle}"
+    local safety="${BACKUP_SPACE_SAFETY:-20}"
+    # 仅检查目标目录所在文件系统可用空间 (目录尚不存在时回退到其父级)
+    local parent="$backup_dir"
+    [ -d "$parent" ] || parent="$(dirname "$parent")"
+    local avail; avail=$(df -Pk "$parent" 2>/dev/null | awk 'NR==2{print $4}')   # 1K 块
+    [ -z "$avail" ] && { log_warn "无法获取备份目录可用空间, 跳过空间预检"; return 0; }
+    local avail_bytes=$(( avail * 1024 ))
+
+    # 估算数据文件总字节 (不含 TEMP)
+    local dbsz
+    dbsz=$(as_oracle "echo \"set pagesize 0 feedback off heading off SELECT SUM(bytes) FROM v\\\$datafile;\" | sqlplus -s / as sysdba" 2>/dev/null | tr -d ' ')
+    if [ -z "$dbsz" ] || ! [[ "$dbsz" =~ ^[0-9]+$ ]]; then
+        log_warn "无法连接数据库估算体量, 跳过空间预检 (交由 RMAN 自行报错)"
+        return 0
+    fi
+    # 估算备份集大小: 压缩备份约为数据量 35% (经验保守值, 取 1/3)
+    local est_backup=$(( dbsz / 3 ))
+    local need=$(( est_backup * (100 + safety) / 100 ))
+    local avail_h=$(human_size "$avail_bytes")
+    local need_h=$(human_size "$need")
+    local dbsz_h=$(human_size "$dbsz")
+
+    log_info "空间预检: 数据文件≈${dbsz_h}, 估算备份集≈${need_h}(含 ${safety}% 安全余量), 可用空间=${avail_h}"
+    if [ "$avail_bytes" -lt "$need" ]; then
+        local short=$(( need - avail_bytes ))
+        send_notification "OMF 备份空间不足, 已中止" "备份目录 ${backup_dir} 可用 ${avail_h}, 估算需 ${need_h} (差 $(human_size "$short"))。请清理旧备或扩容后重试。"
+        log_error "备份空间不足: 可用 ${avail_h} < 所需 ${need_h}, 已中止以避免盘满损坏备份集"
+        return 1
+    fi
+    return 0
+}
+
 # 配置驱动的自动备份
 backup_auto() {
     local mode="${BACKUP_MODE:-both}"
     log_step "按配置 BACKUP_MODE=${mode} 执行备份"
     case "$mode" in
         logical)  backup_logical;;
-        physical) backup_physical;;
-        both)     backup_logical; backup_physical;;
+        physical) backup_spatial_check || return 1; backup_physical;;
+        both)     backup_logical; backup_spatial_check || return 1; backup_physical;;
         *) log_error "未知 BACKUP_MODE: $mode (应为 logical|physical|both)";;
     esac
 }
@@ -238,6 +278,31 @@ EOF
     fi
 }
 
+# RMAN 执行 + 失败重试 (缓解网络存储抖动等偶发瞬断导致的误报失败)
+#   $1  = 重试次数 (默认 1: 即失败重试 1 次, 共最多 2 次)
+#   剩余参数 = rman 脚本 (heredoc 内容, 不含外层 rman target / <<RMANEOF 包装)
+#   成功判定: rc=0 且日志中不含 RMAN-/ORA- 错误; 返回 0 成功 / 1 失败
+rman_run() {
+    local retries="${1:-1}"; shift
+    local script="$1"
+    local attempt=0 log_file="$OMF_RUN_LOG"
+    while [ "$attempt" -le "$retries" ]; do
+        [ "$attempt" -gt 0 ] && log_warn "RMAN 备份失败, 第 ${attempt} 次重试 (共 ${retries} 次)..."
+        set +e
+        as_oracle "rman target / <<RMANEOF
+${script}
+RMANEOF" 2>&1 | tee "$log_file"
+        local rc=${PIPESTATUS[0]}
+        set -e
+        if [ "$rc" -eq 0 ] && ! grep -qiE "RMAN-[0-9]{5}|ORA-[0-9]{5}" "$log_file"; then
+            return 0
+        fi
+        attempt=$(( attempt + 1 ))
+        sleep 5
+    done
+    return 1
+}
+
 #===============================================================================
 # RMAN 增量备份
 #===============================================================================
@@ -255,9 +320,7 @@ backup_incremental() {
     local sc=$(scope_clause)
 
     log_step "RMAN 增量备份 (Level $level, scope=${SCOPE_MODE})"
-    set +e
-    as_oracle "rman target / <<RMANEOF
-CONFIGURE BACKUP OPTIMIZATION ON;
+    local rman_script="CONFIGURE BACKUP OPTIMIZATION ON;
 CONFIGURE RETENTION POLICY TO RECOVERY WINDOW OF ${BACKUP_RETENTION_DAYS} DAYS;
 CONFIGURE DEVICE TYPE DISK PARALLELISM ${BACKUP_PARALLEL};
 CONFIGURE CHANNEL DEVICE TYPE DISK FORMAT '${backup_dir}/%d_%T_%s_%p';
@@ -265,12 +328,8 @@ RUN {
     BACKUP INCREMENTAL LEVEL ${level} ${sc} PLUS ARCHIVELOG;
     BACKUP CURRENT CONTROLFILE FORMAT '${ORACLE_BACKUP}/controlfile/controlfile_%d_%T_%s';
     BACKUP SPFILE FORMAT '${ORACLE_BACKUP}/spfile/spfile_%d_%T_%s';
-}
-RMANEOF" 2>&1 | tee "$log_file"
-    local rc=${PIPESTATUS[0]}
-    set -e
-
-    if [ "$rc" -eq 0 ] && ! grep -qiE "RMAN-[0-9]{5}|ORA-[0-9]{5}" "$log_file"; then
+}"
+    if rman_run 1 "$rman_script"; then
         log_info "RMAN 增量备份完成"
         # 备份成功后才清理 obsolete
         as_oracle "rman target / <<RMANEOF
@@ -325,21 +384,15 @@ backup_physical() {
     local sc=$(scope_clause)
 
     log_step "RMAN 物理全量备份 (scope=${SCOPE_MODE})"
-    set +e
-    as_oracle "rman target / <<RMANEOF
-CONFIGURE RETENTION POLICY TO RECOVERY WINDOW OF ${BACKUP_RETENTION_DAYS} DAYS;
+    local rman_script="CONFIGURE RETENTION POLICY TO RECOVERY WINDOW OF ${BACKUP_RETENTION_DAYS} DAYS;
 CONFIGURE DEVICE TYPE DISK PARALLELISM ${BACKUP_PARALLEL};
 CONFIGURE CHANNEL DEVICE TYPE DISK FORMAT '${backup_dir}/%d_%T_%s_%p';
 RUN {
     BACKUP AS COMPRESSED BACKUPSET ${sc} PLUS ARCHIVELOG;
     BACKUP CURRENT CONTROLFILE FORMAT '${ORACLE_BACKUP}/controlfile/controlfile_%d_%T_%s';
     BACKUP SPFILE FORMAT '${ORACLE_BACKUP}/spfile/spfile_%d_%T_%s';
-}
-RMANEOF" 2>&1 | tee "$log_file"
-    local rc=${PIPESTATUS[0]}
-    set -e
-
-    if [ "$rc" -eq 0 ] && ! grep -qiE "RMAN-[0-9]{5}|ORA-[0-9]{5}" "$log_file"; then
+}"
+    if rman_run 1 "$rman_script"; then
         log_info "RMAN 物理全量备份完成"
         as_oracle "rman target / <<RMANEOF
 DELETE NOPROMPT OBSOLETE;

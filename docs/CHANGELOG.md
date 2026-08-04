@@ -1,5 +1,10 @@
 # 版本变更记录
 
+## v1.30 关键改进（backup 健壮性：空间预检 + 失败重试）
+- **`omf backup auto` 新增备份前空间预检（防盘满损坏备份集）**：物理/增量备份若目录剩余空间不足以容纳估算备份集（数据文件体量 ÷3 再叠加 `BACKUP_SPACE_SAFETY` 默认 20% 安全余量），会**直接中止并发送告警**，避免在"盘满"下写出损坏备份集——这是生产上最常见的"备份中途失败"事故。逻辑备份（expdp 增量追加、体量较小）不强制预检。`BACKUP_SPACE_SAFETY` 可在配置中调高阈值。
+- **物理/增量备份新增失败重试（缓解偶发瞬断误报）**：封装 `rman_run` 辅助函数，RMAN 因网络存储抖动等偶发瞬断失败时**自动重试 1 次（共最多 2 次）**，消除误报失败；成功判定仍为 `rc=0 且无 RMAN-/ORA- 错误`。重试仍保留"成功后才清 obsolete / 失败才通知"的既有语义，且**失败绝不删旧备**。
+- 预检失败会在 `backup auto` 的物理/`both` 分支前短路返回，避免浪费一次注定失败的备份。
+
 ## v1.29 关键改进（pdb close / dg apply stop 补确认）
 - **`omf db pdb close` 增加确认**：原实现**无任何确认**即执行 `ALTER PLUGGABLE DATABASE <pdb> CLOSE IMMEDIATE`，会回滚未提交事务并断开该 PDB 上所有会话，误调用即中断业务。现加普通 `confirm` + 业务中断警告（关闭属可用性影响、可逆——`omf db pdb open` 即恢复，故用普通 `confirm`，与 `db stop` 风格一致）。
 - **`omf db dg apply stop` 增加确认与后果提示**：原实现无确认即 `RECOVER MANAGED STANDBY DATABASE CANCEL`。停止 MRP 后备库不再追平主库，**长期停止会累积应用延迟与归档间隙，主库归档可能因备库未确认而堆积撑满 FRA**（是运维中常见的"停了忘记开"事故）。现加 `confirm` 并醒目提示"维护完成后请及时 `omf db dg apply start`"。

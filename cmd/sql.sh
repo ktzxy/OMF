@@ -176,6 +176,10 @@ sql_init() {
         if [ -n "$only_schema" ]; then
             names="$only_schema"
             log_info "仅初始化单模式: ${names} (其余模式不受影响)"
+            # 单模式"重建"实际会以 _create_schema.sql 重跑 CREATE USER / CREATE TABLESPACE,
+            # 会改变该模式连接状态并可能中断正在访问该模式的业务, 属有副作用操作;
+            # 必须在真正执行(重建落库)前确认, 否则 confirm 形同虚设。
+            confirm "确认重建模式 ${only_schema}? (将重建其用户/表空间, 可能中断该模式现有连接)"
         else
             names="$(omf_schema_list)"
             log_info "待初始化模式: $names"
@@ -206,10 +210,6 @@ sql_init() {
     # 仅全量 init 时执行全局脚本; 单模式(--schema)重建只重建该模式的用户/表空间,
     # 不重跑全局 init 脚本(通常只需一次, 且非模式专属)。
     if [ -n "$only_schema" ]; then
-        # 单模式"重建"实际会以 _create_schema.sql 重跑 CREATE USER / CREATE TABLESPACE
-        # (若用户已存在, 模板内通常用 CREATE ... OR REPLACE / 幂等跳过, 但仍会短暂 DROP 会话);
-        # 该操作会改变该模式连接状态并可能中断正在访问该模式的业务, 故需显式确认。
-        confirm "确认重建模式 ${only_schema}? (将重建其用户/表空间, 可能中断该模式现有连接)"
         log_info "单模式重建完成 (已重建 ${only_schema} 的用户/表空间)。全局 init 脚本未重跑。"
         return 0
     fi

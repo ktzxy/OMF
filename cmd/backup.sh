@@ -279,15 +279,17 @@ EOF
 }
 
 # RMAN 执行 + 失败重试 (缓解网络存储抖动等偶发瞬断导致的误报失败)
-#   $1  = 重试次数 (默认 1: 即失败重试 1 次, 共最多 2 次)
-#   剩余参数 = rman 脚本 (heredoc 内容, 不含外层 rman target / <<RMANEOF 包装)
+#   $1  = 重试次数 (默认读 RMAN_RETRY, 再回退 1: 即失败重试 1 次, 共最多 2 次)
+#   $2  = 重试间隔秒 (默认读 RMAN_RETRY_INTERVAL, 再回退 5)
+#   $3  = rman 脚本 (heredoc 内容, 不含外层 rman target / <<RMANEOF 包装)
 #   成功判定: rc=0 且日志中不含 RMAN-/ORA- 错误; 返回 0 成功 / 1 失败
 rman_run() {
-    local retries="${1:-1}"; shift
+    local retries="${1:-${OMF_CONFIG[RMAN_RETRY]:-1}}"; shift || true
+    local interval="${2:-${OMF_CONFIG[RMAN_RETRY_INTERVAL]:-5}}"; shift || true
     local script="$1"
     local attempt=0 log_file="$OMF_RUN_LOG"
     while [ "$attempt" -le "$retries" ]; do
-        [ "$attempt" -gt 0 ] && log_warn "RMAN 备份失败, 第 ${attempt} 次重试 (共 ${retries} 次)..."
+        [ "$attempt" -gt 0 ] && log_warn "RMAN 备份失败, 第 ${attempt} 次重试 (共 ${retries} 次, 间隔 ${interval}s)..."
         set +e
         as_oracle "rman target / <<RMANEOF
 ${script}
@@ -298,7 +300,7 @@ RMANEOF" 2>&1 | tee "$log_file"
             return 0
         fi
         attempt=$(( attempt + 1 ))
-        sleep 5
+        [ "$attempt" -le "$retries" ] && sleep "$interval"
     done
     return 1
 }
@@ -329,7 +331,7 @@ RUN {
     BACKUP CURRENT CONTROLFILE FORMAT '${ORACLE_BACKUP}/controlfile/controlfile_%d_%T_%s';
     BACKUP SPFILE FORMAT '${ORACLE_BACKUP}/spfile/spfile_%d_%T_%s';
 }"
-    if rman_run 1 "$rman_script"; then
+    if rman_run "" "" "$rman_script"; then
         log_info "RMAN 增量备份完成"
         # 备份成功后才清理 obsolete
         as_oracle "rman target / <<RMANEOF
@@ -392,7 +394,7 @@ RUN {
     BACKUP CURRENT CONTROLFILE FORMAT '${ORACLE_BACKUP}/controlfile/controlfile_%d_%T_%s';
     BACKUP SPFILE FORMAT '${ORACLE_BACKUP}/spfile/spfile_%d_%T_%s';
 }"
-    if rman_run 1 "$rman_script"; then
+    if rman_run "" "" "$rman_script"; then
         log_info "RMAN 物理全量备份完成"
         as_oracle "rman target / <<RMANEOF
 DELETE NOPROMPT OBSOLETE;

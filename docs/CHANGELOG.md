@@ -1,5 +1,11 @@
 # 版本变更记录
 
+## v1.32 关键改进（sql.sh 危险路径加固 / rman_run 可配置化 / monitor 输出补指标）
+- **`omf sql init --schema` 单模式重建补确认**：原实现无确认即重跑 `_create_schema.sql` 重建该模式用户/表空间，会短暂 DROP 会话、中断该模式现有连接。现加普通 `confirm` + 连接中断警告（隐含重建语义，仅普通确认即可，与 `db stop` 风格一致）。
+- **`omf sql rollback --all` 升级为 `confirm_danger`（防 -y 静默清记录）**：原 `--all` / `--all --schema` 仅用普通 `confirm`，在 `-y`/cron 下会被静默执行、不可逆地清除全部 SQL 执行记录（重跑将从头重建所有模式）。现改为 `confirm_danger`：即便 `-y` 也强制输入 `YES`，非交互环境默认中止；确需脚本化时 `OMF_ALLOW_DANGEROUS=1` 放行。
+- **`rman_run` 重试次数/间隔抽为配置项（不再硬编码 1 次/5s）**：新增 `RMAN_RETRY`（默认 1）与 `RMAN_RETRY_INTERVAL`（默认 5s），`omf backup {auto|physical|incr}` 自动读取；`conf/omf.conf.example` 已补注释。网络存储抖动场景下可按需调高重试，消除误报失败；重试耗尽前才 `sleep`，最后一次失败不再空等。
+- **`omf check monitor` 的 json/prom 输出补 4 个新指标（供 Prometheus 采集）**：原输出仅含 db_up/disk/mem/ora_errors/status。现 `json` 与 `prom` 均新增 `invalid_objects`（无效对象数）、`tbs_max_pct`（表空间最大使用率）、`backup_age_days`（最近全量备份天数，-1 表示无）、`dg_lag_sec`（DG 应用延迟秒）；历史快照 `monitor_history.jsonl` 同步补这 4 字段，便于趋势回溯。
+
 ## v1.31 关键改进（check monitor 阈值告警扩展）
 - **`omf check monitor --alert` 新增 4 类告警维度（主动推送，不再仅展示）**：原 `--alert` 仅覆盖磁盘/内存/ORA-错误，`check_db` 虽已采集无效对象、表空间、备份时效却只展示不告警。本轮 `_monitor_collect` 新增采集并在 `_monitor_alert` 加阈值判定：
   - **无效对象数**（`dba_objects status='INVALID'`，阈值 `MONITOR_INVALID_WARN=20`/`ERR=100`）；

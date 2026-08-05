@@ -206,6 +206,10 @@ sql_init() {
     # 仅全量 init 时执行全局脚本; 单模式(--schema)重建只重建该模式的用户/表空间,
     # 不重跑全局 init 脚本(通常只需一次, 且非模式专属)。
     if [ -n "$only_schema" ]; then
+        # 单模式"重建"实际会以 _create_schema.sql 重跑 CREATE USER / CREATE TABLESPACE
+        # (若用户已存在, 模板内通常用 CREATE ... OR REPLACE / 幂等跳过, 但仍会短暂 DROP 会话);
+        # 该操作会改变该模式连接状态并可能中断正在访问该模式的业务, 故需显式确认。
+        confirm "确认重建模式 ${only_schema}? (将重建其用户/表空间, 可能中断该模式现有连接)"
         log_info "单模式重建完成 (已重建 ${only_schema} 的用户/表空间)。全局 init 脚本未重跑。"
         return 0
     fi
@@ -716,10 +720,13 @@ sql_rollback() {
     local executed_dir="${OMF_HOME}/sql/.executed"
     if [ "$name" = "--all" ]; then
         if [ -n "$schema" ]; then
-            confirm "确认重置模式 ${schema} 的全部 SQL 执行记录?"
+            # 重置模式执行记录不可恢复: 之后重跑会把该模式所有 init 脚本从头执行,
+            # 可能重复创建对象/数据; 属不可逆的高危重置, 用 confirm_danger 防止 -y 静默执行。
+            confirm_danger "确认重置模式 ${schema} 的全部 SQL 执行记录? (不可恢复, 重跑将从头重建该模式)" || return 1
             rm -rf "${executed_dir}/${schema}"; log_info "模式 ${schema} 的执行记录已清除 (可重新 omf sql init --schema ${schema})"
         else
-            confirm "确认重置所有 SQL 执行记录?"
+            # 全库执行记录清除同样不可逆: 所有模式/全局脚本将被从头重跑, 风险面更大。
+            confirm_danger "确认重置所有 SQL 执行记录? (不可恢复, 所有模式将从头重跑)" || return 1
             rm -rf "$executed_dir"; log_info "所有执行记录已清除"
         fi
     else

@@ -741,7 +741,7 @@ _monitor_run_once() {
     if [ "$fmt" != "none" ]; then
         local hist="${OMF_HOME}/logs/monitor_history.jsonl"
         mkdir -p "$(dirname "$hist")" 2>/dev/null || true
-        echo "{\"ts\":\"$(date '+%Y-%m-%dT%H:%M:%S')\",\"db_up\":${db_up},\"mem_free_pct\":${mem_free_pct},\"ora_errors\":${ora_errors},\"status\":\"${status}\",\"disk\":{${_MC_DP_JSON}}}" >> "$hist" 2>/dev/null || true
+        echo "{\"ts\":\"$(date '+%Y-%m-%dT%H:%M:%S')\",\"db_up\":${db_up},\"mem_free_pct\":${mem_free_pct},\"ora_errors\":${ora_errors},\"status\":\"${status}\",\"disk\":{${_MC_DP_JSON}},\"invalid_objects\":${_MC_INVAL},\"tbs_max_pct\":${_MC_TS_MAX},\"backup_age_days\":${_MC_BACKUP_AGE},\"dg_lag_sec\":${_MC_DG_LAG}}" >> "$hist" 2>/dev/null || true
     fi
 
     case "$fmt" in
@@ -757,6 +757,18 @@ _monitor_run_once() {
             done
             echo "omf_mem_free_pct $mem_free_pct"
             echo "omf_alert_ora_errors $ora_errors"
+            echo "# HELP omf_invalid_objects 数据库无效对象数 (db 不可用时为 0)"
+            echo "# TYPE omf_invalid_objects gauge"
+            echo "omf_invalid_objects ${_MC_INVAL}"
+            echo "# HELP omf_tbs_max_pct 所有表空间中最大使用率 (%)"
+            echo "# TYPE omf_tbs_max_pct gauge"
+            echo "omf_tbs_max_pct ${_MC_TS_MAX}"
+            echo "# HELP omf_backup_age_days 最近一次成功全量备份距今天数 (-1 表示无备份)"
+            echo "# TYPE omf_backup_age_days gauge"
+            echo "omf_backup_age_days ${_MC_BACKUP_AGE}"
+            echo "# HELP omf_dg_lag_sec Data Guard 应用延迟秒数 (未启用 DG 时为 -1)"
+            echo "# TYPE omf_dg_lag_sec gauge"
+            echo "omf_dg_lag_sec ${_MC_DG_LAG}"
             echo "omf_status{state=\"$status\"} 1"
             ;;
         json)
@@ -772,6 +784,10 @@ _monitor_run_once() {
             echo "  \"disk_usage_pct\": {${disk_json}},"
             echo "  \"mem_free_pct\": $mem_free_pct,"
             echo "  \"alert_ora_errors\": $ora_errors,"
+            echo "  \"invalid_objects\": ${_MC_INVAL},"
+            echo "  \"tbs_max_pct\": ${_MC_TS_MAX},"
+            echo "  \"backup_age_days\": ${_MC_BACKUP_AGE},"
+            echo "  \"dg_lag_sec\": ${_MC_DG_LAG},"
             echo "  \"status\": \"$status\""
             echo "}"
             ;;

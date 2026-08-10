@@ -110,7 +110,7 @@ cmd_help() {
         status)     echo "用法: omf status [history [N]]";;
         log)        echo "用法: omf log {view|tail|rotate|clean}";;
         clean)      echo "用法: omf clean {logs|trace|audit|archive|backup|recyclebin|all|schedule} [-d 天数 | --all] [-p|--preview] [-y]"; echo "  backup: ≡ omf backup cleanup (清理旧备份), 支持 --logical/--physical/-d N/--all/-p/-y"; echo "  recyclebin: 清空数据库回收站 (PURGE DBA_RECYCLEBIN, 不可逆, 需显式调用)";;
-        config)     echo "用法: omf config {get|set|list|validate|show}";;
+        config)     echo "用法: omf config {get|set|list|validate|show|init|password}"; echo "  password [KEY...] 交互式设置敏感口令到 conf/.omf.secret (600); 默认设 ORACLE/SYSTEM/PDB/APP 四口令; --remove <KEY> 移除";;
         self-update) echo "用法: omf self-update [version|force]";;
         selftest)  echo "用法: omf selftest";;
         info)      echo "用法: omf info";;

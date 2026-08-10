@@ -1,6 +1,8 @@
 # ===== OMF 本地敏感/运行时文件，不要上传 GitHub =====
 # 真实配置含明文密码，仅保留本地
 conf/omf.conf
+# 敏感口令文件 (omf config password 生成, 权限 600), 绝不上传
+conf/.omf.secret
 
 # 运行日志
 logs/

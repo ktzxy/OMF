@@ -1,5 +1,10 @@
 # 版本变更记录
 
+## v1.34 关键改进（敏感口令独立管理 conf/.omf.secret / 回归测试补口令断言）
+- **新增 `omf config password` 子命令（明文口令与 omf.conf 分离）**：原所有口令（`ORACLE_PASSWORD`/`SYSTEM_PASSWORD`/`PDB_PASSWORD`/`APP_PASSWORD` 及各模式密码）均明文写于 `omf.conf`，且默认带出厂弱口令兜底。现新增交互式口令管理：`read -s` 不回显、不写入 shell 历史，写入独立的 `conf/.omf.secret`（`chmod 600`）；支持显式传键名（如 `omf config password LSDHERP_PASSWORD`）与 `--remove <KEY>`。非交互（无 tty）下禁止设置，防密码经脚本/管道明文注入（自动化请用环境变量注入）。
+- **`load_config` 支持加载 `.omf.secret`（口令优先级分离）**：加载顺序为 **环境变量 > `.omf.secret` > `omf.conf` > 出厂默认**。secret 文件仅提取 `*_PASSWORD` 键（防任意注入），且权限非 600 时告警提示收紧。修复了一个优先级 bug：secret 原先会**覆盖环境变量**，现改为仅当变量未在环境中时用 secret 覆盖 omf.conf，保证显式 `export` 优先。
+- **`tests/harness.sh` 回归断言 7→9 项**：新增 `secret 文件口令覆盖 omf.conf` 与 `环境变量口令优先于 secret` 两项，固化口令优先级语义，防未来改动破坏。
+
 ## v1.33 关键改进（confirm 非交互语义修正 / set_config 防注入 / monitor 补 FRA 指标 / 危险路径回归测试）
 - **`confirm` 非交互拒绝改为返回非0（修正 cron 误判"已执行"）**：原实现非交互未指定 `-y` 时 `exit 0`，cron 调用方无法区分"执行了"与"被拒绝"；现改为返回非0（与 `confirm_danger` 一致），使 `set -e` + `pipefail` 下调用链正确中断，cron 能感知"操作未执行"。交互下用户主动取消仍为 `exit 0`（正常结束，语义不变）。
 - **`omf config set` 防注入加固**：`set_config` 新增键名白名单校验（仅允许 `[A-Za-z0-9_]`，防止经键名注入 `OMF_CONFIG["..."]` 数组语法）与换行值拒绝（防止 sed 追加时注入多条配置行）。非法输入直接 `log_error` 报错，不落盘。

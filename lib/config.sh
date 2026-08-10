@@ -89,6 +89,37 @@ load_config() {
         source "$config_file"
     fi
 
+    # ---------- 加载敏感口令文件 conf/.omf.secret (独立于 omf.conf, 权限 600) ----------
+    # 由 `omf config password` 生成, 存放 ORACLE_PASSWORD/SYSTEM_PASSWORD/PDB_PASSWORD/APP_PASSWORD
+    # 及每个模式的 <大写名>_PASSWORD。优先级: 环境变量 > .omf.secret > omf.conf > 出厂默认。
+    # 与 omf.conf 分离使真实口令可独立收紧权限(600), 且不随 omf.conf 的出厂弱口令兜底被覆盖。
+    local secret_file="${OMF_CONFIG_FILE:+$(dirname "$OMF_CONFIG_FILE")}/.omf.secret"
+    [ -z "$OMF_CONFIG_FILE" ] && secret_file="${OMF_HOME}/conf/.omf.secret"
+    if [ -f "$secret_file" ]; then
+        log_debug "加载敏感口令文件: $secret_file"
+        # 仅提取 *_PASSWORD 键, 避免任意内容注入; 权限过松时警告(不阻断)。
+        local _spm; _spm="$(stat -c '%a' "$secret_file" 2>/dev/null || echo 644)"
+        if [ "${_spm#???}" != "" ] || [ "${_spm:0:1}" != "6" ] && [ "${_spm:0:1}" != "4" ] && [ "${_spm:0:1}" != "0" ]; then
+            log_warn ".omf.secret 权限为 ${_spm} (建议 600), 请 chmod 600 收紧"
+        fi
+        local _k _v _in_env
+        while IFS='=' read -r _k _v; do
+            case "$_k" in
+                *_PASSWORD)
+                    # 优先级: 环境变量 > secret。若该键已在环境中(用户显式 export),
+                    # 则不覆盖; 否则用 secret 覆盖 omf.conf。
+                    if env | grep -q "^${_k}="; then
+                        log_debug "环境变量 ${_k} 优先, 忽略 secret 中的同名口令"
+                        continue
+                    fi
+                    _v="${_v%\"}"; _v="${_v#\"}"
+                    export "$_k=$_v"
+                    ;;
+            esac
+        done < <(grep -E '^[A-Za-z0-9_]+_PASSWORD=' "$secret_file" 2>/dev/null)
+        unset _spm _k _v _in_env
+    fi
+
     # 关键修复: source 后配置项只是【全局变量】, 必须同步回 OMF_CONFIG 数组,
     # 否则下面的导出循环会用数组默认值覆盖掉配置文件中的覆盖值
     # (此前 HUGEPAGES_DEFER 等覆盖项不生效的根因)

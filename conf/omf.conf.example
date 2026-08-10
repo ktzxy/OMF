@@ -2,7 +2,9 @@
 # OMF 配置文件模板 (脱敏)
 # 用法: cp conf/omf.conf.example conf/omf.conf && 按需修改
 # 修改后执行: omf config validate
-# 注意: 真实密码建议通过环境变量注入, 例如 export ORACLE_PASSWORD=xxx
+# 注意: 真实密码建议通过环境变量注入 (export ORACLE_PASSWORD=xxx),
+#       或运行 `omf config password` 交互式写入独立的 conf/.omf.secret (权限 600, 不落 shell 历史).
+#       优先级: 环境变量 > .omf.secret > omf.conf > 出厂默认。
 #===============================================================================
 
 # ===== 数据库配置 =====

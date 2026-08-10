@@ -28,8 +28,12 @@ cmd_config() {
         init)
             init_config "$@"
             ;;
+        password)
+            config_password "$@"
+            ;;
         *)
-            echo "用法: omf config {get|set|list|validate|show|init}"
+            echo "用法: omf config {get|set|list|validate|show|init|password}"
+            echo "  password  交互式设置敏感口令 (写入 conf/.omf.secret, 权限 600, 不落 shell 历史)"
             exit 1
             ;;
     esac
@@ -287,4 +291,89 @@ EOF
     log_info "配置文件已创建: $config_file"
     echo ""
     echo "请根据实际环境修改配置后执行: omf config validate"
+}
+
+#===============================================================================
+# 敏感口令管理: omf config password [KEY...]
+#   - 交互式设置口令, read -s 不回显且不写入 shell 历史
+#   - 写入独立的 conf/.omf.secret (chmod 600), 与 omf.conf 分离
+#   - 优先级: 环境变量 > .omf.secret > omf.conf > 出厂默认
+#   - 默认设置 4 个核心口令; 可显式传键名(如 omf config password LSDHERP_PASSWORD)
+#   - 支持 --remove <KEY> 从 secret 中移除某口令
+#===============================================================================
+config_password() {
+    local keys=() remove=""
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --remove) remove="${2:-}"; shift 2;;
+            -h|--help)
+                echo "用法: omf config password [KEY...] | --remove <KEY>"
+                echo "  默认: 依次设置 ORACLE/SYSTEM/PDB/APP 四个口令"
+                echo "  可显式传键名: omf config password ORACLE_PASSWORD LSDHERP_PASSWORD"
+                echo "  --remove <KEY>: 从 .omf.secret 移除某口令"
+                return 0;;
+            *) keys+=("$1"); shift;;
+        esac
+    done
+    [ -n "$remove" ] && { config_password_remove "$remove"; return $?; }
+
+    local secret_file="${OMF_HOME}/conf/.omf.secret"
+    [ -n "${OMF_CONFIG_FILE:-}" ] && secret_file="$(dirname "$OMF_CONFIG_FILE")/.omf.secret"
+    mkdir -p "$(dirname "$secret_file")"
+
+    if [ ${#keys[@]} -eq 0 ]; then
+        keys=(ORACLE_PASSWORD SYSTEM_PASSWORD PDB_PASSWORD APP_PASSWORD)
+    fi
+
+    log_step "设置敏感口令 (写入 $secret_file)"
+    local k pw pw2 ok
+    for k in "${keys[@]}"; do
+        # 键名合法性 (与 set_config 一致的白名单)
+        [[ "$k" =~ ^[A-Za-z0-9_]+_PASSWORD$ ]] || { log_error "非法口令键名: $k (需以 _PASSWORD 结尾, 仅字母/数字/下划线)"; return 1; }
+        ok=""
+        while [ -z "$ok" ]; do
+            # 非交互 (无 tty) 下禁止设置, 防止密码经脚本/管道明文注入
+            if [ ! -t 0 ]; then
+                log_error "$k 需在交互终端设置 (密码不回显; 自动化请改用环境变量注入)"
+                return 1
+            fi
+            read -r -p "  输入 $k 新口令 (输入后不回显): " -s pw; echo ""
+            [ -z "$pw" ] && { echo "  (空口令跳过, 保留原值)"; break; }
+            read -r -p "  再次输入确认: " -s pw2; echo ""
+            [ "$pw" = "$pw2" ] || { echo "  ✗ 两次输入不一致, 重新输入"; continue; }
+            # 拒绝换行 (防 secret 文件注入) 与明显弱口令
+            if [[ "$pw" == *$'\n'* ]] || [[ "$pw" == *$'\r'* ]]; then
+                echo "  ✗ 口令不能含换行符, 重新输入"; continue
+            fi
+            ok=1
+        done
+        [ -z "$pw" ] && continue
+        # 写入 secret: 去掉旧行后追加; 键名已白名单, 值用引号包裹
+        if [ -f "$secret_file" ]; then
+            grep -v "^${k}=" "$secret_file" 2>/dev/null > "${secret_file}.tmp" || true
+            mv "${secret_file}.tmp" "$secret_file"
+        else
+            : > "$secret_file"
+        fi
+        printf '%s="%s"\n' "$k" "$pw" >> "$secret_file"
+        chmod 600 "$secret_file" 2>/dev/null || true
+        echo "  ✓ $k 已更新"
+    done
+    # 收紧 secret 文件权限
+    chmod 600 "$secret_file" 2>/dev/null || true
+    log_info "口令已保存到 $secret_file (权限 $(stat -c '%a' "$secret_file" 2>/dev/null || echo 600))"
+}
+
+# 从 .omf.secret 移除指定口令
+config_password_remove() {
+    local key="$1"
+    local secret_file="${OMF_HOME}/conf/.omf.secret"
+    [ -n "${OMF_CONFIG_FILE:-}" ] && secret_file="$(dirname "$OMF_CONFIG_FILE")/.omf.secret"
+    [ -f "$secret_file" ] || { log_warn "口令文件不存在: $secret_file"; return 0; }
+    if grep -q "^${key}=" "$secret_file" 2>/dev/null; then
+        grep -v "^${key}=" "$secret_file" > "${secret_file}.tmp" && mv "${secret_file}.tmp" "$secret_file"
+        log_info "已从 secret 移除 $key"
+    else
+        log_info "$key 不在 secret 文件中"
+    fi
 }

@@ -88,6 +88,31 @@ t "set_config 含换行值被拒绝" \
 t "set_config 合法键值成功持久化" \
     load_set_config "OMF_CONFIG_FILE=\$(mktemp); echo 'X=1' > \$OMF_CONFIG_FILE; set_config FOO bar; grep -q '^FOO=\"bar\"' \$OMF_CONFIG_FILE"
 
+# ---- 8-9) 敏感口令文件 conf/.omf.secret 加载优先级 ----
+# 8) secret 文件覆盖 omf.conf 中的口令默认值
+t "secret 文件口令覆盖 omf.conf" \
+    bash -c "
+        tmpd=\$(mktemp -d)
+        printf 'ORACLE_PASSWORD=\"sec123456\"\nAPP_PASSWORD=\"app7890\"\n' > \$tmpd/.omf.secret
+        chmod 600 \$tmpd/.omf.secret
+        : > \$tmpd/omf.conf
+        export OMF_CONFIG_FILE=\$tmpd/omf.conf
+        OMF_HOME='${OMF_HOME}' bash -c 'source lib/common.sh; source lib/config.sh; [ \"\$ORACLE_PASSWORD\" = sec123456 ] && [ \"\$APP_PASSWORD\" = app7890 ]'
+        rc=\$?; rm -rf \$tmpd; exit \$rc
+    "
+
+# 9) 环境变量优先于 secret
+t "环境变量口令优先于 secret" \
+    bash -c "
+        tmpd=\$(mktemp -d)
+        printf 'ORACLE_PASSWORD=\"sec123456\"\n' > \$tmpd/.omf.secret
+        chmod 600 \$tmpd/.omf.secret
+        : > \$tmpd/omf.conf
+        export OMF_CONFIG_FILE=\$tmpd/omf.conf ORACLE_PASSWORD=envpw789
+        OMF_HOME='${OMF_HOME}' bash -c 'source lib/common.sh; source lib/config.sh; [ \"\$ORACLE_PASSWORD\" = envpw789 ]'
+        rc=\$?; rm -rf \$tmpd; exit \$rc
+    "
+
 echo ""
 echo "═══════════════════════════════════════"
 echo "回归结果: ✓ $PASS 通过  ✗ $FAIL 失败"

@@ -84,3 +84,43 @@ omf backup restore --rman --validate     # 仅校验可恢复性
 
 `omf backup cleanup` / `omf clean backup` 共用：
 `--logical` 仅逻辑备份(dump)、`--physical` 仅物理备份(RMAN)，默认两者；`-d N` 删 N 天前（默认 `BACKUP_RETENTION_DAYS`）、`--all` 删全部、`-p|list` 仅预览、`-y` 免确认。
+
+## 9. 备份恢复演练（DR 演练）
+
+> 定期演练证明备份**可恢复**，而不只是"已生成"。`omf backup validate` 只做 `RESTORE VALIDATE`（校验块/文件可读，**不落数据**），无法证明能真实恢复。建议按 DR 周期（如每季度）做一次真实恢复演练。
+
+### 9.1 逻辑备份（dump）恢复演练
+
+```bash
+# 1. 选一份较新的 dump 做演练 (避免用最新的, 模拟"落后一点"的灾备)
+omf backup list expdp              # 找一份 N 天前的 dump
+
+# 2. 在【演练目标】恢复 (建议恢复到临时 PDB 或临时 schema, 不影响生产)
+omf backup restore <dumpfile.dmp> --pdb <临时PDB>    # 整库到临时 PDB
+omf backup restore <dumpfile.dmp> --schema <临时schema>  # 单模式到临时 schema
+
+# 3. 验证恢复结果 (对象数/数据量/无效对象)
+omf sql usage --schema <临时schema>    # 看对象统计 + INVALID 检查
+# 关键行数抽验: 与应用侧约定 1-2 张表, 对比 dump 时的行数
+```
+
+### 9.2 物理备份（RMAN）恢复演练
+
+```bash
+# 1. 校验备份可恢复性 (可随时做, 不落数据)
+omf backup restore --rman --validate
+
+# 2. 真实恢复演练 (建议在【独立演练库】上做, 避免破坏生产; 或在维护窗口对目标库)
+omf backup restore --rman --time 'YYYY-MM-DD HH24:MI:SS'   # 恢复到演练时间点
+# 不完全恢复完成后: ALTER DATABASE OPEN RESETLOGS; 再确认数据
+
+# 3. 验证: 对比该时间点的关键表数据/SCN, 确认恢复正确
+```
+
+### 9.3 演练后回滚/收尾
+
+- **临时 PDB/schema 演练**：验证通过后直接 `DROP` 临时对象即可，不影响生产。
+- **对目标库的真实恢复**：演练即真实恢复，后续按需重建 DG（若启用）并恢复应用。
+- 每次演练后记录：恢复耗时、失败点、耗时是否在 RTO 内、是否需要调整 `BACKUP_RETENTION_DAYS`。
+
+> ⚠️ 物理恢复演练若在 `ENABLE_DG=true` 的主库执行会破坏 DG（见 §7），务必在独立演练库或备库重建前进行。

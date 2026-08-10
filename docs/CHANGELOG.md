@@ -1,5 +1,10 @@
 # 版本变更记录
 
+## v1.50 关键改进（排障文档补全：常见 ORA- 速查表 + DG 排查指引 + DR 演练）
+- **TROUBLESHOOT.md 新增「常见 ORA- 速查表」**：汇总散落各文档的错误码（ORA-01034/01109/01119/01537/01920/12514/16532/27037/31631/31684/39082/39149 等），每项对应**根因 + OMF 处理命令**，作为排障快速对照入口（配合 `omf log errors` 高频错误聚合）。
+- **TROUBLESHOOT.md 新增「DG 故障排查指引」**：按"先传输→再应用→后间隙/磁盘"的顺序，覆盖 MRP 不启动、传输延迟大、FRA 满、角色误判、脑裂/failover 后旧主库等 6 类常见场景的排查步骤。
+- **BACKUP.md 新增「备份恢复演练（DR 演练）」**：明确 `backup validate` 只做 `RESTORE VALIDATE` 不落数据、无法证明可恢复；给出逻辑/物理两种真实恢复演练流程与验证方法、演练后回滚/收尾、以及演练记录要点（RTO 内/保留期调整）。
+
 ## v1.49 关键改进（CONFIG.md 补全 + 口令说明统一 + wallet 幂等 mock 测试）
 - **CONFIG.md 补全配置项表格**：新增 `BACKUP_SPACE_SAFETY`（此前连 example 都没有）、`RMAN_RETRY`/`RMAN_RETRY_INTERVAL`、`OMF_LOG_STRUCTURED`、`OMF_UPDATE_URL`，以及路径类（`ORACLE_USER/GROUP`、`ORACLE_DATA_BASE/ARCH/FRA`、`FRA_SIZE_MB`、`ORACLE_ZIP`）和实例参数类（`PROCESSES`/`OPEN_CURSORS`/`REDO_SIZE_MB`/`CHARSET`/`NLS_LANG`）。
 - **CONFIG.md 新增口令管理说明（§2.1）**：`omf config password` 写入独立 `conf/.omf.secret`（600），并明确加载优先级（环境变量 > `.omf.secret` > `omf.conf` > 出厂默认），替换过时的"仅靠环境变量"表述。

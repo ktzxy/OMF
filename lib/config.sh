@@ -73,6 +73,8 @@ load_config() {
     OMF_CONFIG[LOG_RETENTION_DAYS]="7"
     OMF_CONFIG[AUDIT_RETENTION_DAYS]="30"
     OMF_CONFIG[TRACE_RETENTION_DAYS]="7"
+    # 结构化日志: true 时 omf_*.log 以 JSON Lines 输出 (cmd/sub/level/ts/msg), 便于接监控
+    OMF_CONFIG[OMF_LOG_STRUCTURED]="${OMF_LOG_STRUCTURED:-false}"
 
     # 框架自更新 (omf self-update 使用的 tar.gz 地址, 留空则报错提示)
     OMF_CONFIG[OMF_UPDATE_URL]="${OMF_UPDATE_URL:-}"

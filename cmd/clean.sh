@@ -15,6 +15,7 @@ cmd_clean() {
     CLEAN_DAYS=""
     CLEAN_ALL="false"
     local -a rest=()
+    log_set_subcmd "$subcmd"
     # 兼容 "omf clean logs -d 7" 与 "omf clean -d 7 logs" 两种顺序
     while [[ $# -gt 0 ]]; do
         case "$1" in

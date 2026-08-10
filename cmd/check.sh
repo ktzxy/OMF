@@ -8,6 +8,7 @@
 cmd_check() {
     local subcmd="${1:-all}"
     shift || true
+    log_set_subcmd "$subcmd"
 
     # 退出码透传: omf.sh 用 set -e, 而 case 命令列表中的失败不会触发 set -e,
     # 故子检查的返回码(如 check_all 出错返回 2 / monitor --alert 告警返回 1)会被吞掉,

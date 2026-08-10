@@ -91,6 +91,7 @@ listener_fw_update() {
 #===============================================================================
 cmd_listener() {
     local sub="${1:-status}"; [ $# -gt 0 ] && shift || true
+    log_set_subcmd "$sub"
 
     case "$sub" in
         status)

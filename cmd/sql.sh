@@ -9,6 +9,7 @@
 cmd_sql() {
     local subcmd="${1:-scan}"
     shift || true
+    log_set_subcmd "$subcmd"
     case "$subcmd" in
         scan)     sql_scan "$@";;
         run)      sql_run "$@";;

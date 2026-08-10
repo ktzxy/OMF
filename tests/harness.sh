@@ -126,6 +126,25 @@ t "load_config 语法错误配置被明确拒绝" \
         r2=\$?; rm -rf \$tmpd; exit \$r2
     "
 
+# ---- 11-12) 结构化日志 (cmd/subcmd 字段, 文本 + JSON) ----
+# 11) 默认文本模式: 日志行含 [cmd=...][sub=...]
+t "结构化日志文本模式含 cmd/sub 字段" \
+    load_common "
+        export OMF_CMD=testcmd OMF_HOME='${OMF_HOME}'
+        log_init testcmd; log_set_subcmd build
+        log_info hello
+        grep -q '\[cmd=testcmd\]\[sub=build\]' \"\$OMF_RUN_LOG\"
+    "
+
+# 12) JSON 模式: OMF_LOG_STRUCTURED=true 输出 JSON Lines
+t "结构化日志 JSON 模式输出合法 JSON" \
+    load_common "
+        export OMF_CMD=testcmd OMF_HOME='${OMF_HOME}' OMF_LOG_STRUCTURED=true
+        log_init testcmd; log_set_subcmd run
+        log_info jsonmode
+        head -1 \"\$OMF_RUN_LOG\" | grep -q '\"cmd\":\"testcmd\"' && head -1 \"\$OMF_RUN_LOG\" | grep -q '\"sub\":\"run\"' && head -1 \"\$OMF_RUN_LOG\" | grep -q '\"msg\":\"jsonmode\"'
+    "
+
 echo ""
 echo "═══════════════════════════════════════"
 echo "回归结果: ✓ $PASS 通过  ✗ $FAIL 失败"

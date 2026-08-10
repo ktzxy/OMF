@@ -8,6 +8,7 @@
 cmd_config() {
     local subcmd="${1:-show}"
     shift || true
+    log_set_subcmd "$subcmd"
 
     case "$subcmd" in
         show)

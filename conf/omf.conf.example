@@ -149,3 +149,8 @@ TRACE_RETENTION_DAYS="7"
 #RMAN_RETRY="1"
 #   重试间隔秒: 每次重试前的等待秒数
 #RMAN_RETRY_INTERVAL="5"
+
+# ===== 运行日志 =====
+# 结构化日志: true 时 logs/omf_*.log 以 JSON Lines 输出 {"ts","level","cmd","sub","msg"},
+#   便于接入 ELK/日志监控; 默认 false (文本格式, 行首附 [cmd=X][sub=Y] 结构化前缀)
+#OMF_LOG_STRUCTURED="false"

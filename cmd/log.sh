@@ -8,6 +8,7 @@
 cmd_log() {
     local subcmd="${1:-view}"
     shift || true
+    log_set_subcmd "$subcmd"
 
     case "$subcmd" in
         view)

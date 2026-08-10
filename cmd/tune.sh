@@ -8,6 +8,7 @@
 cmd_tune() {
     local subcmd="${1:-memory}"
     shift || true
+    log_set_subcmd "$subcmd"
 
     case "$subcmd" in
         memory)

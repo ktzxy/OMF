@@ -8,6 +8,7 @@
 cmd_env() {
     local subcmd="${1:-prepare}"
     shift || true
+    log_set_subcmd "$subcmd"
     case "$subcmd" in
         prepare) env_prepare "$@";;
         check)   env_check "$@";;

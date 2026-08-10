@@ -10,6 +10,7 @@
 cmd_backup() {
     local subcmd="${1:-auto}"
     shift || true
+    log_set_subcmd "$subcmd"
 
     case "$subcmd" in
         full|logical)  backup_logical "$@";;

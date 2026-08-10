@@ -21,6 +21,11 @@ OMF_RUN_LOG=""
 OMF_LOCK_FILE=""
 
 # ---- 日志核心 ----
+# 结构化字段: cmd/subcmd 由 omf.sh 的 log_init / 各 cmd 的 log_set_subcmd 设置。
+# 终端输出保持人类可读 (不含结构化前缀, 不破坏现有 grep/解析);
+# 写文件时:
+#   - 默认: 行首附 [cmd=X][sub=Y]
+#   - OMF_LOG_STRUCTURED=true: JSON Lines (便于接 ELK/监控)
 _log() {
     local level="$1"; shift
     local ts="$(date '+%F %T')"
@@ -34,7 +39,16 @@ _log() {
         *)     out="[$level] $ts - $*";;
     esac
     echo -e "$out"
-    [ -n "$OMF_RUN_LOG" ] && echo "[$level] $ts - $*" >> "$OMF_RUN_LOG"
+    [ -n "$OMF_RUN_LOG" ] || return 0
+    if [ "${OMF_LOG_STRUCTURED:-false}" = "true" ]; then
+        # JSON 转义 (反斜杠/双引号/换行)
+        local _msg="$*" _m; _m="${_msg//\\/\\\\}"; _m="${_m//\"/\\\"}"; _m="${_m//$'\n'/\\n}"
+        printf '{"ts":"%s","level":"%s","cmd":"%s","sub":"%s","msg":"%s"}\n' \
+            "$ts" "$level" "${OMF_CMD:-}" "${OMF_SUBCMD:-}" "$_m" >> "$OMF_RUN_LOG"
+    else
+        printf '[%s] %s [cmd=%s][sub=%s] %s\n' \
+            "$level" "$ts" "${OMF_CMD:-}" "${OMF_SUBCMD:-}" "$*" >> "$OMF_RUN_LOG"
+    fi
 }
 
 log_info()  { _log INFO  "$@"; }
@@ -46,7 +60,16 @@ log_debug() { _log DEBUG "$@"; }
 log_error() {
     local ts="$(date '+%F %T')"
     echo -e "${RED}[ERROR]${NC} $ts - $*" >&2
-    [ -n "$OMF_RUN_LOG" ] && echo "[ERROR] $ts - $*" >> "$OMF_RUN_LOG"
+    if [ -n "$OMF_RUN_LOG" ]; then
+        if [ "${OMF_LOG_STRUCTURED:-false}" = "true" ]; then
+            local _e="$*" _em; _em="${_e//\\/\\\\}"; _em="${_em//\"/\\\"}"; _em="${_em//$'\n'/\\n}"
+            printf '{"ts":"%s","level":"ERROR","cmd":"%s","sub":"%s","msg":"%s"}\n' \
+                "$ts" "${OMF_CMD:-}" "${OMF_SUBCMD:-}" "$_em" >> "$OMF_RUN_LOG"
+        else
+            printf '[ERROR] %s [cmd=%s][sub=%s] %s\n' \
+                "$ts" "${OMF_CMD:-}" "${OMF_SUBCMD:-}" "$*" >> "$OMF_RUN_LOG"
+        fi
+    fi
     send_notification "OMF 执行失败 [$(basename "$0")]" "$*"
     exit 1
 }
@@ -63,14 +86,23 @@ omf_prune_own_logs() {
 }
 
 # 初始化本次运行的集中日志
+#   OMF_LOG_STRUCTURED=true (conf 可配) 时, 日志文件以 JSON Lines 输出结构化字段
+#   (cmd/subcmd/level/ts/msg), 便于 grep 与接入 ELK/监控; 终端仍保持人类可读。
 log_init() {
     local cmd="$1"
     mkdir -p "${OMF_HOME}/logs"
     OMF_RUN_LOG="${OMF_HOME}/logs/omf_${cmd}_$(date +%Y%m%d_%H%M%S).log"
     export OMF_RUN_LOG
+    # 结构化日志开关: 默认关; conf 设 OMF_LOG_STRUCTURED=true 开启
+    export OMF_LOG_STRUCTURED="${OMF_LOG_STRUCTURED:-false}"
     # 每次运行顺手清理过期 OMF 日志 (无副作用, 失败忽略)
     omf_prune_own_logs
     log_debug "运行日志: $OMF_RUN_LOG"
+}
+
+# 记录子命令名 (供结构化日志附加 cmd/subcmd 维度, 由各 cmd_xxx 入口调用)
+log_set_subcmd() {
+    export OMF_SUBCMD="${1:-}"
 }
 
 # ---- 通知 (可选) ----

@@ -8,6 +8,7 @@
 cmd_db() {
     local subcmd="${1:-status}"
     shift || true
+    log_set_subcmd "$subcmd"
 
     case "$subcmd" in
         create)

@@ -117,11 +117,16 @@ require_db_user() {
 }
 
 # ---- 确认 (非交互 / --yes 时自动通过) ----
+# 语义: 
+#   - --yes: 自动通过 (return 0)
+#   - 交互 + yes: 通过 (return 0); 交互 + 其它: 用户主动取消, 视为正常结束 (exit 0)
+#   - 非交互(如 cron)且无 --yes: 默认拒绝。此时调用方无法"主动取消", 只能"默认拒绝";
+#     返回非0让调用链(cron 判障)能感知"未执行", 而非误以为已成功 (与 confirm_danger 一致)。
 confirm() {
     local msg="${1:-确认继续?}"
     [ "${OMF_ASSUME_YES:-false}" = "true" ] && return 0
     # 非交互环境(如 cron)且无 --yes, 默认拒绝以避免危险操作
-    [ -t 0 ] || { log_warn "非交互环境, 未指定 --yes, 已取消: $msg"; exit 0; }
+    [ -t 0 ] || { log_warn "非交互环境, 未指定 --yes, 已取消: $msg"; return 1; }
     local ans
     read -r -p "$msg (yes/no): " ans
     case "$ans" in

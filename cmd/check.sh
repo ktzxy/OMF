@@ -638,7 +638,7 @@ check_monitor() {
 # 采集一次, 结果写入全局 _MC_* 变量 (供 run_once 输出与 alert 判定的复用, 避免重复连库)
 _monitor_collect() {
     _MC_DB_UP=0; _MC_MEM=0; _MC_ORA=0; _MC_STATUS="ok"; _MC_DISK=""; _MC_DP_JSON=""
-    _MC_INVAL=0; _MC_TS_MAX=0; _MC_BACKUP_AGE=-1; _MC_DG_LAG=-1
+    _MC_INVAL=0; _MC_TS_MAX=0; _MC_BACKUP_AGE=-1; _MC_DG_LAG=-1; _MC_ARCH_PCT=-1
     local db_up=0 mem_free_pct=0 ora_errors=0 status="ok" u=""
     local mps=("/" "${OMF_CONFIG[ORACLE_DATA_BASE]}" "${OMF_CONFIG[ORACLE_BACKUP]}")
 
@@ -711,6 +711,15 @@ SELECT NVL(MAX(value),'-') FROM v\\\$dataguard_stats WHERE name='apply lag';\" |
                 _MC_DG_LAG=$(( ${dd:-0}*86400 + ${h:-0}*3600 + ${m:-0}*60 + ${s:-0} ))
             fi
         fi
+
+        # 快速恢复区(FRA)使用率 (%): 满仓会阻塞归档/备份, 是 DG 与备份场景的高危指标。
+        # v$recovery_area_usage 的 PERCENT_SPACE_USED 为 FRA 整体水位; 不可用(如未配置 FRA)时留 -1。
+        local arch_pct
+        arch_pct=$(as_oracle "echo \"set pagesize 0 feedback off heading off
+SELECT ROUND(SUM(PERCENT_SPACE_USED),1) FROM v\\\$recovery_area_usage;\" | sqlplus -s / as sysdba" 2>/dev/null | tr -d ' ')
+        if [ -n "$arch_pct" ] && [[ "$arch_pct" =~ ^[0-9.]+$ ]]; then
+            _MC_ARCH_PCT=$arch_pct
+        fi
     fi
 
     if [ "$db_up" -eq 0 ] || [ "$mem_free_pct" -lt 10 ]; then
@@ -741,7 +750,7 @@ _monitor_run_once() {
     if [ "$fmt" != "none" ]; then
         local hist="${OMF_HOME}/logs/monitor_history.jsonl"
         mkdir -p "$(dirname "$hist")" 2>/dev/null || true
-        echo "{\"ts\":\"$(date '+%Y-%m-%dT%H:%M:%S')\",\"db_up\":${db_up},\"mem_free_pct\":${mem_free_pct},\"ora_errors\":${ora_errors},\"status\":\"${status}\",\"disk\":{${_MC_DP_JSON}},\"invalid_objects\":${_MC_INVAL},\"tbs_max_pct\":${_MC_TS_MAX},\"backup_age_days\":${_MC_BACKUP_AGE},\"dg_lag_sec\":${_MC_DG_LAG}}" >> "$hist" 2>/dev/null || true
+        echo "{\"ts\":\"$(date '+%Y-%m-%dT%H:%M:%S')\",\"db_up\":${db_up},\"mem_free_pct\":${mem_free_pct},\"ora_errors\":${ora_errors},\"status\":\"${status}\",\"disk\":{${_MC_DP_JSON}},\"invalid_objects\":${_MC_INVAL},\"tbs_max_pct\":${_MC_TS_MAX},\"backup_age_days\":${_MC_BACKUP_AGE},\"dg_lag_sec\":${_MC_DG_LAG},\"arch_used_pct\":${_MC_ARCH_PCT}}" >> "$hist" 2>/dev/null || true
     fi
 
     case "$fmt" in
@@ -769,6 +778,9 @@ _monitor_run_once() {
             echo "# HELP omf_dg_lag_sec Data Guard 应用延迟秒数 (未启用 DG 时为 -1)"
             echo "# TYPE omf_dg_lag_sec gauge"
             echo "omf_dg_lag_sec ${_MC_DG_LAG}"
+            echo "# HELP omf_arch_used_pct 快速恢复区(FRA)使用率 (%) (-1 表示未配置/不可用)"
+            echo "# TYPE omf_arch_used_pct gauge"
+            echo "omf_arch_used_pct ${_MC_ARCH_PCT}"
             echo "omf_status{state=\"$status\"} 1"
             ;;
         json)
@@ -788,6 +800,7 @@ _monitor_run_once() {
             echo "  \"tbs_max_pct\": ${_MC_TS_MAX},"
             echo "  \"backup_age_days\": ${_MC_BACKUP_AGE},"
             echo "  \"dg_lag_sec\": ${_MC_DG_LAG},"
+            echo "  \"arch_used_pct\": ${_MC_ARCH_PCT},"
             echo "  \"status\": \"$status\""
             echo "}"
             ;;
@@ -808,6 +821,8 @@ _monitor_alert() {
     local t_err="${OMF_CONFIG[MONITOR_TBS_ERR_PCT]:-92}"
     local b_max="${OMF_CONFIG[MONITOR_BACKUP_MAX_DAYS]:-1}"
     local g_warn="${OMF_CONFIG[MONITOR_DG_LAG_WARN_SEC]:-600}"   # 默认 10 分钟
+    local a_warn="${OMF_CONFIG[MONITOR_ARCH_WARN_PCT]:-80}"      # FRA 使用率 warn
+    local a_err="${OMF_CONFIG[MONITOR_ARCH_ERR_PCT]:-90}"        # FRA 使用率 err
 
     [ "$_MC_DB_UP" -eq 0 ] && { alerts=$((alerts+1)); lines="${lines}ALERT: 数据库不可用(db_up=0)\n"; }
 
@@ -838,6 +853,12 @@ _monitor_alert() {
 
     # DG 应用延迟 (>0 表示已采集)
     if [ "$_MC_DG_LAG" -gt "$g_warn" ]; then alerts=$((alerts+1)); lines="${lines}WARN: DG 应用延迟 ${_MC_DG_LAG}s > ${g_warn}s\n"; fi
+
+    # FRA 使用率 (>=0 表示已采集); 满仓会阻塞归档/备份
+    if [ "${_MC_ARCH_PCT:-0}" -ge 0 ] && [ "${_MC_ARCH_PCT:-0}" -gt "$a_err" ]; then
+        alerts=$((alerts+1)); lines="${lines}ALERT: FRA 使用率 ${_MC_ARCH_PCT}% > ${a_err}% (满仓将阻塞归档!)\n"; \
+    elif [ "${_MC_ARCH_PCT:-0}" -ge 0 ] && [ "${_MC_ARCH_PCT:-0}" -gt "$a_warn" ]; then
+        alerts=$((alerts+1)); lines="${lines}WARN: FRA 使用率 ${_MC_ARCH_PCT}% > ${a_warn}%\n"; fi
 
     if [ "$alerts" -gt 0 ]; then
         printf "%b" "$lines"

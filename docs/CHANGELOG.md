@@ -1,5 +1,11 @@
 # 版本变更记录
 
+## v1.33 关键改进（confirm 非交互语义修正 / set_config 防注入 / monitor 补 FRA 指标 / 危险路径回归测试）
+- **`confirm` 非交互拒绝改为返回非0（修正 cron 误判"已执行"）**：原实现非交互未指定 `-y` 时 `exit 0`，cron 调用方无法区分"执行了"与"被拒绝"；现改为返回非0（与 `confirm_danger` 一致），使 `set -e` + `pipefail` 下调用链正确中断，cron 能感知"操作未执行"。交互下用户主动取消仍为 `exit 0`（正常结束，语义不变）。
+- **`omf config set` 防注入加固**：`set_config` 新增键名白名单校验（仅允许 `[A-Za-z0-9_]`，防止经键名注入 `OMF_CONFIG["..."]` 数组语法）与换行值拒绝（防止 sed 追加时注入多条配置行）。非法输入直接 `log_error` 报错，不落盘。
+- **`omf check monitor` 补 FRA(快速恢复区)使用率指标（DG/备份高危维度）**：满仓会阻塞归档与备份，是 DG 场景常见事故。`_monitor_collect` 新增查 `v$recovery_area_usage` 的 `PERCENT_SPACE_USED`；json/prom/历史快照均补 `arch_used_pct`；`--alert` 新增阈值 `MONITOR_ARCH_WARN_PCT=80`/`ERR_PCT=90`，超限发 ALERT/WARN（未配置 FRA 时为 -1，不误报）。
+- **新增 `tests/harness.sh` 危险路径行为回归测试**：不依赖 Oracle、不改动真实 conf，固化了 7 项防护语义断言——`confirm` 非交互拒绝/`--yes` 通过、`confirm_danger` 非交互中止/显式放行、`set_config` 非法键名/换行值拒绝、合法键值持久化。运行 `bash tests/harness.sh` 即可回归，防未来改动破坏"执行前拦截"语义。
+
 ## v1.32 关键改进（sql.sh 危险路径加固 / rman_run 可配置化 / monitor 输出补指标）
 - **`omf sql init --schema` 单模式重建补确认（执行前拦截）**：原实现无确认即重跑 `_create_schema.sql` 重建该模式用户/表空间，会短暂 DROP 会话、中断该模式现有连接；且确认提示被放在重建**落库之后**，confirm 形同虚设。现把普通 `confirm` + 连接中断警告**提前到重建循环之前**，确保真正在执行（CREATE USER/TABLESPACE 落库、中断连接）前拦截；仅普通确认即可，与 `db stop` 风格一致。
 - **`omf sql rollback --all` 升级为 `confirm_danger`（防 -y 静默清记录）**：原 `--all` / `--all --schema` 仅用普通 `confirm`，在 `-y`/cron 下会被静默执行、不可逆地清除全部 SQL 执行记录（重跑将从头重建所有模式）。现改为 `confirm_danger`：即便 `-y` 也强制输入 `YES`，非交互环境默认中止；确需脚本化时 `OMF_ALLOW_DANGEROUS=1` 放行。

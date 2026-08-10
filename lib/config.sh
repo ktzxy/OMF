@@ -180,6 +180,16 @@ set_config() {
     [ -z "$key" ] && log_error "用法: omf config set <KEY> <VALUE>"
     [ -z "$value" ] && log_error "用法: omf config set <KEY> <VALUE>"
 
+    # 键名白名单: 仅允许大/小写字母、数字、下划线; 防止注入 OMF_CONFIG["..."] 数组语法
+    # (如 key 含 ']' 会闭合数组下标、含 '=' 会破坏赋值) 或注入额外配置行。
+    if ! [[ "$key" =~ ^[A-Za-z0-9_]+$ ]]; then
+        log_error "非法配置键名: $key (仅允许字母/数字/下划线)"
+    fi
+    # 拒绝含换行的值, 防止 sed 追加/替换时注入多条配置行
+    if [[ "$value" == *$'\n'* ]] || [[ "$value" == *$'\r'* ]]; then
+        log_error "配置值不能包含换行符: $key"
+    fi
+
     OMF_CONFIG["$key"]="$value"
     export "${key}"="$value"
 

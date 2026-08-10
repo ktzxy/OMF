@@ -137,6 +137,9 @@ TRACE_RETENTION_DAYS="7"
 #MONITOR_BACKUP_MAX_DAYS="1"
 #   DG 应用延迟 (秒): 仅 ENABLE_DG=true 时采集; 超过此秒数触发 WARN (默认 600=10分钟)
 #MONITOR_DG_LAG_WARN_SEC="600"
+#   FRA(快速恢复区)使用率 (%): 满仓会阻塞归档/备份, warn 触发 WARN, err 触发 ALERT
+#MONITOR_ARCH_WARN_PCT="80"
+#MONITOR_ARCH_ERR_PCT="90"
 
 # ===== RMAN 备份重试策略 (omf backup {auto|physical|incr}) =====
 #   网络存储抖动等偶发瞬断会导致 RMAN 误报失败, 启用重试可消除误报。

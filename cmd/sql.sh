@@ -107,10 +107,11 @@ sql_execute_inline() {
     {
         echo "WHENEVER SQLERROR EXIT SQL.SQLCODE ROLLBACK"
         echo "WHENEVER OSERROR  EXIT FAILURE ROLLBACK"
+        echo "SET DEFINE OFF"
         echo "DEFINE PDB_NAME     = '${PDB_NAME}'"
         echo "DEFINE ORACLE_SID   = '${ORACLE_SID}'"
         echo "DEFINE APP_USER     = '${APP_USER}'"
-        echo "DEFINE APP_PASSWORD = '${APP_PASSWORD}'"
+        echo "DEFINE APP_PASSWORD = $(omf_quote_sql "${APP_PASSWORD}")"
         echo "DEFINE APP_TABLESPACE = '${APP_TABLESPACE}'"
         echo "DEFINE ORACLE_DATA  = '${ORACLE_DATA}'"
         echo "DEFINE ORACLE_DUMP_DIR = '${ORACLE_DUMP_DIR}'"
@@ -272,10 +273,11 @@ _sql_run_file() {
     {
         echo "WHENEVER SQLERROR EXIT SQL.SQLCODE ROLLBACK"
         echo "WHENEVER OSERROR  EXIT FAILURE ROLLBACK"
+        echo "SET DEFINE OFF"   # 避免密码/内容含 & 触发 SQL*Plus 变量替换
         echo "DEFINE PDB_NAME     = '${PDB_NAME}'"
         echo "DEFINE ORACLE_SID   = '${ORACLE_SID}'"
         echo "DEFINE APP_USER     = '${app_user}'"
-        echo "DEFINE APP_PASSWORD = '${app_pw}'"
+        echo "DEFINE APP_PASSWORD = $(omf_quote_sql "${app_pw}")"   # 密码单引号翻倍, 防 ' 破坏
         echo "DEFINE APP_TABLESPACE = '${app_ts}'"
         echo "DEFINE ORACLE_DATA  = '${ORACLE_DATA}'"
         echo "DEFINE APP_DATA_DIR = '${data_dir}'"

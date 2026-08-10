@@ -1,5 +1,12 @@
 # 版本变更记录
 
+## v1.52 关键改进（密码特殊字符统一转义）
+- **新增统一转义函数**（`lib/common.sh`）：`omf_quote_sql`（SQL 字符串单引号翻倍包裹）与 `omf_quote_sh`（shell 单引号 `'`→`'"'"'` 转义），供密码/字符串传参统一使用。
+- **SQL DEFINE 密码转义**：`sql.sh` 的 `_sql_run_file`/`sql_execute_inline` 中 `DEFINE APP_PASSWORD` 改用 `omf_quote_sql`，并加 `SET DEFINE OFF`（防密码含 `&` 触发 SQL*Plus 变量替换）。
+- **expdp/impdp parfile 密码内双引号转义**：`backup.sh` 的 expdp `USERID` 与 `sql_import.sh` 的 impdp `userid` 中密码含 `"` 时转义为 `\"`（此前会破坏 parfile 语法）。
+- **harness 回归 16→17 项**：新增"特殊字符转义函数正确"（验证单引号翻倍、shell 转义 eval 可还原）。
+- 背景：审查发现密码特殊字符传递四处路径各自为政（DBCA 命令行/impdp parfile/SQL DEFINE/备份 connect 串），默认弱口令 `Qiyuan!960#123` 恰好能跑通掩盖了问题；用户一旦改含 `'`/`"`/`&` 的密码就会随机失败。本轮收敛 SQL 与 parfile 两处高风险路径，DBCA 命令行受 shell 二次展开影响较大，建议通过 `.omf.secret`/环境变量传递弱化该风险。
+
 ## v1.51 关键改进（跨发行版/资源适配：RHEL7 libxcrypt / ufw 端口同步 / 建库内存校验）
 基于"使用者视角"审查发现的代码级问题修复：
 - **RHEL7/CentOS7 依赖包修复**：`env_packages` 的 rpm 分支按 OS 版本精确剔除仓库不存在的 `libxcrypt`/`libxcrypt-devel`（RHEL7 由 glibc 提供 libcrypt.so.1），避免单包缺失导致整条 `dnf/yum install` 失败。

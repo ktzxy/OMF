@@ -325,6 +325,18 @@ get_total_memory_mb() {
     awk '/MemTotal/ {print int($2/1024)}' /proc/meminfo
 }
 
+# ---- 特殊字符转义 (统一密码/字符串传参, 避免多路径各自为政的破绽) ----
+# SQL 字符串字面量转义: 单引号翻倍并包裹单引号 (用于 SQL*Plus DEFINE / CREATE USER 的 '...')。
+#   如 a'b -> 'a''b'; 同时解决密码含 ' 破坏 SQL 的问题。
+omf_quote_sql() {
+    printf "'%s'" "${1//\'/\'\'}"
+}
+# shell 单引号转义: 使字符串可安全放入单引号包裹的 shell 命令 (如 oracle_su "....'$pw'....")。
+#   a'b -> a'"'"'b
+omf_quote_sh() {
+    printf "'%s'" "${1//\'/\'\"\'\"\'}"
+}
+
 # ---- Oracle 内存规划 (比例可配置, 见 conf: ORACLE_MEM_RATIO / SGA_RATIO / HUGEPAGES_RESERVE_FREE_MB) ----
 # 分配给 Oracle 的总内存(MB): 物理内存 * ORACLE_MEM_RATIO%, 下限 2048
 omf_oracle_mem_mb() {

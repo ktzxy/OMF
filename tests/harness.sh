@@ -219,6 +219,21 @@ t "backup incremental 别名可解析" \
         grep -q 'incr|incremental) *backup_incremental' '${OMF_HOME}/cmd/backup.sh'
     "
 
+# ---- 17) 特殊字符转义函数 (omf_quote_sql / omf_quote_sh, v1.52 新增) ----
+# 密码含 ' / " 等特殊字符时, 统一转义避免多路径各自为政的破绽。
+t "特殊字符转义函数正确" \
+    load_common "
+        # SQL 转义: 单引号翻倍并包裹 (a'b -> 'a''b')
+        q=\$(omf_quote_sql \"a'b\")
+        echo \"sql=[\$q]\"
+        [ \"\$q\" = \"'a''b'\" ] || exit 1
+        # shell 转义: eval 后能安全还原原串
+        s=\$(omf_quote_sh \"a'b\")
+        eval \"restored=\$s\"
+        [ \"\$restored\" = \"a'b\" ] || exit 1
+        echo PASS
+    "
+
 echo ""
 echo "═══════════════════════════════════════"
 echo "回归结果: ✓ $PASS 通过  ✗ $FAIL 失败"

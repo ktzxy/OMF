@@ -94,7 +94,9 @@ sql_import_gen_parfile() {
     {
         echo ""
         echo "# ---- 以下由 omf sql import 自动生成 ($(date '+%F %T')) ----"
-        echo "userid=${tgt_user}/\"${tgt_pw}\"@//localhost:${LISTENER_PORT}/${PDB_NAME}"
+        # 密码内双引号转义为 \" (parfile USERID 用双引号包裹, 防密码含 " 破坏语法)
+        local _pw_esc; _pw_esc="${tgt_pw//\"/\\\"}"
+        echo "userid=${tgt_user}/\"${_pw_esc}\"@//localhost:${LISTENER_PORT}/${PDB_NAME}"
         echo "directory=oracle_dumps"
         echo "dumpfile=${base}"
         echo "logfile=${base}.imp.log"

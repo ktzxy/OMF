@@ -244,9 +244,11 @@ backup_logical_one() {
     fi
 
     # 用 parfile 避免密码出现在 ps; 密码含 #/! 等特殊字符时须用双引号包裹 USERID,
-    # 否则 Data Pump 会把 # 当作注释导致密码被截断 (ORA-01017)
+    # 否则 Data Pump 会把 # 当作注释导致密码被截断 (ORA-01017)。
+    # 密码含 " 时需转义为 \" (parfile 双引号包裹), 避免破坏 USERID 语法。
+    local connect_esc; connect_esc="${connect//\"/\\\"}"
     cat > "$parfile" << EOF
-USERID="${connect}"
+USERID="${connect_esc}"
 DIRECTORY=OMF_DUMP
 DUMPFILE=full_${pdb}_${ts}_%U.dmp
 LOGFILE=full_${pdb}_${ts}.log

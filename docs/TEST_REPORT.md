@@ -1,7 +1,7 @@
 # OMF 分组测试报告
 
 > 目的：记录各分组命令在本环境的实测结论、风险分级与关键坑点，作为生产操作依据。
-> 测试框架版本：OMF v1.4.0
+> 测试框架版本：OMF v1.5.0
 
 ## 测试环境
 
@@ -109,13 +109,13 @@
 0 4 * * * root /root/OMF/omf.sh -y clean all >> /root/OMF/logs/omf_clean_cron.log 2>&1
 0 5 * * 0 root /root/OMF/omf.sh -y clean archive >> /root/OMF/logs/omf_clean_cron.log 2>&1
 ```
-> 注：cron 运行用户为 **root**（非默认 oracle），原因见坑点0。
+> 注：**v1.5.0 起** `backup_schedule`/`clean_schedule` 生成的 cron 用户已改回 **`oracle`**（原测试期临时改 root 的处置已撤销）；`omf` 内部 `oracle_su` 支持 root→oracle 切换，`require_db_user` 允许 root 或 oracle 运行。
 
 ### 4) 三个坑点（定时任务专项）
 
 | # | 坑 | 根因 | 修复 | 验证 |
 |---|----|------|------|------|
-| **坑点0** | OMF 装在 `/root/OMF`（权限 700），cron 默认 `oracle` 用户无法进入 → 定时任务整体失败 | 部署路径问题 | **未改代码**，cron 用户改 `root`（omf 内部 `oracle_su` 切 oracle 设计支持，`require_db_user` 允许 root） | `su - oracle -c "/root/OMF/omf.sh ..."` 实测 `Permission denied`；改 root 后 cron 等价执行成功写入日志 |
+| **坑点0** | OMF 装在 `/root/OMF`（权限 700），cron 默认 `oracle` 用户无法进入 → 定时任务整体失败 | 部署路径问题 | **根治建议：装到 `/opt/omf`（勿装 `/root`）**。v1.5.0 起 cron 用 `oracle` 用户，故部署到 oracle 可读的 `/opt/omf` 是硬性前置要求（已写入 INSTALL.md） | `su - oracle -c "/root/OMF/omf.sh ..."` 实测 `Permission denied`；迁 `/opt/omf` 后 oracle 跑 cron 正常 |
 | **坑点1** | 定时备份日志写死 `/var/log/omf_backup.log`，oracle 无写权限 → cron 静默失败 | `backup.sh` 硬编码路径 | 改 `${OMF_HOME}/logs/omf_backup.log`（与 clean 一致） | cron 文件现用 `/root/OMF/logs/...` |
 | **坑点2** | cron 无 TTY 时 `confirm()` 默认 `exit 0` 取消任务 → `backup auto`/`clean all` 静默跳过 | `lib/common.sh` 第 91 行 `[ -t 0 ] \|\| { ... 已取消; exit 0; }` | 生成的 cron 命令自带 `-y`（源码 `backup_schedule`/`clean_schedule`） | `clean all` 在 `-y` 下真正执行清理，未再取消 |
 
@@ -179,10 +179,10 @@ systemctl start crond
   - DGMGRL `ORA-16532` —— **预期**，但工具判为 `✗ 执行失败`（瑕疵：broker 未配置时应判"未配置"而非失败）。
   - **broker 配置建立前，用 `omf db dg validate` 看状态更准。**
 
-### OMF DG 流程缺口（重要）
-- `omf db dg enable` 仅把 `log_archive_dest_state_2` 改 `ENABLE`，**不会自动 `CREATE CONFIGURATION`**。
-- 即使用 `enable`，`omf db dg status` 仍报 `ORA-16532`，除非主备就绪后**手动 `dgmgrl` 建 broker 配置**。
-- 真要建备的完整路径：`omf db dg wallet`（主备各一次）→ 备库 `omf db dg standby` → `omf db dg enable` → 手动 `dgmgrl CREATE CONFIGURATION` → `omf db dg validate`。
+### OMF DG 流程（v1.5.0 起 broker 自动建）
+- `omf db dg enable` 把 `log_archive_dest_state_2` 改 `ENABLE` 开启日志传输。
+- `omf db dg broker` **自动**创建 Broker 配置（`CREATE CONFIGURATION`/`ADD DATABASE`/`ENABLE`，幂等：已存在则移除重建），取代早期"手动 dgmgrl"。
+- 建备完整路径：`omf db dg wallet`（主备各一次）→ 备库 `omf db dg standby` → `omf db dg enable` → `omf db dg broker` → `omf db dg validate`。
 
 ### DG 完整测试路径
 | 步骤 | 命令 | 在哪台 | 前置 / 副作用 |
@@ -191,7 +191,7 @@ systemctl start crond
 | 2. 钱包免密 | `omf db dg wallet` | 主库**和**备库各一次 | 建 wallet + 写 tns 别名，消除连接密码暴露 |
 | 3. 建备库 | `omf db dg standby` | **备库服务器** | RMAN duplicate，需同版本 Oracle、主备网络/静态监听/密码文件就绪 |
 | 4. 开传输 | `omf db dg enable` | 主库 | `log_archive_dest_state_2=ENABLE` |
-| 5. 建 broker 配置 | `dgmgrl` 手动 `CREATE CONFIGURATION` | 主库 | OMF 当前未自动建，需手动 |
+| 5. 建 broker 配置 | `omf db dg broker` | 主库 | **自动** CREATE CONFIGURATION（v1.5.0 起） |
 | 6. 校验 | `omf db dg validate` | 主库 | `dgmgrl validate` 或退化查 `v$archive_dest_status` |
 | 7. 看状态 | `omf db dg status` | 主库 | `dgmgrl show configuration`（需先有 broker 配置） |
 

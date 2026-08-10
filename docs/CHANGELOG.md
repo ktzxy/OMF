@@ -1,5 +1,11 @@
 # 版本变更记录
 
+## v1.48 关键改进（文档/帮助与实现同步）
+基于深度排查的"文档与实现漂移"问题，逐项同步：
+- **`omf log errors` 补进 help**：`omf.sh` 的 log help 由 `{view|tail|rotate|clean}` 补为含 `errors`（并说明聚合 Top10），与代码实现一致（此前按 help 不知道有此排障入口）。
+- **TEST_REPORT.md 过时同步**：版本号 v1.4.0→v1.5.0；cron 用户说明更新为"v1.5.0 起改回 oracle 用户（原临时 root 处置已撤销）"；坑点0 根治建议明确为"装 `/opt/omf` 勿装 `/root`"；DG broker 部分更新为"v1.5.0 起 `omf db dg broker` 自动创建配置"（取代早期手动 dgmgrl）。
+- **INSTALL.md 加部署路径硬性要求**：明确"必须装到 oracle 可读写路径（推荐 `/opt/omf`），切勿装 `/root/OMF`"，并解释原因（cron 以 oracle 运行），根治坑点0。
+
 ## v1.47 关键改进（通知可靠性：send_notification 失败可感知）
 - **修复"备份失败但告警没发出"隐患**：`send_notification` 原先三渠道全部 `&>/dev/null &`（后台+丢输出），webhook 失败完全静默。现 webhook 改为**前台同步执行**（`curl -m 10` 有超时保护），失败即检测；配置了渠道但全部失败时 `log_warn "通知发送失败..."`，让日志能感知告警未送达。
 - **不返回非0**：避免 `set -e` 下备份成功/监控告警等调用点因通知失败被误中断（失败经 `log_warn` 暴露，调用方如需编程式判断可自行扩展）。

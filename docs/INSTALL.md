@@ -2,6 +2,9 @@
 
 > 所有改动落在 `conf/omf.conf`（不是 `conf/omf.conf.example`）。详见 [CONFIG.md](CONFIG.md)。
 
+> ⚠ **部署路径硬性要求**：OMF 必须安装到 **oracle 用户可读写的路径**（推荐 `/opt/omf`），**切勿装在 `/root/OMF`**。
+> 原因：`backup schedule`/`clean schedule` 生成的 cron 以 **`oracle` 用户**运行（`omf backup`/`clean` 允许 root 或 oracle），若 OMF 装在权限 700 的 `/root` 下，oracle 无法进入会导致定时任务整体失败。部署在 `/opt/omf` 是定时任务可用的前置条件。
+
 ## 1. 安装方式
 
 ```bash

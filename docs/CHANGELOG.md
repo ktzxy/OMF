@@ -1,5 +1,15 @@
 # 版本变更记录
 
+## v1.37 关键改进（巨型文件拆分：db.sh 1142 → 385 行）
+- **`cmd/db.sh` 按功能拆分为 4 个文件（消除巨型文件，职责单一化）**：
+  - `cmd/db.sh`（385 行）：分发器 `cmd_db` + 基础生命周期 `db_create`/`db_optimize`/`db_status`/`db_start`/`db_stop`（`db_status` 留在主文件，被 create/start/pdb 共享）。
+  - `cmd/db_dg.sh`（632 行）：Data Guard 全套 `db_dg` + 各 `db_dg_*` + `dg_wallet_*` + `dg_conn_*`（内部完全自洽，高度内聚）。
+  - `cmd/db_archivelog.sh`（94 行）：`db_archivelog`（完全独立）。
+  - `cmd/db_pdb.sh`（47 行）：`db_pdb`（依赖主文件的 `db_status`）。
+  - 纯函数移动，不改任何逻辑；`omf.sh` 的 db 分支改为一次 source 4 个文件。
+- **`selftest` 分发一致性检查适配多 source 行**：`omf.sh` 的 db 分支一行含多个 `source`，原检查用 `grep -oE` 取全部匹配导致 `sf`/`fn` 变多行而误判"分发引用 cmd/db.sh 但文件不存在"。现改为各取**首个**匹配，拆分文件（不定义 `cmd_*`）由反向存在性检查兜底。
+- **验证**：拆分后 21 个函数全部可加载（ALL_FUNCTIONS_LOADED），selftest 38/0。
+
 ## v1.36 关键改进（运行日志结构化：cmd/subcmd 维度 + JSON Lines 模式）
 - **运行日志新增结构化字段（cmd/sub 维度）**：`omf.sh` 记录命令名 `OMF_CMD`，各 `cmd_*` 入口经 `log_set_subcmd` 记录子命令名；`_log`/`log_error` 写日志文件时行首附加 `[cmd=X][sub=Y]`（终端仍人类可读，不破坏现有 grep/解析）。
 - **新增 JSON Lines 日志模式**：conf 设 `OMF_LOG_STRUCTURED=true` 时，日志文件以 `{"ts","level","cmd","sub","msg"}` JSON Lines 输出，便于接入 ELK/日志监控。

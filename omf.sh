@@ -163,7 +163,7 @@ main() {
         -v|--version) echo "OMF v${OMF_VERSION}";;
         env)      source "${OMF_HOME}/cmd/env.sh";      cmd_env "$@";;
         install)  source "${OMF_HOME}/cmd/install.sh";  cmd_install "$@";;
-        db)       source "${OMF_HOME}/cmd/db.sh";       cmd_db "$@";;
+        db)       source "${OMF_HOME}/cmd/db.sh";       source "${OMF_HOME}/cmd/db_dg.sh";       source "${OMF_HOME}/cmd/db_archivelog.sh";       source "${OMF_HOME}/cmd/db_pdb.sh";       cmd_db "$@";;
         backup)   source "${OMF_HOME}/cmd/backup.sh";   cmd_backup "$@";;
         sql)      source "${OMF_HOME}/cmd/sql.sh";      cmd_sql "$@";;
         tune)     source "${OMF_HOME}/cmd/tune.sh";     cmd_tune "$@";;

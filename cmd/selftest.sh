@@ -49,8 +49,11 @@ cmd_selftest() {
     local line sf fn
     # 正向: omf.sh 里分发的每个命令, 其引用的 cmd/<x>.sh 应存在且定义了被调用的 cmd_<x> 函数
     while IFS= read -r line; do
-        sf=$(printf '%s' "$line" | grep -oE 'cmd/[a-zA-Z_]+\.sh')
-        fn=$(printf '%s' "$line" | grep -oE 'cmd_[a-zA-Z_]+')
+        # 取每行【第一个】source 文件与其对应的入口函数。
+        # 一行可能含多个 source (如 db 分支拆分后的 db.sh+db_dg.sh+...), 但入口函数
+        # 只有一个 (cmd_db); 拆分文件(db_dg.sh 等)不定义 cmd_*, 由下方反向检查保证其存在。
+        sf=$(printf '%s' "$line" | grep -oE 'cmd/[a-zA-Z_]+\.sh' | head -1)
+        fn=$(printf '%s' "$line" | grep -oE 'cmd_[a-zA-Z_]+' | head -1)
         [ -z "$sf" ] && continue
         if [ ! -f "${OMF_HOME}/${sf}" ]; then
             echo "  ✗ 分发引用 ${sf} 但文件不存在"; fail=$((fail+1)); continue

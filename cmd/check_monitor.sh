@@ -49,7 +49,7 @@ check_monitor() {
 # 采集一次, 结果写入全局 _MC_* 变量 (供 run_once 输出与 alert 判定的复用, 避免重复连库)
 _monitor_collect() {
     _MC_DB_UP=0; _MC_MEM=0; _MC_ORA=0; _MC_STATUS="ok"; _MC_DISK=""; _MC_DP_JSON=""
-    _MC_INVAL=0; _MC_TS_MAX=0; _MC_BACKUP_AGE=-1; _MC_DG_LAG=-1; _MC_ARCH_PCT=-1
+    _MC_INVAL=0; _MC_TS_MAX=0; _MC_BACKUP_AGE=-1; _MC_DG_LAG=-1; _MC_ARCH_PCT=-1; _MC_DG_PDB=""
     local db_up=0 mem_free_pct=0 ora_errors=0 status="ok" u=""
     local mps=("/" "${OMF_CONFIG[ORACLE_DATA_BASE]}" "${OMF_CONFIG[ORACLE_BACKUP]}")
 
@@ -121,6 +121,14 @@ SELECT NVL(MAX(value),'-') FROM v\\\$dataguard_stats WHERE name='apply lag';\" |
                 h="${hhmmss%%:*}"; mmss="${hhmmss#*:}"; m="${mmss%%:*}"; s="${mmss#*:}"
                 _MC_DG_LAG=$(( ${dd:-0}*86400 + ${h:-0}*3600 + ${m:-0}*60 + ${s:-0} ))
             fi
+            # PDB 级 redo 应用情况 (备库视角): 列出各 PDB 的 open_mode, 辅助定位多组织下
+            # 某个组织所在 PDB 是否单独异常 (CDB 内 v$pdbs 反映备库各 PDB 打开状态)。
+            # 格式: con_id:name:open_mode (逗号分隔); 主库视角也可见各 PDB 打开情况。
+            local pdb_out
+            pdb_out=$(as_oracle "echo \"set pagesize 0 feedback off heading off
+SELECT con_id||':'||name||':'||open_mode FROM v\\\$pdbs ORDER BY con_id;\" | sqlplus -s / as sysdba" 2>/dev/null \
+                | tr -d ' ' | grep -v '^$' | paste -sd, - 2>/dev/null)
+            [ -n "$pdb_out" ] && _MC_DG_PDB="$pdb_out"
         fi
 
         # 快速恢复区(FRA)使用率 (%): 满仓会阻塞归档/备份, 是 DG 与备份场景的高危指标。
@@ -212,6 +220,7 @@ _monitor_run_once() {
             echo "  \"backup_age_days\": ${_MC_BACKUP_AGE},"
             echo "  \"dg_lag_sec\": ${_MC_DG_LAG},"
             echo "  \"arch_used_pct\": ${_MC_ARCH_PCT},"
+            echo "  \"dg_pdbs\": \"${_MC_DG_PDB}\","
             echo "  \"status\": \"$status\""
             echo "}"
             ;;

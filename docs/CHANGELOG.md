@@ -1,5 +1,12 @@
 # 版本变更记录
 
+## v1.45 关键改进（多组织 DG：切换后连接串指引 + monitor PDB 级 redo 应用）
+基于"多组织 DG 部署与生命周期"检测验证发现的痛点，落地两项改进：
+- **switchover/failover 后多组织应用重连指引**：新增 `dg_app_conn_guide`，遍历 `APP_SCHEMAS`（多组织模式），输出每个组织的 EZConnect 连接串（`用户@新主库IP:端口/PDB`）与管理连接串，替代原先"应用改连新主库"一行笼统提示。明确提示 OMF 不自动翻转 tnsnames/钱包别名 IP，需确保各组织应用实际连到新主库。调用点：switchover/failover 成功分支。
+- **`omf check monitor` 补 PDB 级 redo 应用（DG 场景）**：`_monitor_collect` 新增采集 `v$pdbs` 各 PDB 的 `con_id:name:open_mode` 到 `_MC_DG_PDB`，json 输出补 `dg_pdbs` 字段。辅助定位多组织下某个组织所在 PDB 是否单独异常（此前仅实例级 apply lag，无法定位具体 PDB）。
+
+> 说明：钱包别名 IP 自动翻转（原计划第 2 项）因风险较高（修改 tnsnames 可能影响运行中连接）暂缓，当前以连接串指引覆盖应用改连核心需求。
+
 ## v1.44 关键改进（install 卸载清理 + clean 删除量回报）
 - **`install --force` 清理系统注册残留**：强制重装路径在清理 ORACLE_HOME/inventory 之外，补充清理 `/etc/oratab` 中本 SID 行与 `/etc/oracle` 目录，避免重装后旧系统引用干扰。
 - **`clean` 删除量回报**：新增 `_clean_del` 删除执行器（`find -delete -print` 一次统计实际删除数，累计到 `CLEAN_DELETED`），替换 `clean_logs`/`clean_trace`/`clean_audit` 的 `-delete`（此前 `|| true` 静默吞错，无法感知清理结果）；`clean all` 末尾回报本次删除文件总数。验证删除计数正确（2+1=3）。

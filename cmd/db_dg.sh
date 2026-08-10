@@ -240,6 +240,8 @@ db_dg_switchover() {
     if [ "$rc" -eq 0 ] && ! grep -qi "ORA-\|error" "$OMF_RUN_LOG"; then
         log_info "Switchover 完成! 本机现为备库, 新主库: ${target}"
         log_info "后续: 1) 应用改连新主库  2) omf db dg status 确认配置 SUCCESS  3) 本机备库确认 MRP 应用 (omf db dg apply status)"
+        # 多组织应用重连指引: 切换后新主库为原备库 (STANDBY_IP)
+        dg_app_conn_guide "${OMF_CONFIG[STANDBY_IP]}" "$target"
         send_notification "OMF DG Switchover 完成" "新主库: ${target}"
     else
         log_warn "Switchover 可能未完全成功, 请立即检查: omf db dg status 与两端 alert 日志"
@@ -294,6 +296,8 @@ db_dg_failover() {
     if [ "$rc" -eq 0 ]; then
         log_info "Failover 完成! 本机现为新主库: ${target}"
         log_info "后续: 1) 应用改连本机  2) 旧主库修复后执行 omf db dg reinstate 回收为备库"
+        # 多组织应用重连指引: failover 后本机(原备库)为新主库
+        dg_app_conn_guide "${OMF_CONFIG[STANDBY_IP]}" "$target"
         send_notification "OMF DG Failover 完成" "新主库: ${target}, 请尽快处理旧主库 (reinstate 或重建)"
     else
         log_error "Failover 失败 (rc=$rc), 请检查 dgmgrl 输出与 alert 日志"
@@ -629,4 +633,33 @@ dg_conn_standby() {
     else
         echo "sys/${OMF_CONFIG[ORACLE_PASSWORD]}@${OMF_CONFIG[STANDBY_IP]}:${OMF_CONFIG[LISTENER_PORT]:-1521}/${stb_sid}"
     fi
+}
+
+#===============================================================================
+# 多组织应用连接串指引 (switchover/failover 后调用)
+#   $1 = 新主库 IP (switchover 后=原 STANDBY_IP; failover 后=本机/STANDBY_IP)
+#   $2 = 新主库唯一名 (用于钱包免密提示)
+# 遍历 APP_SCHEMAS(多组织模式), 输出每个组织的应用连接串与重连指引。
+# 多组织应用都连同一 PDB 的同一服务, 切换后必须统一把连接串指向新主库 IP;
+# OMF 不自动翻转 tnsnames 别名, 这里给出每个组织的明确连接串供应用侧改配置。
+#===============================================================================
+dg_app_conn_guide() {
+    local new_pri_ip="$1" new_pri_name="${2:-${OMF_CONFIG[DB_UNIQUE_NAME_STANDBY]}}"
+    local port="${OMF_CONFIG[LISTENER_PORT]:-1521}"
+    local pdb="${OMF_CONFIG[PDB_NAME]}"
+    local schema s u
+
+    echo ""
+    echo "══════ 多组织应用重连指引 (新主库: ${new_pri_name} @ ${new_pri_ip}:${port}/${pdb}) ══════"
+    echo "各组织应用需把连接串指向新主库 IP。钱包免密可继续用 /@别名, 否则用 EZConnect 直连:"
+    for schema in $(omf_schema_list); do
+        u=$(omf_schema_user "$schema")
+        echo "  - 模式[${schema}] 用户=${u}"
+        echo "      EZConnect: ${u}/密码@${new_pri_ip}:${port}/${pdb}"
+        echo "      钱包免密: ${u}@//localhost:${port}/${pdb} (若钱包未指向新主库, 请更新 TNS_ADMIN 别名或重建钱包)"
+    done
+    echo "  - 管理连接: sys@${new_pri_ip}:${port}/${pdb} (as sysdba)"
+    echo "═══════════════════════════════════════════════════════════════════════"
+    echo ""
+    log_warn "注意: OMF 不自动翻转 tnsnames/钱包别名指向的 IP, 请确保各组织应用实际连到新主库 IP, 否则会连到已变备库(不可写)"
 }

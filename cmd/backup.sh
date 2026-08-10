@@ -323,33 +323,44 @@ RMANEOF" 2>&1 | tee "$log_file"
 #===============================================================================
 backup_incremental() {
     require_db_user
-    parse_scope "$@"
+    # 解析增量专属参数: --level N (默认1) / --cumulative(默认, 累积) / --differential(差异)
+    local level="1" accum="CUMULATIVE"
+    local -a rest_args=()
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --level)       level="${2:-1}"; shift 2;;
+            --cumulative)  accum="CUMULATIVE"; shift;;
+            --differential|--diff) accum="DIFFERENTIAL"; shift;;
+            *) rest_args+=("$1"); shift;;
+        esac
+    done
+    parse_scope "${rest_args[@]}"
     [ -z "$SCOPE_MODE" ] && SCOPE_MODE="all"   # 物理默认整 CDB
     require_archivelog
     ensure_backup_dirs
 
-    local level="${SCOPE_REST[0]:-1}"
     local ts=$(date '+%Y%m%d_%H%M%S')
     local backup_dir="${ORACLE_BACKUP}/incremental"
     local log_file="$OMF_RUN_LOG"
     local sc=$(scope_clause)
 
-    log_step "RMAN 增量备份 (Level $level, scope=${SCOPE_MODE})"
+    log_step "RMAN 增量备份 (Level $level ${accum}, scope=${SCOPE_MODE})"
     local rman_script="CONFIGURE BACKUP OPTIMIZATION ON;
 CONFIGURE RETENTION POLICY TO RECOVERY WINDOW OF ${BACKUP_RETENTION_DAYS} DAYS;
 CONFIGURE DEVICE TYPE DISK PARALLELISM ${BACKUP_PARALLEL};
 CONFIGURE CHANNEL DEVICE TYPE DISK FORMAT '${backup_dir}/%d_%T_%s_%p';
 RUN {
-    BACKUP INCREMENTAL LEVEL ${level} ${sc} PLUS ARCHIVELOG;
+    BACKUP INCREMENTAL LEVEL ${level} ${accum} ${sc} PLUS ARCHIVELOG;
     BACKUP CURRENT CONTROLFILE FORMAT '${ORACLE_BACKUP}/controlfile/controlfile_%d_%T_%s';
     BACKUP SPFILE FORMAT '${ORACLE_BACKUP}/spfile/spfile_%d_%T_%s';
 }"
     if rman_run "" "" "$rman_script"; then
         log_info "RMAN 增量备份完成"
-        # 备份成功后才清理 obsolete
+        # 备份成功后才清理 obsolete + 已备份的过期归档 (防 FRA 满)
         as_oracle "rman target / <<RMANEOF
 DELETE NOPROMPT OBSOLETE;
 RMANEOF" 2>&1 | tail -3
+        rman_purge_archivelog "${BACKUP_RETENTION_DAYS}"
         send_notification "OMF 增量备份完成" "实例 ${OMF_CONFIG[ORACLE_SID]} RMAN 增量(Level $level)备份成功"
     else
         send_notification "OMF 增量备份失败" "日志: $log_file"
@@ -413,6 +424,8 @@ RUN {
         as_oracle "rman target / <<RMANEOF
 DELETE NOPROMPT OBSOLETE;
 RMANEOF" 2>&1 | tail -3
+        # 备份成功后清理已备份的过期归档 (防 FRA 满)
+        rman_purge_archivelog "${BACKUP_RETENTION_DAYS}"
         backup_cleanup_disks "full" "${BACKUP_RETENTION_DAYS}"
         send_notification "OMF 物理全量备份完成" "实例 ${OMF_CONFIG[ORACLE_SID]} 物理全量备份成功, 保留 ${BACKUP_RETENTION_DAYS} 天"
     else
@@ -606,6 +619,18 @@ backup_cleanup_disks() {
     log_debug "清理 ${days} 天前的 ${type} 备份"
     find "${ORACLE_BACKUP}/${type}" -name "*.dmp" -mtime "+$((days-1))" -delete 2>/dev/null || true
     find "${ORACLE_BACKUP}/${type}" -name "*.log" -mtime "+$((days-1))" -delete 2>/dev/null || true
+}
+
+# RMAN 备份成功后清理已备份的过期归档: DELETE ARCHIVELOG ... COMPLETED BEFORE 'SYSDATE-N'
+#   N = 保留天数 (默认 BACKUP_RETENTION_DAYS)。
+# 关键: 仅在备份【成功】后调用 (由调用方保证), 避免误删未备份的归档;
+# 防止 FRA 被归档撑满 (备份成功但归档堆积是生产最常见事故之一)。
+rman_purge_archivelog() {
+    local days="${1:-${BACKUP_RETENTION_DAYS:-30}}"
+    log_step "清理 ${days} 天前已备份的归档日志 (DELETE ARCHIVELOG, 防 FRA 满)"
+    as_oracle "rman target / <<RMANEOF
+DELETE NOPROMPT ARCHIVELOG ALL COMPLETED BEFORE 'SYSDATE-${days}';
+RMANEOF" 2>&1 | tail -5
 }
 
 #===============================================================================

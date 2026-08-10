@@ -1,5 +1,11 @@
 # 版本变更记录
 
+## v1.54 关键改进（DBA 视角：RMAN 增量累积策略 + 归档自动清理防 FRA 满）
+基于资深 DBA 视角建议，优先落地备份可靠性与效率两项：
+- **RMAN 增量累积策略**：`omf backup incremental` 新增 `--level N`（默认 1）、`--cumulative`（默认，累积增量，恢复只需 0 级+最新 1 级累积）/`--differential`（差异增量）参数；RMAN 脚本 `BACKUP INCREMENTAL LEVEL ${level} ${accum}` 明确累积/差异类型。
+- **归档自动清理防 FRA 满**：新增 `rman_purge_archivelog` 辅助函数，物理全量/增量备份【成功】后调用 `DELETE NOPROMPT ARCHIVELOG ALL COMPLETED BEFORE 'SYSDATE-N'`（N=保留期），删除已备份的过期归档。**仅在备份成功后清理**（与"失败不删旧备"一致），防止 FRA 被归档撑满这一生产最常见事故。
+- `omf.sh` backup help 补充 incremental 新选项与归档自动清理说明。
+
 ## v1.53 关键改进（新手安全预警 + deploy 交互优化）
 基于"小白上手"审查发现的语义预警缺失与交互细节：
 - **README 顶部补默认口令警告**：明确"上线前必须用 `omf config password` 或环境变量改掉出厂默认弱口令（`Qiyuan!960#123`/`dherp_skzy`）"，否则 validate 持续报弱口令风险、带默认口令上线等于裸奔。

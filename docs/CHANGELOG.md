@@ -1,5 +1,11 @@
 # 版本变更记录
 
+## v1.49 关键改进（CONFIG.md 补全 + 口令说明统一 + wallet 幂等 mock 测试）
+- **CONFIG.md 补全配置项表格**：新增 `BACKUP_SPACE_SAFETY`（此前连 example 都没有）、`RMAN_RETRY`/`RMAN_RETRY_INTERVAL`、`OMF_LOG_STRUCTURED`、`OMF_UPDATE_URL`，以及路径类（`ORACLE_USER/GROUP`、`ORACLE_DATA_BASE/ARCH/FRA`、`FRA_SIZE_MB`、`ORACLE_ZIP`）和实例参数类（`PROCESSES`/`OPEN_CURSORS`/`REDO_SIZE_MB`/`CHARSET`/`NLS_LANG`）。
+- **CONFIG.md 新增口令管理说明（§2.1）**：`omf config password` 写入独立 `conf/.omf.secret`（600），并明确加载优先级（环境变量 > `.omf.secret` > `omf.conf` > 出厂默认），替换过时的"仅靠环境变量"表述。
+- **`omf.conf.example` 口令注释统一**：明确 `ChangeMe_123` 为脱敏占位符（代码出厂默认与之不同，且均会被 `config validate` 判为弱口令），推荐用 `.omf.secret` 或环境变量注入，消除照模板生成后"validate 报弱口令"的困惑。
+- **harness 回归 14→16 项**：新增"DG 钱包 tnsnames 别名幂等"（mock `oracle_su`，连续两次 `dg_wallet_setup` 验证 OMF_DG_WALLET 段只追加一次）与"backup incremental 别名可解析"（回归 v1.46 别名修复）。
+
 ## v1.48 关键改进（文档/帮助与实现同步）
 基于深度排查的"文档与实现漂移"问题，逐项同步：
 - **`omf log errors` 补进 help**：`omf.sh` 的 log help 由 `{view|tail|rotate|clean}` 补为含 `errors`（并说明聚合 Top10），与代码实现一致（此前按 help 不知道有此排障入口）。

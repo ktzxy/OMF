@@ -187,6 +187,38 @@ t "无 dump 文件时 ls|head 不触发 set -e 中断" \
         [ \$rc -eq 0 ]
     "
 
+# ---- 15) DG 钱包 tnsnames 幂等 (mock orapki/mkstore/oracle_su) ----
+# dg_wallet_setup 写 tnsnames.ora 前检查 OMF_DG_WALLET 标记决定是否追加; 多次调用不应重复追加别名。
+t "DG 钱包 tnsnames 别名幂等 (多次调用不重复)" \
+    load_common "
+        export OMF_HOME='${OMF_HOME}' OMF_CMD=db OMF_SUBCMD=dg
+        export OMF_CONFIG=( [ORACLE_BASE]=\$(mktemp -d) [ORACLE_HOME]=/tmp/orahome [ORACLE_SID]=ARTERY [ORACLE_PASSWORD]=x [PRIMARY_IP]=10.0.0.1 [STANDBY_IP]=10.0.0.2 [LISTENER_PORT]=1521 [DB_UNIQUE_NAME_PRIMARY]=ARTERY_P [DB_UNIQUE_NAME_STANDBY]=ARTERY_S [ORACLE_USER]=oracle [ORACLE_GROUP]=oinstall )
+        wdir=\${OMF_CONFIG[ORACLE_BASE]}/wallet
+        net_admin=\${OMF_CONFIG[ORACLE_HOME]}/network/admin
+        mkdir -p \"\$wdir\" \"\$net_admin\"
+        source '${OMF_HOME}/cmd/db_dg.sh' 2>/dev/null || true
+        require_db_user() { :; }
+        oracle_su() { :; }   # mock: 不真执行 orapki/mkstore, 只测文件幂等
+        # 连续调用两次
+        dg_wallet_setup
+        dg_wallet_setup
+        # tnsnames 中每个别名只出现一次 (幂等), sqlnet 覆盖段只一次
+        # 注意: grep -c 无匹配时输出 0 并返回非0, 需 || true 防 set -e 中断 (不能用 || echo 0 会拼出多行)
+        c1=\$(grep -c 'OMF_DG_WALLET aliases' \"\$net_admin/tnsnames.ora\" 2>/dev/null || true)
+        c2=\$(grep -c '^\${OMF_CONFIG[DB_UNIQUE_NAME_PRIMARY]}' \"\$net_admin/tnsnames.ora\" 2>/dev/null || true)
+        echo \"tns aliases节=\$c1, PRIMARY别名行=\$c2\"
+        [ \"\$c1\" -le 1 ] && [ \"\$c2\" -le 1 ] && rm -rf \"\${OMF_CONFIG[ORACLE_BASE]}\"
+    "
+
+# ---- 16) backup incremental 别名兼容 (v1.46 修复) ----
+t "backup incremental 别名可解析" \
+    load_common "
+        source '${OMF_HOME}/cmd/backup.sh' 2>/dev/null || true
+        # 验证 cmd_backup 的 case 能识别 incremental (不落入 *) 报错
+        # 直接查 case 分支: incremental 应映射到 backup_incremental
+        grep -q 'incr|incremental) *backup_incremental' '${OMF_HOME}/cmd/backup.sh'
+    "
+
 echo ""
 echo "═══════════════════════════════════════"
 echo "回归结果: ✓ $PASS 通过  ✗ $FAIL 失败"

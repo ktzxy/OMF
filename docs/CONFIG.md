@@ -11,6 +11,7 @@ omf config get ORACLE_BACKUP   # 读取单项
 omf config set KEY VALUE        # 设置并持久化到 conf/omf.conf
 omf config validate      # 校验 (必要项/路径/路径存在/磁盘空间/模式列表合法性)
 omf config init         # 生成正式配置 (交互确认是否覆盖)
+omf config password     # 交互式设置口令到 conf/.omf.secret (权限 600, 不落 shell 历史)
 ```
 
 `omf config validate` 还会校验 `APP_SCHEMAS` 列表的完整性：非空、合法 Oracle 标识符（含 `#$`）、不重复。
@@ -41,9 +42,24 @@ omf config init         # 生成正式配置 (交互确认是否覆盖)
 | `BACKUP_WARN_DAYS` | 空 | 即将过期阈值（默认保留期 1/5，钳制 2~7 天）|
 | `BACKUP_COMPRESSION` | `ALL` | expdp 压缩 |
 | `BACKUP_PARALLEL` | `4` | 并行度 |
+| `BACKUP_SPACE_SAFETY` | `20` | 备份前空间预检安全余量（%，估算备份集之外额外要求）|
+| `RMAN_RETRY` / `RMAN_RETRY_INTERVAL` | `1` / `5` | RMAN 备份失败重试次数 / 重试间隔秒 |
 | `LOG_RETENTION_DAYS` / `AUDIT_*` / `TRACE_*` | `7`/`30`/`7` | 清理保留期 |
+| `OMF_LOG_STRUCTURED` | `false` | true 时 `omf_*.log` 以 JSON Lines 输出（接监控）|
+| `OMF_UPDATE_URL` | 空 | `omf self-update` 的 tar.gz 地址（空则不可用）|
 
-密码建议用环境变量注入：`export ORACLE_PASSWORD=xxx` 后再运行，或写进 `conf/omf.conf`（已被 `.gitignore` 忽略）。
+**路径类补充**：`ORACLE_USER`/`ORACLE_GROUP`（默认 `oracle`/`oinstall`）、`ORACLE_DATA_BASE`（`/data/oracle`，数据盘根）、`ORACLE_ARCH`（`/data/oracle/archivelog`）、`ORACLE_FRA`（`/data/oracle/fast_recovery`）、`FRA_SIZE_MB`（`40960`，FRA 容量）、`ORACLE_ZIP`（安装包路径，空则按版本推导）。
+
+**实例参数类**：`PROCESSES`（`1500`）、`OPEN_CURSORS`（`1000`）、`REDO_SIZE_MB`（`2048`）、`CHARSET`（`AL32UTF8`）、`NLS_LANG`（`AMERICAN_AMERICA.AL32UTF8`）。
+
+> 以上除路径类外均可在 `conf/omf.conf` 覆盖；`BACKUP_SPACE_SAFETY`/`RMAN_RETRY`/`OMF_LOG_STRUCTURED` 等若未写进 conf，用代码内置默认值。
+
+## 2.1 口令管理
+
+- **推荐**：`omf config password` 交互式设置口令（`read -s` 不回显、不落 shell 历史），写入独立的 **`conf/.omf.secret`**（权限 `600`，已被 `.gitignore` 忽略）。支持显式传键名（`omf config password LSDHERP_PASSWORD`）与 `--remove <KEY>`。
+- 也可用环境变量注入：`export ORACLE_PASSWORD=xxx`。
+- 加载优先级：**环境变量 > `.omf.secret` > `conf/omf.conf` > 出厂默认**。
+- 涉及键：`ORACLE_PASSWORD`/`SYSTEM_PASSWORD`/`PDB_PASSWORD`/`APP_PASSWORD` 及各模式 `<大写名>_PASSWORD`。
 
 ## 3. 多模式（多库）配置
 

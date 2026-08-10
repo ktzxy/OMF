@@ -167,7 +167,7 @@ main() {
         backup)   source "${OMF_HOME}/cmd/backup.sh";   cmd_backup "$@";;
         sql)      source "${OMF_HOME}/cmd/sql.sh";      cmd_sql "$@";;
         tune)     source "${OMF_HOME}/cmd/tune.sh";     cmd_tune "$@";;
-        check)    source "${OMF_HOME}/cmd/check.sh";    cmd_check "$@";;
+        check)    source "${OMF_HOME}/cmd/check.sh";    source "${OMF_HOME}/cmd/check_monitor.sh";    cmd_check "$@";;
         listener)  source "${OMF_HOME}/cmd/listener.sh";  cmd_listener "$@";;
         status)   source "${OMF_HOME}/cmd/status.sh";   cmd_status "$@";;
         log)      source "${OMF_HOME}/cmd/log.sh";      cmd_log "$@";;

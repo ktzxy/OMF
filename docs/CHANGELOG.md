@@ -1,5 +1,9 @@
 # 版本变更记录
 
+## v1.38 关键改进（巨型文件拆分：check.sh 871 → 596 行）
+- **`cmd/check.sh` 拆分出监控模块**：`check_monitor` + `_monitor_collect`/`_monitor_run_once`/`_monitor_alert` 移至独立的 `cmd/check_monitor.sh`（281 行）。monitor 组内部自洽，仅依赖 lib/common.sh，与 check.sh 其余检查函数无调用耦合。
+- `omf.sh` 的 check 分支改为一次 source 2 个文件。拆分后 16 个 check 函数全部可加载（ALL_LOADED），selftest 39/0。
+
 ## v1.37 关键改进（巨型文件拆分：db.sh 1142 → 385 行）
 - **`cmd/db.sh` 按功能拆分为 4 个文件（消除巨型文件，职责单一化）**：
   - `cmd/db.sh`（385 行）：分发器 `cmd_db` + 基础生命周期 `db_create`/`db_optimize`/`db_status`/`db_start`/`db_stop`（`db_status` 留在主文件，被 create/start/pdb 共享）。

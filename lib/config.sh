@@ -47,6 +47,9 @@ load_config() {
     OMF_CONFIG[APP_USER]="${APP_USER:-dherp}"
     OMF_CONFIG[APP_PASSWORD]="${APP_PASSWORD:-dherp_skzy}"
     OMF_CONFIG[APP_TABLESPACE]="${APP_TABLESPACE:-dherp}"
+    # 每模式表空间数据文件个数 / 大小(MB): 由 sql init 建表空间时用 (适配大小库)
+    OMF_CONFIG[APP_DATAFILES]="${APP_DATAFILES:-4}"
+    OMF_CONFIG[APP_DATAFILE_SIZE_MB]="${APP_DATAFILE_SIZE_MB:-1024}"
     # 多模式(多库)列表: 空格分隔, 如 "dherp lsdherp miserp"; 留空 = 仅 APP_USER 单模式
     OMF_CONFIG[APP_SCHEMAS]="${APP_SCHEMAS:-}"
 
@@ -297,6 +300,16 @@ omf_schema_password() {
 omf_schema_datadir() {
     local key; key="$(_omf_schema_key "$1")_DATA_DIR"
     echo "${!key:-${ORACLE_DATA}/${ORACLE_SID}/$1}"
+}
+# 每模式表空间数据文件个数 (默认全局 APP_DATAFILES, 回退 4)
+omf_schema_datafiles() {
+    local key; key="$(_omf_schema_key "$1")_DATAFILES"
+    echo "${!key:-${APP_DATAFILES:-${OMF_CONFIG[APP_DATAFILES]:-4}}}"
+}
+# 每模式表空间数据文件大小 (MB) (默认全局 APP_DATAFILE_SIZE_MB, 回退 1024)
+omf_schema_datafile_size() {
+    local key; key="$(_omf_schema_key "$1")_DATAFILE_SIZE_MB"
+    echo "${!key:-${APP_DATAFILE_SIZE_MB:-${OMF_CONFIG[APP_DATAFILE_SIZE_MB]:-1024}}}"
 }
 
 # 自动加载

@@ -48,6 +48,10 @@ PDB_PASSWORD="${PDB_PASSWORD:-ChangeMe_123}"
 # 单模式(传统): 仅配 APP_USER/APP_PASSWORD/APP_TABLESPACE 即可。
 #   Oracle 中 模式 = 用户, 改 APP_USER 即同时改用户名与模式名; 数据文件路径由
 #   ORACLE_DATA + ORACLE_SID 推导为 ${ORACLE_DATA}/${ORACLE_SID}/<用户>/dataNN.dbf
+#   表空间数据文件个数/大小: APP_DATAFILES(默认4个) / APP_DATAFILE_SIZE_MB(默认1024M),
+#   可全局设或按 <大写模式名>_DATAFILES / _DATAFILE_SIZE_MB 覆盖 (适配小库减小/大库增大)
+APP_DATAFILES="4"
+APP_DATAFILE_SIZE_MB="1024"
 # 多模式(多库, 如批号库 dherp + 连锁库 lsdherp + ...):
 #   用 APP_SCHEMAS 列出所有模式(空格分隔), 框架自动逐个建用户/表空间。
 #   每个模式可用 <大写模式名>_USER / _PASSWORD / _TABLESPACE / _DATA_DIR 个别覆盖,

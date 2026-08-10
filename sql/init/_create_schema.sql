@@ -24,26 +24,27 @@ ALTER SESSION SET CONTAINER = &PDB_NAME;
 
 -- 1) 创建表空间 (幂等)
 --    数据文件落在 &APP_DATA_DIR (每模式独立子目录, 避免多模式同名文件冲突 ORA-01537)
+--    数据文件个数/大小由 &APP_DATAFILES (默认 4) / &APP_DATAFILE_SIZE_MB (默认 1024) 控制,
+--    由 omf sql init 注入 (conf 可覆盖 <大写名>_DATAFILES / <大写名>_DATAFILE_SIZE_MB), 适配大小库。
 DECLARE
     v_sql VARCHAR2(4000);
+    v_n   NUMBER;
+    v_i   NUMBER;
+    v_df  VARCHAR2(4000);
 BEGIN
-    v_sql := 'CREATE TABLESPACE &APP_TABLESPACE
-    DATAFILE
-        ''&APP_DATA_DIR/data00.dbf'' SIZE 1G AUTOEXTEND ON NEXT 500M,
-        ''&APP_DATA_DIR/data01.dbf'' SIZE 1G AUTOEXTEND ON NEXT 500M,
-        ''&APP_DATA_DIR/data02.dbf'' SIZE 1G AUTOEXTEND ON NEXT 500M,
-        ''&APP_DATA_DIR/data03.dbf'' SIZE 1G AUTOEXTEND ON NEXT 500M,
-        ''&APP_DATA_DIR/data04.dbf'' SIZE 1G AUTOEXTEND ON NEXT 500M,
-        ''&APP_DATA_DIR/data05.dbf'' SIZE 1G AUTOEXTEND ON NEXT 500M,
-        ''&APP_DATA_DIR/data06.dbf'' SIZE 1G AUTOEXTEND ON NEXT 500M,
-        ''&APP_DATA_DIR/data07.dbf'' SIZE 1G AUTOEXTEND ON NEXT 500M,
-        ''&APP_DATA_DIR/data08.dbf'' SIZE 1G AUTOEXTEND ON NEXT 500M,
-        ''&APP_DATA_DIR/data09.dbf'' SIZE 1G AUTOEXTEND ON NEXT 500M,
-        ''&APP_DATA_DIR/data10.dbf'' SIZE 1G AUTOEXTEND ON NEXT 500M
-    EXTENT MANAGEMENT LOCAL
-    SEGMENT SPACE MANAGEMENT AUTO';
+    -- 数据文件个数: 钳制 1~16, 防误配过多
+    v_n := LEAST(GREATEST(&APP_DATAFILES, 1), 16);
+    -- 拼接 DATAFILE 子句: data00.dbf ~ data(N-1).dbf, 每个 SIZE 按配置 (MB) 且 AUTOEXTEND
+    v_df := '';
+    FOR v_i IN 0 .. v_n - 1 LOOP
+        IF v_i > 0 THEN v_df := v_df || ','; END IF;
+        v_df := v_df || ' ''' || '&APP_DATA_DIR/data' || LPAD(v_i, 2, '0') || '.dbf' ||
+                ''' SIZE ' || &APP_DATAFILE_SIZE_MB || 'M AUTOEXTEND ON NEXT 500M';
+    END LOOP;
+    v_sql := 'CREATE TABLESPACE &APP_TABLESPACE DATAFILE' || v_df ||
+             ' EXTENT MANAGEMENT LOCAL SEGMENT SPACE MANAGEMENT AUTO';
     EXECUTE IMMEDIATE v_sql;
-    DBMS_OUTPUT.PUT_LINE('表空间 &APP_TABLESPACE 创建完成 (数据目录 &APP_DATA_DIR)');
+    DBMS_OUTPUT.PUT_LINE('表空间 &APP_TABLESPACE 创建完成 (数据目录 &APP_DATA_DIR, ' || v_n || ' 个数据文件, 每 ' || &APP_DATAFILE_SIZE_MB || 'M)');
 EXCEPTION
     WHEN OTHERS THEN
         IF SQLCODE = -1543 THEN

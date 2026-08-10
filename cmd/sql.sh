@@ -197,7 +197,7 @@ sql_init() {
             chown "${ORACLE_USER}:${ORACLE_GROUP}" "$dd" 2>/dev/null || true
             chmod 750 "$dd"
             log_step "创建模式[${name}] -> 用户=${u} 表空间=${ts} 数据目录=${dd}"
-            if ! _sql_run_file "$template" "$u" "$pw" "$ts" "$dd"; then
+            if ! _sql_run_file "$template" "$u" "$pw" "$ts" "$dd" "$name"; then
                 log_warn "模式[${name}] 创建失败或部分失败, 请检查日志 (可能用户已存在, 属正常幂等跳过)"
             fi
             # 记录该模式基线已建 (供 omf sql rollback --schema <名> 定点重置)
@@ -260,7 +260,7 @@ sql_execute_all() {
 #   sql_execute_one: 兼容旧调用, 用全局 APP_USER 上下文执行 (patch/upgrade/custom 等)
 #===============================================================================
 _sql_run_file() {
-    local script="$1" app_user="$2" app_pw="$3" app_ts="$4" data_dir="$5"
+    local script="$1" app_user="$2" app_pw="$3" app_ts="$4" data_dir="$5" schema_name="$6"
     [ -f "$script" ] || { log_error "脚本不存在: $script"; return 1; }
     local log_dir="${OMF_HOME}/sql/.logs"
     mkdir -p "$log_dir"
@@ -268,6 +268,16 @@ _sql_run_file() {
 
     log_step "执行: $(basename "$script") (上下文用户=${app_user}, 表空间=${app_ts})"
     log_info "日志: $log_file"
+
+    # 表空间数据文件个数/大小: 有模式名时按 <大写名>_DATAFILES/_DATAFILE_SIZE_MB 解析, 否则用全局默认
+    local n_dfs size_mb
+    if [ -n "$schema_name" ]; then
+        n_dfs=$(omf_schema_datafiles "$schema_name")
+        size_mb=$(omf_schema_datafile_size "$schema_name")
+    else
+        n_dfs="${APP_DATAFILES:-4}"
+        size_mb="${APP_DATAFILE_SIZE_MB:-1024}"
+    fi
 
     local wrapper; wrapper=$(mktemp /tmp/omf_sql_XXXXXX.sql)
     {
@@ -279,6 +289,8 @@ _sql_run_file() {
         echo "DEFINE APP_USER     = '${app_user}'"
         echo "DEFINE APP_PASSWORD = $(omf_quote_sql "${app_pw}")"   # 密码单引号翻倍, 防 ' 破坏
         echo "DEFINE APP_TABLESPACE = '${app_ts}'"
+        echo "DEFINE APP_DATAFILES = ${n_dfs}"
+        echo "DEFINE APP_DATAFILE_SIZE_MB = ${size_mb}"
         echo "DEFINE ORACLE_DATA  = '${ORACLE_DATA}'"
         echo "DEFINE APP_DATA_DIR = '${data_dir}'"
         echo "DEFINE ORACLE_DUMP_DIR = '${ORACLE_DUMP_DIR}'"

@@ -73,7 +73,7 @@ _ensure_schema_exists() {
     pw=$(omf_schema_password "$name"); dd=$(omf_schema_datadir "$name")
     mkdir -p "$dd"; chown "${ORACLE_USER}:${ORACLE_GROUP}" "$dd" 2>/dev/null || true; chmod 750 "$dd"
     log_step "确保模式[${name}]存在 (用户=${u}); 若不存在则按模板创建"
-    _sql_run_file "$tmpl" "$u" "$pw" "$ts" "$dd" || \
+    _sql_run_file "$tmpl" "$u" "$pw" "$ts" "$dd" "$name" || \
         log_warn "模式[${name}]创建失败或部分失败, 请检查日志"
 }
 

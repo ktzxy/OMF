@@ -1,5 +1,12 @@
 # 版本变更记录
 
+## v1.57 关键改进（DBA 视角：表空间数据文件个数/大小可配）
+基于资深 DBA 建议，解决"每模式 11×1G 起步对数据量小的组织过重"：
+- **`_create_schema.sql` 数据文件动态生成**：由 PL/SQL 循环按 `&APP_DATAFILES`（默认 4 个）/`&APP_DATAFILE_SIZE_MB`（默认 1024M）拼接 `DATAFILE` 子句，替代原先硬编码 11×1G；文件个数钳制 1~16。
+- **`omf_schema_datafiles`/`omf_schema_datafile_size` 辅助函数**：按 `<大写模式名>_DATAFILES`/`_DATAFILE_SIZE_MB` 逐模式覆盖，缺省用全局 `APP_DATAFILES`/`APP_DATAFILE_SIZE_MB`。
+- **`_sql_run_file` 注入新 DEFINE**：增加模式名参数（`$6`），sql_init/`_ensure_schema_exists` 传入模式名以解析每模式配置；`load_config` 补默认值；`conf/omf.conf.example` 补配置说明。
+- 验证数据文件循环生成正确（4 个 data00-03、大小/AUTOEXTEND 无误）。
+
 ## v1.56 关键改进（DBA 视角：SQL 事务边界澄清 + 跨主机恢复指引）
 基于资深 DBA 建议的文档级补全：
 - **SQL.md 补「rollback 语义澄清」**：明确 `omf sql rollback` 只清执行标记、**非回滚**（不能撤销已执行的 DDL/DML，需靠 flashback/备份恢复）；并警示 `sql_execute_all` 的"失败即停"是脚本级非事务级——含多条 DDL 的脚本中途失败后前面已持久化、重跑会因对象已存在失败，**SQL 脚本须自身幂等**。

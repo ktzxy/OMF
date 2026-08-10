@@ -1,5 +1,10 @@
 # 版本变更记录
 
+## v1.40 关键改进（巨型文件拆分：sql.sh 776 → 414 行）
+- **`cmd/sql.sh` 拆分出数据泵导入模块**：`sql_import` 及 impdp 系列（`sql_import_parfile_dir`/`ensure_dump_dir_object`/`_grant_import_privs`/`_ensure_schema_exists`/`sql_import_gen_parfile`/`do_impdp`/`_omf_dump_schema`/`_omf_dump_tablespace`）移至独立的 `cmd/sql_import.sh`（368 行）。
+- **依赖处理**：import 组的 `_ensure_schema_exists` 依赖主文件的 `_sql_run_file`。`omf.sh` sql 分支改为**先 source 主文件、再 source sql_import.sh**（与 v1.39 的 backup_restore 依赖主文件工具函数同模式）。
+- 至此 4 个巨型文件全部拆分完成（db/check/backup/sql）。拆分后所有 sql 函数可加载（ALL_LOADED），selftest 41/0。
+
 ## v1.39 关键改进（巨型文件拆分：backup.sh 846 → 624 行）
 - **`cmd/backup.sh` 拆分出恢复模块**：`backup_restore`/`restore_logical`/`restore_rman` 移至独立的 `cmd/backup_restore.sh`（228 行）。
 - **依赖处理**：restore 组依赖主文件的 `parse_scope`/`scope_clause`/`ensure_dump_dir`（这三个工具被所有 RMAN/恢复类函数共用，宜留在主文件）。`omf.sh` backup 分支改为**先 source 主文件、再 source backup_restore.sh**（保证工具函数先定义，与 v1.37 的 db_pdb 依赖 db_status 同模式）。

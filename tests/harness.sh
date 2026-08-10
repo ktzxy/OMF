@@ -145,6 +145,48 @@ t "结构化日志 JSON 模式输出合法 JSON" \
         head -1 \"\$OMF_RUN_LOG\" | grep -q '\"cmd\":\"testcmd\"' && head -1 \"\$OMF_RUN_LOG\" | grep -q '\"sub\":\"run\"' && head -1 \"\$OMF_RUN_LOG\" | grep -q '\"msg\":\"jsonmode\"'
     "
 
+# ---- 13) RMAN 脚本生成 mock 测试 (无库验证高危拼写) ----
+# RMAN 脚本拼错一行即静默失败且无真实库跑不了; 这里 mock rman_run 捕获生成的脚本断言。
+t "RMAN 物理备份脚本生成正确 (FORMAT + BACKUP 子句)" \
+    load_common "
+        export OMF_HOME='${OMF_HOME}' OMF_CMD=backup OMF_SUBCMD=physical OMF_RUN_LOG=\$(mktemp)
+        export BACKUP_RETENTION_DAYS=30 BACKUP_PARALLEL=4 ORACLE_BACKUP=/tmp/omf_bk_test SCOPE_MODE=all
+        # 先 source backup.sh 拿到 backup_physical/scope_clause 等定义 (纯函数定义, source 安全)
+        source '${OMF_HOME}/cmd/backup.sh' 2>/dev/null || true
+        # 再 stub 依赖, 覆盖为无害动作 (顺序: 必须在 source 之后覆盖 rman_run, 否则被真实版覆盖)
+        require_db_user() { :; }
+        parse_scope() { :; }
+        require_archivelog() { :; }
+        ensure_backup_dirs() { :; }
+        scope_clause() { echo ''; }
+        send_notification() { :; }
+        as_oracle() { :; }      # 成功路径的 DELETE OBSOLETE / backup_cleanup_disks 内部连接均 stub
+        oracle_su() { :; }
+        backup_cleanup_disks() { :; }
+        # mock rman_run: 捕获脚本到 CAPTURED 并返回成功 (必须在 source 之后覆盖, 否则被真实版覆盖)
+        CAPTURED=''
+        rman_run() { CAPTURED=\$3; return 0; }
+        backup_physical
+        # 断言: FORMAT 含 ORACLE_BACKUP/full + %d_%T_%s_%p; BACKUP 子句含 COMPRESSED BACKUPSET
+        echo \"\$CAPTURED\" | grep -q 'CONFIGURE CHANNEL DEVICE TYPE DISK FORMAT .*/full/%d_%T_%s_%p' \
+            && echo \"\$CAPTURED\" | grep -q 'BACKUP AS COMPRESSED BACKUPSET' \
+            && echo \"\$CAPTURED\" | grep -q 'BACKUP CURRENT CONTROLFILE' \
+            && rm -f \"\$OMF_RUN_LOG\"
+    "
+
+# ---- 14) 备份/状态"无备份文件"场景不再中断 (pipefail 防护) ----
+# status.sh / backup_list 用 `ls -t dump/*.dmp | head -1`, 无文件时 ls 失败 + pipefail 会中断 set -e; 须 || true
+t "无 dump 文件时 ls|head 不触发 set -e 中断" \
+    load_common "
+        tmpd=\$(mktemp -d)
+        set -e; set -o pipefail
+        out=\$(ls -t \"\$tmpd\"/*.dmp 2>/dev/null | head -1 || true)
+        set +e
+        rc=\$?
+        rm -rf \$tmpd
+        [ \$rc -eq 0 ]
+    "
+
 echo ""
 echo "═══════════════════════════════════════"
 echo "回归结果: ✓ $PASS 通过  ✗ $FAIL 失败"

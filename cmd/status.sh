@@ -127,8 +127,9 @@ SQL" 2>/dev/null); then
             echo "  表空间使用率: 均 < 85%"
         fi
         # 上次逻辑备份时间 (健康度信号: 多久没备份了)
+        # 注意: 无 .dmp 时 ls 返回非0, 在 set -e + pipefail 下命令替换会中断整个 status, 故需 || true
         local last_dmp
-        last_dmp=$(ls -t "${ORACLE_BACKUP}/dump/"*.dmp 2>/dev/null | head -1)
+        last_dmp=$(ls -t "${ORACLE_BACKUP}/dump/"*.dmp 2>/dev/null | head -1 || true)
         if [ -n "$last_dmp" ]; then
             echo "  上次逻辑备份: $(basename "$last_dmp") ($(stat -c %y "$last_dmp" 2>/dev/null | cut -d. -f1))"
         else

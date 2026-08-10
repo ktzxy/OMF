@@ -1,5 +1,11 @@
 # 版本变更记录
 
+## v1.46 关键改进（深度排查修复：status 中断 bug / backup 别名 / RMAN mock 测试）
+基于框架深度检测发现的可靠性问题，落地：
+- **修复 `omf status` 在无逻辑备份时中断**：`status.sh`/`backup.sh` 中 `ls -t dump/*.dmp | head -1` 无 `|| true`，在 `set -e` + `pipefail` 下，dump 目录无文件时 `ls` 失败会触发命令替换中断整个 status/backup_list。补 `|| true`（含 status 的最新日志行、backup_list 的 RPO 统计）。
+- **`omf backup incremental` 兼容**：`cmd_backup` 增加 `incr|incremental` 别名，使用户按 `omf.sh` help（`incremental`）输入也能执行（此前只认 `incr`，按 help 输入会报错）。
+- **harness 回归 12→14 项**：新增"RMAN 物理备份脚本生成正确"（mock `rman_run` 捕获生成的 RMAN 脚本，断言 FORMAT 含 `full/%d_%T_%s_%p`、`BACKUP AS COMPRESSED BACKUPSET`、`BACKUP CURRENT CONTROLFILE`——无库验证高危脚本拼写）与"无 dump 文件时 ls|head 不触发 set -e 中断"（回归 pipefail 防护）。
+
 ## v1.45 关键改进（多组织 DG：切换后连接串指引 + monitor PDB 级 redo 应用）
 基于"多组织 DG 部署与生命周期"检测验证发现的痛点，落地两项改进：
 - **switchover/failover 后多组织应用重连指引**：新增 `dg_app_conn_guide`，遍历 `APP_SCHEMAS`（多组织模式），输出每个组织的 EZConnect 连接串（`用户@新主库IP:端口/PDB`）与管理连接串，替代原先"应用改连新主库"一行笼统提示。明确提示 OMF 不自动翻转 tnsnames/钱包别名 IP，需确保各组织应用实际连到新主库。调用点：switchover/failover 成功分支。

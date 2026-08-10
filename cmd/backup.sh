@@ -15,7 +15,7 @@ cmd_backup() {
     case "$subcmd" in
         full|logical)  backup_logical "$@";;
         physical)      backup_physical "$@";;
-        incr)          backup_incremental "$@";;
+        incr|incremental) backup_incremental "$@";;   # incremental 兼容 help 表述
         archive)       backup_archive "$@";;
         auto)          backup_auto "$@";;
         schedule)      backup_schedule "$@";;
@@ -442,7 +442,8 @@ backup_list() {
     # 综合 RPO 取两者较旧者 (更保守, 反映最坏情况可能丢失的数据时长)
     local rpo_logical_min="" rpo_physical_min="" newest_dmp=""
     if [ "$type" = "all" ] || [ "$type" = "expdp" ]; then
-        newest_dmp=$(ls -t "${ORACLE_BACKUP}/dump/"*.dmp 2>/dev/null | head -1)
+        # 无 .dmp 时 ls 返回非0 + pipefail 会中断 set -e 调用方, 故 || true
+        newest_dmp=$(ls -t "${ORACLE_BACKUP}/dump/"*.dmp 2>/dev/null | head -1 || true)
         if [ -n "$newest_dmp" ]; then
             local m; m=$(stat -c %Y "$newest_dmp" 2>/dev/null || echo "$now_ts")
             rpo_logical_min=$(( (now_ts - m) / 60 ))

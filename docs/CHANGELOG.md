@@ -1,5 +1,9 @@
 # 版本变更记录
 
+## v1.43 关键改进（env 加固：内核参数备份 + 依赖包失败检测）
+- **`env_kernel` 覆盖前备份原 sysctl 文件**：此前直接 `cat >` 覆盖 `/etc/sysctl.d/99-oracle.conf`，系统原有自定义内核参数会永久丢失且无回滚途径。现覆盖前若文件非空，先 `cp -a` 备份为 `99-oracle.conf.bak.<时间戳>` 并提示。
+- **`env_packages` 依赖包安装失败不再"假成功"**：rpm 分支一次性安装后捕获退出码，非零即 `log_warn` + `return 1`；apt 分支末尾 `failed` 非空（有关键包缺失）时 `return 1`。此前两分支均无返回非零，部署/预检无法感知关键依赖缺失。
+
 ## v1.42 关键改进（体验类修补：备份成功通知 + 监听器端口冲突预检）
 - **备份成功通知**（此前仅失败有通知）：`backup_physical`/`backup_incremental`/`backup_logical` 成功分支补 `send_notification`，与既有失败通知成对；逻辑备份部分失败也补通知。
 - **监听器端口冲突预检**：新增 `listener_port_check`（用 `ss`/`netstat` 探测 TCP 监听），`omf listener start`/`restart` 启动前预检目标端口，被占用时提前提示/中止（`restart` 直接 `log_error`），避免"启动失败后翻日志排查"。

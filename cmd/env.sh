@@ -119,6 +119,12 @@ env_kernel() {
         hp_line="vm.nr_hugepages = 0"
     fi
 
+    # 覆盖前备份已有内核参数文件, 供回滚参考 (此前直接 cat > 覆盖, 系统原有自定义 sysctl 会永久丢失)
+    if [ -f "$sysctl_file" ] && [ -s "$sysctl_file" ]; then
+        local bak="${sysctl_file}.bak.$(date '+%Y%m%d_%H%M%S')"
+        cp -a "$sysctl_file" "$bak" 2>/dev/null && log_info "已备份原内核参数: $bak"
+    fi
+
     cat > "$sysctl_file" << EOF
 # Oracle 内核参数 (由 OMF 生成)
 fs.file-max = 6815744
@@ -256,19 +262,31 @@ env_packages() {
                     failed="$failed $p"
                 fi
             done
-            [ -n "$failed" ] && log_warn "以下包未安装:$failed"
+            if [ -n "$failed" ]; then
+                log_warn "以下包未安装:$failed"
+                return 1   # 关键依赖缺失, 返回非零让部署/预检感知, 避免"假成功"
+            fi
             ;;
         rpm)
+            set +e
+            local _rpm_rc=0
             if command -v dnf &>/dev/null; then
-                dnf install -y "${pkgs[@]}" 2>&1 | tail -5
+                dnf install -y "${pkgs[@]}" 2>&1 | tail -5; _rpm_rc=${PIPESTATUS[0]}
             elif command -v yum &>/dev/null; then
-                yum install -y "${pkgs[@]}" 2>&1 | tail -5
+                yum install -y "${pkgs[@]}" 2>&1 | tail -5; _rpm_rc=${PIPESTATUS[0]}
             elif command -v microdnf &>/dev/null; then
-                microdnf install -y "${pkgs[@]}" 2>&1 | tail -5
+                microdnf install -y "${pkgs[@]}" 2>&1 | tail -5; _rpm_rc=${PIPESTATUS[0]}
             else
+                set -e
                 log_error "未找到 dnf/yum/microdnf 包管理器"
                 return 1
             fi
+            set -e
+            if [ "$_rpm_rc" -ne 0 ]; then
+                log_warn "包安装返回非零 (rc=$_rpm_rc), 可能部分依赖缺失"
+                return 1
+            fi
+            unset _rpm_rc
             ;;
     esac
 

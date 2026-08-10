@@ -99,7 +99,7 @@ EOF
 # 各命令的子命令用法 (供 omf help <cmd> / omf <cmd> -h 使用)
 cmd_help() {
     case "${1:-}" in
-        env)        echo "用法: omf env {prepare|user|kernel|deps|dirs|vars|firewall|all}";;
+        env)        echo "用法: omf env {all|prepare|check|user|kernel|packages|profile}";;
         install)    echo "用法: omf install {software|listener|check} [zip路径] [EE|SE]";;
         db)         echo "用法: omf db {create|start|stop|restart|status|pdb|dg|archivelog}"; echo "  dg {config|enable|standby|wallet|broker|switchover|failover|reinstate|apply|gap|validate|status}"; echo "    broker              创建 Broker 配置 (切换前置)"; echo "    switchover [--to X] 计划内主备切换 (主库执行, 无数据丢失)"; echo "    failover [--to X] [--immediate]  灾难切换 (备库执行)"; echo "    reinstate [X]       failover 后回收旧主库为备库"; echo "    apply {start|stop|status}  备库 MRP 应用管理"; echo "    gap                 传输/应用延迟与归档间隙";;
         backup)     echo "用法: omf backup {logical|physical|incremental|archive|auto|schedule|list|validate|restore|cleanup} [选项]"; echo "  logical [--schema <模式名>] [--all|--root|--pdb a,b]  # 逻辑备份; --schema 仅导出该模式(多库)"; echo "  cleanup: [--logical|--physical] [-d 天数 | --all] [-p|--dry-run|list] [-y]"; echo "    --logical 仅逻辑备份(dump) | --physical 仅物理备份(RMAN) | 默认两者"; echo "    -d N 删 N 天前(默认30) | --all 删全部 | -p|list 仅预览 | -y 免确认";;

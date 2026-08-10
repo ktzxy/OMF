@@ -1,5 +1,13 @@
 # 版本变更记录
 
+## v1.41 关键改进（生产痛点修补：env all / 解压校验 / 备份清理边界 / 锁分析修正 / 调优闭环）
+基于全面排查（见对话记录）优先修复影响可用性与可靠性的问题：
+- **修复 `omf deploy` 必失败 bug：`cmd_env` 新增 `all` 子命令**（等价 `prepare`）。此前 `deploy.sh` 第 2 步调用 `omf env all`，但 `cmd_env` 无 `all` 分支落入 `*)` 报错，导致一键部署第 2 步必然失败。现 `all|prepare` 均映射 `env_prepare`。
+- **安装包解压前完整性校验 + 解压失败中止**：解压前 `unzip -l` 快速校验 zip 可读（能发现截断/损坏），解压后捕获退出码失败即 `log_error` 中止，避免带病生成响应文件继续安装。校验 `log_error` 自带 `exit 1`，安装失败会正确中止（不继续跑 root/监听器）。
+- **逻辑备份失败不再清旧 dump**：`backup_logical` 仅当本次**所有分片**都成功才 `backup_cleanup_disks "dump"`；任一分片失败则保留旧 dump 维持可恢复窗口（与物理备份"失败不删旧备"语义一致）。
+- **修正 `tune_session` 锁等待查询**：原 `JOIN v$session s2 ON l.id1 = s2.sid` 语义错误（`v$lock.id1` 是被锁对象 ID 非 sid），改用 `v$session.BLOCKING_SESSION` 官方推荐阻塞链查询 + 被阻塞对象查询。
+- **`tune_apply` 补调优闭环**：调优前保存 SGA/PGA 参数快照到 `logs/tune_*_before_*.snap`（600 权限，供回滚参考）；重启后健康验证实例是否重新 OPEN，未 OPEN 则 `log_error` 提示用快照回滚。
+
 ## v1.40 关键改进（巨型文件拆分：sql.sh 776 → 414 行）
 - **`cmd/sql.sh` 拆分出数据泵导入模块**：`sql_import` 及 impdp 系列（`sql_import_parfile_dir`/`ensure_dump_dir_object`/`_grant_import_privs`/`_ensure_schema_exists`/`sql_import_gen_parfile`/`do_impdp`/`_omf_dump_schema`/`_omf_dump_tablespace`）移至独立的 `cmd/sql_import.sh`（368 行）。
 - **依赖处理**：import 组的 `_ensure_schema_exists` 依赖主文件的 `_sql_run_file`。`omf.sh` sql 分支改为**先 source 主文件、再 source sql_import.sh**（与 v1.39 的 backup_restore 依赖主文件工具函数同模式）。

@@ -10,13 +10,13 @@ cmd_env() {
     shift || true
     log_set_subcmd "$subcmd"
     case "$subcmd" in
-        prepare) env_prepare "$@";;
-        check)   env_check "$@";;
-        user)    env_user "$@";;
-        kernel)  env_kernel "$@";;
-        packages) env_packages "$@";;
-        profile) env_profile "$@";;
-        *) echo "用法: omf env {prepare|check|user|kernel|packages|profile}"; exit 1;;
+        all|prepare) env_prepare "$@";;   # all = prepare (完整环境准备, 供 omf deploy 编排调用)
+        check)       env_check "$@";;
+        user)        env_user "$@";;
+        kernel)      env_kernel "$@";;
+        packages)    env_packages "$@";;
+        profile)     env_profile "$@";;
+        *) echo "用法: omf env {all|prepare|check|user|kernel|packages|profile}"; exit 1;;
     esac
 }
 

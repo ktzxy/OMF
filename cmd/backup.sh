@@ -206,12 +206,20 @@ select name from v\\\$pdbs;\" | sqlplus -s / as sysdba" 2>/dev/null \
             ;;
     esac
 
+    local _fail=0
     for pdb in "${pdbs[@]}"; do
         local su=""
         [ -n "$schema" ] && su="$(omf_schema_user "$schema")"
-        backup_logical_one "$pdb" "$log_file" "$su"
+        backup_logical_one "$pdb" "$log_file" "$su" || _fail=$((_fail+1))
     done
-    backup_cleanup_disks "dump" "${BACKUP_RETENTION_DAYS}"
+    # 仅当本次【所有】逻辑备份都成功时才清理旧 dump; 若任一分片失败, 保留旧 dump
+    # 以维持可恢复窗口 (与物理备份"失败不删旧备"语义一致, 避免失败时清掉可用的历史备份)。
+    if [ "$_fail" -eq 0 ]; then
+        backup_cleanup_disks "dump" "${BACKUP_RETENTION_DAYS}"
+    else
+        log_warn "本次逻辑备份有 ${_fail} 个分片失败, 已保留旧 dump (未清理), 请检查后重试"
+    fi
+    unset _fail
 }
 
 # 单个 PDB/CDB$ROOT 的 expdp 全库导出

@@ -201,18 +201,24 @@ SELECT * FROM (
 ) WHERE ROWNUM <= 10;
 
 PROMPT
-PROMPT === 当前锁等待 ===
+PROMPT === 当前锁等待 (基于 BLOCKING_SESSION 阻塞链) ===
+-- 用 v$session.BLOCKING_SESSION 识别阻塞链 (官方推荐), 避免 v$lock.id1(被锁对象ID) 误作 sid 的错误 JOIN。
 SELECT
-    s1.username || '@' || s1.machine AS blocker,
-    s1.sid AS blocker_sid,
-    s2.username || '@' || s2.machine AS waiter,
-    s2.sid AS waiter_sid,
-    l.type AS lock_type,
-    l.ctime AS wait_secs
-FROM v\$lock l
-JOIN v\$session s1 ON l.sid = s1.sid
-JOIN v\$session s2 ON l.id1 = s2.sid
-WHERE l.block = 1;
+    '阻塞者: ' || b.username || '@' || b.machine || ' (sid=' || b.sid || ')' AS blocker,
+    '等待者: ' || w.username || '@' || w.machine || ' (sid=' || w.sid || ')' AS waiter,
+    '等待事件: ' || w.event || ' (已等 ' || ROUND(w.SECONDS_IN_WAIT) || 's)' AS wait_event,
+    'SQL_ID: ' || NVL(w.sql_id,'-') AS sql_id
+FROM v\$session w
+JOIN v\$session b ON w.BLOCKING_SESSION = b.sid
+WHERE w.BLOCKING_SESSION_STATUS = 'VALID'
+ORDER BY w.SECONDS_IN_WAIT DESC;
+
+PROMPT === 阻塞对象 (被锁对象类型) ===
+SELECT '会话 ' || s.sid || ' 阻塞在: ' || s.row_wait_obj# || ' (对象 ' ||
+       (SELECT o.object_name FROM dba_objects o WHERE o.object_id = s.row_wait_obj#) || ')' AS blocked_obj
+FROM v\$session s
+WHERE s.BLOCKING_SESSION_STATUS = 'VALID'
+  AND s.row_wait_obj# > 0;
 
 EXIT;
 SQL
@@ -327,6 +333,19 @@ SQL" 2>/dev/null)
     esac
     confirm "$msg"
 
+    # 调优前保存当前 SGA/PGA 参数快照到日志目录, 供调整后对比/回滚参考 (SPFILE 修改前留档)
+    local snap="${OMF_HOME}/logs/tune_${OMF_CONFIG[ORACLE_SID]}_before_$(date '+%Y%m%d_%H%M%S').snap"
+    { echo "# OMF tune apply 前快照 (scope=${scope}, $(date '+%F %T'))"
+      echo "sga_target_sp_mb=${cur_sga_sp:-0}"
+      echo "sga_target_run_mb=${cur_sga_run:-0}"
+      echo "pga_target_sp_mb=${cur_pga_sp:-0}"
+      echo "pga_target_run_mb=${cur_pga_run:-0}"
+      echo "target_sga_mb=${sga_target}"
+      echo "target_pga_mb=${pga_target}"
+    } > "$snap"
+    chmod 600 "$snap" 2>/dev/null || true
+    log_info "调优前参数快照已保存: $snap"
+
     local sets=""
     [ "$scope" = "sga" ]    && sets="ALTER SYSTEM SET sga_target=${sga_target}M SCOPE=SPFILE;"
     [ "$scope" = "pga" ]    && sets="ALTER SYSTEM SET pga_aggregate_target=${pga_target}M SCOPE=SPFILE;"
@@ -346,6 +365,15 @@ STARTUP;
 EXIT;
 SQL"
     log_info "内存参数已更新 (scope=${scope}) 并重启生效"
+
+    # 重启后健康验证: 确认实例重新 OPEN; 失败则提示用快照回滚 (生产调优最怕黑盒重启)
+    local hstatus
+    hstatus=$(as_oracle "echo 'select status from v\\\$instance;' | sqlplus -s / as sysdba" 2>/dev/null | grep -iE 'OPEN|STARTED|MOUNTED' | head -1 | tr -d ' ')
+    if [ -n "$hstatus" ] && echo "$hstatus" | grep -qi "OPEN"; then
+        log_info "重启后健康验证: 实例状态 ${hstatus} ✓ (参数已生效)"
+    else
+        log_error "调优重启后实例未正常 OPEN (状态=${hstatus:-未知})。请立即用快照回滚参数: $snap, 或手动修复 SPFILE"
+    fi
 }
 
 #===============================================================================

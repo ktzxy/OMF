@@ -166,7 +166,20 @@ install_software() {
     log_step "[3/5] 解压安装包到 ${OMF_CONFIG[ORACLE_HOME]}"
     mkdir -p "${OMF_CONFIG[ORACLE_HOME]}"
     chown oracle:oinstall "${OMF_CONFIG[ORACLE_HOME]}"
+    # 4.1 解压前快速校验 zip 可读性 (unzip -l 只列目录, 比 -t 快; 能发现截断/损坏的 zip 头)
+    log_info "校验安装包完整性 (unzip -l)..."
+    if ! oracle_su "unzip -l '$zip_file' >/dev/null" 2>/dev/null; then
+        log_error "安装包损坏或无法读取: $zip_file (请重新下载/校验 sha256)"
+    fi
+    # 4.2 解压并检测退出码: 解压失败必须中止, 不能带病生成响应文件继续安装
+    set +e
     oracle_su "unzip -o $zip_file -d ${OMF_CONFIG[ORACLE_HOME]}" 2>&1 | tail -5
+    local _uz_rc=${PIPESTATUS[0]}
+    set -e
+    if [ "$_uz_rc" -ne 0 ]; then
+        log_error "解压失败 (unzip exit=$_uz_rc): $zip_file (可能损坏或磁盘空间不足)"
+    fi
+    unset _uz_rc
 
     # 5. 生成响应文件
     log_step "[4/5] 生成静默安装响应文件"

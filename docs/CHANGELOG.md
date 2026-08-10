@@ -1,5 +1,12 @@
 # 版本变更记录
 
+## v1.51 关键改进（跨发行版/资源适配：RHEL7 libxcrypt / ufw 端口同步 / 建库内存校验）
+基于"使用者视角"审查发现的代码级问题修复：
+- **RHEL7/CentOS7 依赖包修复**：`env_packages` 的 rpm 分支按 OS 版本精确剔除仓库不存在的 `libxcrypt`/`libxcrypt-devel`（RHEL7 由 glibc 提供 libcrypt.so.1），避免单包缺失导致整条 `dnf/yum install` 失败。
+- **Ubuntu/Debian 改监听端口同步 ufw**：`listener_fw_update` 补 ufw 分支（`ufw allow/delete allow`），此前只处理 firewalld，Debian 系改端口后外网连不上。
+- **`db create` 补内存下限强校验**：建库前调用 `check_memory_prereq "" true`，<4GB 直接中止（即使绕过 `omf check preflight` 直接建库也能拦截，避免 Oracle 在小内存上 OOM）。
+- 复核确认 `check_memory_prereq` 非 fatal 模式已正确 `return 1`、preflight 已正确标 err（子代理误报，无需改动）。
+
 ## v1.50 关键改进（排障文档补全：常见 ORA- 速查表 + DG 排查指引 + DR 演练）
 - **TROUBLESHOOT.md 新增「常见 ORA- 速查表」**：汇总散落各文档的错误码（ORA-01034/01109/01119/01537/01920/12514/16532/27037/31631/31684/39082/39149 等），每项对应**根因 + OMF 处理命令**，作为排障快速对照入口（配合 `omf log errors` 高频错误聚合）。
 - **TROUBLESHOOT.md 新增「DG 故障排查指引」**：按"先传输→再应用→后间隙/磁盘"的顺序，覆盖 MRP 不启动、传输延迟大、FRA 满、角色误判、脑裂/failover 后旧主库等 6 类常见场景的排查步骤。

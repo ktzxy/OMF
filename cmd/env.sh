@@ -240,6 +240,22 @@ env_packages() {
                 8*|9*|fedora*) ;;
                 *) pkgs+=(compat-libcap1 compat-libstdc++-33);;
             esac
+            # RHEL7/CentOS7 仓库无 libxcrypt 包 (libcrypt.so.1 由 glibc 提供), 硬编码会导致整条
+            # dnf/yum install 因单包缺失失败 -> 按 OS 版本剔除精确匹配的 libxcrypt/libxcrypt-devel。
+            case "$ver" in
+                7*|6*)
+                    local -a _filtered=()
+                    local _p
+                    for _p in "${pkgs[@]}"; do
+                        case "$_p" in
+                            libxcrypt|libxcrypt-devel) continue;;
+                            *) _filtered+=("$_p");;
+                        esac
+                    done
+                    pkgs=("${_filtered[@]}")
+                    unset _filtered _p
+                    ;;
+            esac
             ;;
         *)
             log_error "不支持的发行版: $distro ($os_info)。目前支持: Ubuntu/Debian, CentOS/RHEL/Oracle Linux/Rocky/Alma/Fedora"

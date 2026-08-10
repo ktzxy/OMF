@@ -91,7 +91,7 @@ listener_port_check() {
     return 0
 }
 
-# 防火墙: 开放新端口, 关闭旧端口 (firewalld 激活时)
+# 防火墙: 开放新端口, 关闭旧端口 (firewalld 激活时 / ufw Debian 系)
 listener_fw_update() {
     local oldp="$1" newp="$2"
     if command -v firewall-cmd >/dev/null 2>&1 && systemctl is-active --quiet firewalld 2>/dev/null; then
@@ -101,6 +101,12 @@ listener_fw_update() {
         fi
         firewall-cmd --reload 2>/dev/null
         log_info "防火墙已更新: 开放 ${newp}/tcp"$([ "$oldp" != "$newp" ] && echo ", 关闭 ${oldp}/tcp")
+    elif command -v ufw >/dev/null 2>&1 && [ -n "$(ufw status 2>/dev/null | grep -i 'Status: active')" ]; then
+        ufw allow "${newp}/tcp" >/dev/null 2>&1
+        if [ "$oldp" != "$newp" ]; then
+            ufw delete allow "${oldp}/tcp" >/dev/null 2>&1
+        fi
+        log_info "防火墙已更新 (ufw): 开放 ${newp}/tcp"$([ "$oldp" != "$newp" ] && echo ", 关闭 ${oldp}/tcp")
     fi
 }
 

@@ -50,6 +50,10 @@ cmd_db() {
 db_create() {
     require_root
 
+    # 内存下限强校验: <4GB 直接中止 (Oracle 19c 在小内存上运行极慢/易 OOM)。
+    # 即使绕过 omf check preflight 直接建库也能拦截。
+    check_memory_prereq "" true
+
     # 若配置为延迟大页: 建库前预留 (需连续空闲内存, 趁数据库未起时做)
     if [ "${HUGEPAGES_DEFER:-false}" = "true" ]; then
         local hp; hp=$(omf_hugepages_count)

@@ -1,5 +1,16 @@
 # 版本变更记录
 
+## v1.55 关键改进（DBA 视角：check monitor 补生产关键指标）
+基于资深 DBA 建议，补齐 monitor 生产瓶颈/容量指标：
+- **`_monitor_collect` 新增 4 个指标**：
+  - `_MC_CPU` 主机 CPU 使用率（`/proc/stat` 两次采样差值，非瞬时值）
+  - `_MC_ACTIVE_SESS` 活动会话数（`v$session` ACTIVE 非后台）
+  - `_MC_REDO_MBPS` Redo 平均生成速率（MB/s，`redo size`/实例启动秒数，供容量评估）
+  - `_MC_TOP_WAIT` Top 等待事件名（非 Idle，生产瓶颈首要信号）
+- **json/prom/历史快照输出**均补 `cpu_pct`/`active_sessions`/`redo_mbps`（prom 附 HELP/TYPE），json 另含 `top_wait`。
+- **`--alert` 新增 CPU 阈值告警**：`MONITOR_CPU_WARN_PCT=90`/`ERR_PCT=98`（conf 可覆盖），高 CPU 告警附 Top 等待事件提示。
+- `conf/omf.conf.example` 补 CPU 阈值注释。
+
 ## v1.54 关键改进（DBA 视角：RMAN 增量累积策略 + 归档自动清理防 FRA 满）
 基于资深 DBA 视角建议，优先落地备份可靠性与效率两项：
 - **RMAN 增量累积策略**：`omf backup incremental` 新增 `--level N`（默认 1）、`--cumulative`（默认，累积增量，恢复只需 0 级+最新 1 级累积）/`--differential`（差异增量）参数；RMAN 脚本 `BACKUP INCREMENTAL LEVEL ${level} ${accum}` 明确累积/差异类型。

@@ -145,6 +145,9 @@ TRACE_RETENTION_DAYS="7"
 #   FRA(快速恢复区)使用率 (%): 满仓会阻塞归档/备份, warn 触发 WARN, err 触发 ALERT
 #MONITOR_ARCH_WARN_PCT="80"
 #MONITOR_ARCH_ERR_PCT="90"
+#   CPU 使用率 (%): 持续高 CPU 是生产瓶颈信号, warn 触发 WARN, err 触发 ALERT
+#MONITOR_CPU_WARN_PCT="90"
+#MONITOR_CPU_ERR_PCT="98"
 
 # ===== RMAN 备份重试策略 (omf backup {auto|physical|incr}) =====
 #   网络存储抖动等偶发瞬断会导致 RMAN 误报失败, 启用重试可消除误报。

@@ -50,6 +50,7 @@ check_monitor() {
 _monitor_collect() {
     _MC_DB_UP=0; _MC_MEM=0; _MC_ORA=0; _MC_STATUS="ok"; _MC_DISK=""; _MC_DP_JSON=""
     _MC_INVAL=0; _MC_TS_MAX=0; _MC_BACKUP_AGE=-1; _MC_DG_LAG=-1; _MC_ARCH_PCT=-1; _MC_DG_PDB=""
+    _MC_CPU=0; _MC_ACTIVE_SESS=0; _MC_REDO_MBPS=0; _MC_TOP_WAIT=""
     local db_up=0 mem_free_pct=0 ora_errors=0 status="ok" u=""
     local mps=("/" "${OMF_CONFIG[ORACLE_DATA_BASE]}" "${OMF_CONFIG[ORACLE_BACKUP]}")
 
@@ -68,6 +69,19 @@ echo 'SELECT 1 FROM v\$instance;' | sqlplus -s / as sysdba" &>/dev/null; then
     page_kb=$(awk '/Hugepagesize/ {print int($2)}' /proc/meminfo)
     mem_free=$(( mem_free + hp_free * page_kb / 1024 ))
     [ "${mem_total:-0}" -gt 0 ] && mem_free_pct=$((mem_free * 100 / mem_total))
+
+    # CPU 使用率 (%): /proc/stat 两次采样 (间隔0.5s) 的 busy/total 差值
+    if [ -r /proc/stat ]; then
+        local c1 c2
+        c1=$(awk '/^cpu /{print $2+$3+$4,$5}' /proc/stat 2>/dev/null)
+        sleep 0.5 2>/dev/null
+        c2=$(awk '/^cpu /{print $2+$3+$4,$5}' /proc/stat 2>/dev/null)
+        local b1 t1 b2 t2
+        b1=${c1%% *}; t1=${c1#* }
+        b2=${c2%% *}; t2=${c2#* }
+        local db=$((b2-b1)) dt=$(((b2+t2)-(b1+t1)))
+        [ "$dt" -gt 0 ] && _MC_CPU=$(( db*100/dt ))
+    fi
 
     local alert_log="$(get_alert_log)"
     if [ -f "$alert_log" ]; then
@@ -95,6 +109,22 @@ SELECT NVL(MAX(ROUND((SUM(bytes)-SUM(free_bytes))*100/SUM(bytes),1)),0) FROM (
   SELECT tablespace_name, 0 AS bytes, bytes AS free_bytes FROM dba_free_space
 ) GROUP BY tablespace_name;\" | sqlplus -s / as sysdba" 2>/dev/null | tr -d ' ')
         [ -z "$_MC_TS_MAX" ] && _MC_TS_MAX=0
+
+        # 活动会话数 (生产瓶颈/并发信号)
+        _MC_ACTIVE_SESS=$(as_oracle "echo \"set pagesize 0 feedback off heading off
+SELECT COUNT(*) FROM v\\\$session WHERE status='ACTIVE' AND type!='BACKGROUND';\" | sqlplus -s / as sysdba" 2>/dev/null | tr -d ' ')
+        [ -z "$_MC_ACTIVE_SESS" ] && _MC_ACTIVE_SESS=0
+
+        # Redo 平均生成速率 (MB/s): 当前 redo size / 实例启动时长(秒), 近似平均速率, 供容量评估
+        _MC_REDO_MBPS=$(as_oracle "echo \"set pagesize 0 feedback off heading off
+SELECT ROUND(NVL((SELECT value FROM v\\\$sysstat WHERE name='redo size')/1048576 /
+       NULLIF((SELECT (SYSDATE-startup_time)*86400 FROM v\\\$instance),0),0),2) FROM dual;\" | sqlplus -s / as sysdba" 2>/dev/null | tr -d ' ')
+        [ -z "$_MC_REDO_MBPS" ] && _MC_REDO_MBPS=0
+
+        # Top 等待事件名 (非 Idle, 生产瓶颈首要信号; 取第1个供输出/告警参考)
+        _MC_TOP_WAIT=$(as_oracle "echo \"set pagesize 0 feedback off heading off
+SELECT event FROM (SELECT event, time_waited_micro FROM v\\\$system_event
+  WHERE wait_class != 'Idle' ORDER BY time_waited_micro DESC) WHERE ROWNUM=1;\" | sqlplus -s / as sysdba" 2>/dev/null | tr -d ' ' | head -1)
 
         # 最近一次成功全量备份距今天数 (无备份则为 -1, 由 alert 判定为告警)
         local last_bk
@@ -169,7 +199,7 @@ _monitor_run_once() {
     if [ "$fmt" != "none" ]; then
         local hist="${OMF_HOME}/logs/monitor_history.jsonl"
         mkdir -p "$(dirname "$hist")" 2>/dev/null || true
-        echo "{\"ts\":\"$(date '+%Y-%m-%dT%H:%M:%S')\",\"db_up\":${db_up},\"mem_free_pct\":${mem_free_pct},\"ora_errors\":${ora_errors},\"status\":\"${status}\",\"disk\":{${_MC_DP_JSON}},\"invalid_objects\":${_MC_INVAL},\"tbs_max_pct\":${_MC_TS_MAX},\"backup_age_days\":${_MC_BACKUP_AGE},\"dg_lag_sec\":${_MC_DG_LAG},\"arch_used_pct\":${_MC_ARCH_PCT}}" >> "$hist" 2>/dev/null || true
+        echo "{\"ts\":\"$(date '+%Y-%m-%dT%H:%M:%S')\",\"db_up\":${db_up},\"mem_free_pct\":${mem_free_pct},\"ora_errors\":${ora_errors},\"status\":\"${status}\",\"disk\":{${_MC_DP_JSON}},\"invalid_objects\":${_MC_INVAL},\"tbs_max_pct\":${_MC_TS_MAX},\"backup_age_days\":${_MC_BACKUP_AGE},\"dg_lag_sec\":${_MC_DG_LAG},\"arch_used_pct\":${_MC_ARCH_PCT},\"cpu_pct\":${_MC_CPU},\"active_sessions\":${_MC_ACTIVE_SESS},\"redo_mbps\":${_MC_REDO_MBPS}}" >> "$hist" 2>/dev/null || true
     fi
 
     case "$fmt" in
@@ -200,6 +230,15 @@ _monitor_run_once() {
             echo "# HELP omf_arch_used_pct 快速恢复区(FRA)使用率 (%) (-1 表示未配置/不可用)"
             echo "# TYPE omf_arch_used_pct gauge"
             echo "omf_arch_used_pct ${_MC_ARCH_PCT}"
+            echo "# HELP omf_cpu_pct 主机 CPU 使用率 (%)"
+            echo "# TYPE omf_cpu_pct gauge"
+            echo "omf_cpu_pct ${_MC_CPU}"
+            echo "# HELP omf_active_sessions 数据库活动会话数"
+            echo "# TYPE omf_active_sessions gauge"
+            echo "omf_active_sessions ${_MC_ACTIVE_SESS}"
+            echo "# HELP omf_redo_mbps Redo 平均生成速率 (MB/s)"
+            echo "# TYPE omf_redo_mbps gauge"
+            echo "omf_redo_mbps ${_MC_REDO_MBPS}"
             echo "omf_status{state=\"$status\"} 1"
             ;;
         json)
@@ -221,6 +260,10 @@ _monitor_run_once() {
             echo "  \"dg_lag_sec\": ${_MC_DG_LAG},"
             echo "  \"arch_used_pct\": ${_MC_ARCH_PCT},"
             echo "  \"dg_pdbs\": \"${_MC_DG_PDB}\","
+            echo "  \"cpu_pct\": ${_MC_CPU},"
+            echo "  \"active_sessions\": ${_MC_ACTIVE_SESS},"
+            echo "  \"redo_mbps\": ${_MC_REDO_MBPS},"
+            echo "  \"top_wait\": \"${_MC_TOP_WAIT}\","
             echo "  \"status\": \"$status\""
             echo "}"
             ;;
@@ -243,6 +286,8 @@ _monitor_alert() {
     local g_warn="${OMF_CONFIG[MONITOR_DG_LAG_WARN_SEC]:-600}"   # 默认 10 分钟
     local a_warn="${OMF_CONFIG[MONITOR_ARCH_WARN_PCT]:-80}"      # FRA 使用率 warn
     local a_err="${OMF_CONFIG[MONITOR_ARCH_ERR_PCT]:-90}"        # FRA 使用率 err
+    local c_warn="${OMF_CONFIG[MONITOR_CPU_WARN_PCT]:-90}"       # CPU 使用率 warn
+    local c_err="${OMF_CONFIG[MONITOR_CPU_ERR_PCT]:-98}"         # CPU 使用率 err
 
     [ "$_MC_DB_UP" -eq 0 ] && { alerts=$((alerts+1)); lines="${lines}ALERT: 数据库不可用(db_up=0)\n"; }
 
@@ -279,6 +324,10 @@ _monitor_alert() {
         alerts=$((alerts+1)); lines="${lines}ALERT: FRA 使用率 ${_MC_ARCH_PCT}% > ${a_err}% (满仓将阻塞归档!)\n"; \
     elif [ "${_MC_ARCH_PCT:-0}" -ge 0 ] && [ "${_MC_ARCH_PCT:-0}" -gt "$a_warn" ]; then
         alerts=$((alerts+1)); lines="${lines}WARN: FRA 使用率 ${_MC_ARCH_PCT}% > ${a_warn}%\n"; fi
+
+    # CPU 使用率 (0-100); 持续高 CPU 是生产瓶颈信号
+    if [ "${_MC_CPU:-0}" -gt "$c_err" ]; then alerts=$((alerts+1)); lines="${lines}ALERT: CPU 使用率 ${_MC_CPU}% > ${c_err}% (接近饱和, 检查 Top 等待: ${_MC_TOP_WAIT:-未知})\n"; \
+    elif [ "${_MC_CPU:-0}" -gt "$c_warn" ]; then alerts=$((alerts+1)); lines="${lines}WARN: CPU 使用率 ${_MC_CPU}% > ${c_warn}%\n"; fi
 
     if [ "$alerts" -gt 0 ]; then
         printf "%b" "$lines"

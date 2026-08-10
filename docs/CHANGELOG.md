@@ -1,5 +1,9 @@
 # 版本变更记录
 
+## v1.42 关键改进（体验类修补：备份成功通知 + 监听器端口冲突预检）
+- **备份成功通知**（此前仅失败有通知）：`backup_physical`/`backup_incremental`/`backup_logical` 成功分支补 `send_notification`，与既有失败通知成对；逻辑备份部分失败也补通知。
+- **监听器端口冲突预检**：新增 `listener_port_check`（用 `ss`/`netstat` 探测 TCP 监听），`omf listener start`/`restart` 启动前预检目标端口，被占用时提前提示/中止（`restart` 直接 `log_error`），避免"启动失败后翻日志排查"。
+
 ## v1.41 关键改进（生产痛点修补：env all / 解压校验 / 备份清理边界 / 锁分析修正 / 调优闭环）
 基于全面排查（见对话记录）优先修复影响可用性与可靠性的问题：
 - **修复 `omf deploy` 必失败 bug：`cmd_env` 新增 `all` 子命令**（等价 `prepare`）。此前 `deploy.sh` 第 2 步调用 `omf env all`，但 `cmd_env` 无 `all` 分支落入 `*)` 报错，导致一键部署第 2 步必然失败。现 `all|prepare` 均映射 `env_prepare`。

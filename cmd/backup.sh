@@ -216,8 +216,10 @@ select name from v\\\$pdbs;\" | sqlplus -s / as sysdba" 2>/dev/null \
     # 以维持可恢复窗口 (与物理备份"失败不删旧备"语义一致, 避免失败时清掉可用的历史备份)。
     if [ "$_fail" -eq 0 ]; then
         backup_cleanup_disks "dump" "${BACKUP_RETENTION_DAYS}"
+        send_notification "OMF 逻辑备份完成" "实例 ${OMF_CONFIG[ORACLE_SID]} 逻辑备份成功: ${#pdbs[@]} 个 PDB (scope=${SCOPE_MODE})"
     else
         log_warn "本次逻辑备份有 ${_fail} 个分片失败, 已保留旧 dump (未清理), 请检查后重试"
+        send_notification "OMF 逻辑备份部分失败" "实例 ${OMF_CONFIG[ORACLE_SID]} 逻辑备份有 ${_fail}/${#pdbs[@]} 个分片失败, 请检查"
     fi
     unset _fail
 }
@@ -346,6 +348,7 @@ RUN {
         as_oracle "rman target / <<RMANEOF
 DELETE NOPROMPT OBSOLETE;
 RMANEOF" 2>&1 | tail -3
+        send_notification "OMF 增量备份完成" "实例 ${OMF_CONFIG[ORACLE_SID]} RMAN 增量(Level $level)备份成功"
     else
         send_notification "OMF 增量备份失败" "日志: $log_file"
         log_error "RMAN 增量备份失败, 查看日志: $log_file"
@@ -409,6 +412,7 @@ RUN {
 DELETE NOPROMPT OBSOLETE;
 RMANEOF" 2>&1 | tail -3
         backup_cleanup_disks "full" "${BACKUP_RETENTION_DAYS}"
+        send_notification "OMF 物理全量备份完成" "实例 ${OMF_CONFIG[ORACLE_SID]} 物理全量备份成功, 保留 ${BACKUP_RETENTION_DAYS} 天"
     else
         send_notification "OMF 物理备份失败" "日志: $log_file"
         log_error "RMAN 物理备份失败 (已保留旧备), 查看: $log_file"

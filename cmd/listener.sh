@@ -73,6 +73,24 @@ listener_wait_up() {
     return 1
 }
 
+# 端口占用预检: 返回 0=空闲, 1=被占用(并打印占用者)。用 ss/netstat 探测 TCP 监听。
+#   生产上端口被应用占用是 lsnrctl start 失败的最常见原因, 提前预检比"失败后翻日志"友好得多。
+listener_port_check() {
+    local port="$1"
+    [ -n "$port" ] || return 0
+    local hit=""
+    if command -v ss >/dev/null 2>&1; then
+        hit=$(ss -ltn 2>/dev/null | awk -v p=":$port$" '$4 ~ p {print $4; exit}')
+    elif command -v netstat >/dev/null 2>&1; then
+        hit=$(netstat -ltn 2>/dev/null | awk -v p=":$port$" '$4 ~ p {print $4; exit}')
+    fi
+    if [ -n "$hit" ]; then
+        log_warn "端口 ${port} 已被占用: ${hit} (可能被其它应用或另一个监听器占用)"
+        return 1
+    fi
+    return 0
+}
+
 # 防火墙: 开放新端口, 关闭旧端口 (firewalld 激活时)
 listener_fw_update() {
     local oldp="$1" newp="$2"
@@ -110,13 +128,17 @@ cmd_listener() {
             if listener_running; then
                 log_warn "监听器已在运行"
             else
-                listener_start
-                if listener_wait_up; then
-                    log_info "监听器已启动, 端口: $(listener_port_listening)"
-                else
-                    log_error "监听器启动失败, 请手动排查: su - oracle -c 'lsnrctl start'"
-                    exit 1
-                fi
+                # 端口冲突预检: 目标端口被占用时提前提示, 避免启动失败后翻日志排查
+                local _cfg_port; _cfg_port=$(listener_port_cfg)
+                listener_port_check "$_cfg_port" && {
+                    listener_start
+                    if listener_wait_up; then
+                        log_info "监听器已启动, 端口: $(listener_port_listening)"
+                    else
+                        log_error "监听器启动失败, 请手动排查: su - oracle -c 'lsnrctl start'"
+                        exit 1
+                    fi
+                }
             fi
             ;;
 
@@ -136,6 +158,11 @@ cmd_listener() {
             listener_stop >/dev/null 2>&1
             set -e
             sleep 2
+            # 端口冲突预检 (防止重启后因端口被其它进程占用而失败)
+            local _cfg_port; _cfg_port=$(listener_port_cfg)
+            if ! listener_port_check "$_cfg_port"; then
+                log_error "端口 ${_cfg_port} 被占用, 监听器无法重启。请先释放端口或用 omf listener port 更换"
+            fi
             listener_start
             if listener_wait_up; then
                 log_info "监听器已重启, 端口: $(listener_port_listening)"

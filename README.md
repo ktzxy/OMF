@@ -4,6 +4,8 @@ Oracle 数据库（CDB 系列：18c / 19c / 21c / 23ai）全生命周期管理�
 
 > ⚠️ 框架只读取 `conf/omf.conf`，绝不读取 `conf/omf.conf.example`（脱敏模板，改它无效）。改动务必落在 `conf/omf.conf`：`omf config set KEY VALUE` 或 `omf config init` 后编辑。
 
+> 🔐 **上线前必须改掉出厂默认口令**：`ORACLE_PASSWORD`/`SYSTEM_PASSWORD`/`PDB_PASSWORD`/`APP_PASSWORD` 出厂默认是公开弱口令（如 `Qiyuan!960#123`/`dherp_skzy`）。部署前务必用 `omf config password`（写入权限 600 的 `conf/.omf.secret`）或环境变量注入改掉，否则 `omf config validate` 会持续报弱口令风险，且带着默认口令上线等于裸奔。
+
 ## 功能大纲
 
 | 模块 | 命令 | 说明 | 详情文档 |
@@ -23,6 +25,9 @@ Oracle 数据库（CDB 系列：18c / 19c / 21c / 23ai）全生命周期管理�
 | 自检 | `omf selftest` | 语法/分发一致性静态自检（不依赖 Oracle） | — |
 | 信息总览 | `omf info` | 路径/端口/IP/连接串/内存一键总览（排障/交接） | — |
 | 一键部署 | `omf deploy` | 预检→环境→安装→建库→开归档→初始化→首次备份（生产一键） | — |
+
+> ⚠️ **`omf deploy` 会重建数据库**：其第 7 步 `omf db create` 会 `SHUTDOWN ABORT` 并**删除现有 SID 的全部数据文件后重建（数据不可逆）**。仅限在**全新机器/可重建环境**执行；若机器上已有需要保留的库，请勿直接 `omf deploy`，先用 `omf backup full` 备份。
+> 另外，`deploy` 强依赖 `conf/omf.conf` 中正确的路径、`ORACLE_ZIP` 安装包路径（或已把 db_home zip 放到预期位置）。首次使用前务必先 `omf config init` 编辑好配置并 `omf config validate`，再运行。
 
 ## 安装
 
@@ -60,6 +65,12 @@ omf status                     # 一键总览
 ## 多模式（多库）一句话
 
 `conf/omf.conf` 的 `APP_SCHEMAS="dherp lsdherp miserp"` 即可在一个 PDB 内建立多个 ERP 库（模式）。`omf sql init` 逐个建模式；`omf sql import --schema lsdherp` 导入到指定库；`omf backup logical --schema lsdherp` 单独备份某个库；`omf check schemas` 校验配置的模式是否都已存在。详见 [docs/SQL.md](docs/SQL.md) 与 [docs/BACKUP.md](docs/BACKUP.md)。
+
+**三个关键配置的关系**（新手必读）：
+- `APP_USER`：主模式名（**默认会建这个模式**，默认 `dherp`）。
+- `APP_TABLESPACE`：主模式对应的表空间名（默认同 `APP_USER`）。
+- `APP_SCHEMAS`：附加的其它模式列表（空格分隔）。若留空 = 仅 `APP_USER` 单模式；若填写则自动把 `APP_USER` 纳入列表。
+- 即：**无论单/多组织，都会建 `APP_USER` 那个模式**。若你把 `APP_USER` 改成业务名而漏改 `APP_SCHEMAS`/`APP_TABLESPACE`，`omf sql init` 建的表空间/用户会和预期不一致——建议改 `APP_USER` 时同步确认三者一致。
 
 ## Data Guard 一句话
 

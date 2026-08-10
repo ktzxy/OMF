@@ -1,5 +1,12 @@
 # 版本变更记录
 
+## v1.53 关键改进（新手安全预警 + deploy 交互优化）
+基于"小白上手"审查发现的语义预警缺失与交互细节：
+- **README 顶部补默认口令警告**：明确"上线前必须用 `omf config password` 或环境变量改掉出厂默认弱口令（`Qiyuan!960#123`/`dherp_skzy`）"，否则 validate 持续报弱口令风险、带默认口令上线等于裸奔。
+- **README 补 `omf deploy` 破坏性警告**：明确 deploy 第 7 步 `db create` 会 `SHUTDOWN ABORT` + **删除现有 SID 数据重建（不可逆）**，仅限全新机器/可重建环境；并说明 deploy 强依赖 conf 路径、`ORACLE_ZIP` 安装包，首次使用前须 `config init` + `validate`。
+- **README 补多模式三配置关系**：解释 `APP_USER`/`APP_TABLESPACE`/`APP_SCHEMAS` 三者关系，强调"无论单/多组织都会建 `APP_USER` 模式"，防新手漏改导致 `sql init` 结果与预期不符。
+- **`omf deploy` 补总耗时预估**：步骤清单前提示"预计 40-70 分钟（安装+建库各 15-30 分钟），期间勿中断"，避免新手跑一半以为卡死；并修正步骤串 `omf ${s%%*}` 为 `${s%%:*}` 的笔误。
+
 ## v1.52 关键改进（密码特殊字符统一转义）
 - **新增统一转义函数**（`lib/common.sh`）：`omf_quote_sql`（SQL 字符串单引号翻倍包裹）与 `omf_quote_sh`（shell 单引号 `'`→`'"'"'` 转义），供密码/字符串传参统一使用。
 - **SQL DEFINE 密码转义**：`sql.sh` 的 `_sql_run_file`/`sql_execute_inline` 中 `DEFINE APP_PASSWORD` 改用 `omf_quote_sql`，并加 `SET DEFINE OFF`（防密码含 `&` 触发 SQL*Plus 变量替换）。

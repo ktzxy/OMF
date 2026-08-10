@@ -96,11 +96,13 @@ cmd_deploy() {
 
     log_step "========== OMF 一键部署编排 =========="
     log_info "将依次执行 ${#steps[@]} 个步骤 (--from=$from_step --skip=$skip_csv):"
+    # 总耗时预估: install(15-30分) + db create(15-30分) 是大头, 加上其余步骤合计约 40-70 分钟
+    log_info "⚠ 预计总耗时约 40-70 分钟 (软件安装 + 建库各 15-30 分钟; 若 --skip 跳过 install/db 会显著缩短)。期间请勿中断终端或 Ctrl-C!"
     local n=1
     for s in "${steps[@]}"; do
         local tag=""
         [ "${skip_idx[$n]:-0}" = "1" ] && tag=" [跳过]"
-        log_info "  ${n}) ${s##*:}  (omf ${s%%*})${tag}"
+        log_info "  ${n}) ${s##*:}  (omf ${s%%:*})${tag}"
         n=$((n+1))
     done
     [ -n "$zip" ]     && log_info "安装包(zip): $zip"

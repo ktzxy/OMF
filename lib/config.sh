@@ -83,10 +83,21 @@ load_config() {
     OMF_CONFIG[SQL_CUSTOM_DIR]="${OMF_HOME}/sql/custom"
 
     # ---------- 加载配置文件 ----------
+    # 配置文件是用户可控文本, 语法错误/未定义变量在 set -e 下会静默中断整个 OMF 且难定位。
+    # 故用 set +e 包裹 source 并捕获返回码: 失败时给出明确错误与文件路径, 而非静默中止。
+    # 注意: 必须在【当前 shell】source (不能用子 shell, 否则配置里的变量赋值丢失)。
     local config_file="${OMF_CONFIG_FILE:-${OMF_HOME}/conf/omf.conf}"
     if [ -f "$config_file" ]; then
         log_debug "加载配置文件: $config_file"
+        local _src_rc=0
+        set +e
         source "$config_file"
+        _src_rc=$?
+        set -e
+        if [ "$_src_rc" -ne 0 ]; then
+            log_error "配置文件加载失败(语法或执行错误): $config_file"
+        fi
+        unset _src_rc
     fi
 
     # ---------- 加载敏感口令文件 conf/.omf.secret (独立于 omf.conf, 权限 600) ----------

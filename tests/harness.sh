@@ -113,6 +113,19 @@ t "环境变量口令优先于 secret" \
         rc=\$?; rm -rf \$tmpd; exit \$rc
     "
 
+# 10) 语法错误配置应被明确拒绝 (set +e 保护), 而非静默中断
+t "load_config 语法错误配置被明确拒绝" \
+    bash -c "
+        tmpd=\$(mktemp -d)
+        printf 'ORACLE_SID=\"BROKEN\nTHIS IS NOT VALID\n' > \$tmpd/omf.conf
+        : > \$tmpd/.omf.secret
+        export OMF_CONFIG_FILE=\$tmpd/omf.conf
+        out=\$(OMF_HOME='${OMF_HOME}' bash -c 'source lib/common.sh; source lib/config.sh' 2>&1)
+        rc=\$?
+        echo \"\$out\" | grep -q '配置文件加载失败' && [ \$rc -ne 0 ]
+        r2=\$?; rm -rf \$tmpd; exit \$r2
+    "
+
 echo ""
 echo "═══════════════════════════════════════"
 echo "回归结果: ✓ $PASS 通过  ✗ $FAIL 失败"

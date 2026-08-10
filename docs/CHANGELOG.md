@@ -1,5 +1,9 @@
 # 版本变更记录
 
+## v1.35 关键改进（load_config 的 set -e 保护：配置文件加载失败明确报错）
+- **`omf.conf` 加载加 `set -e` 保护（防静默中断）**：配置文件是用户可控文本，语法错误/未定义变量在 `set -e` 下会静默中断整个 OMF 且难定位。现用 `set +e` 包裹 source 并捕获返回码，失败时给出明确错误 `配置文件加载失败(语法或执行错误): <路径>` 并退出非0。注意**必须在当前 shell source**（子 shell 会丢失配置里的变量赋值）。
+- **`tests/harness.sh` 回归断言 9→10 项**：新增 `load_config 语法错误配置被明确拒绝`，固化"语法错误配置不得静默通过"语义。
+
 ## v1.34 关键改进（敏感口令独立管理 conf/.omf.secret / 回归测试补口令断言）
 - **新增 `omf config password` 子命令（明文口令与 omf.conf 分离）**：原所有口令（`ORACLE_PASSWORD`/`SYSTEM_PASSWORD`/`PDB_PASSWORD`/`APP_PASSWORD` 及各模式密码）均明文写于 `omf.conf`，且默认带出厂弱口令兜底。现新增交互式口令管理：`read -s` 不回显、不写入 shell 历史，写入独立的 `conf/.omf.secret`（`chmod 600`）；支持显式传键名（如 `omf config password LSDHERP_PASSWORD`）与 `--remove <KEY>`。非交互（无 tty）下禁止设置，防密码经脚本/管道明文注入（自动化请用环境变量注入）。
 - **`load_config` 支持加载 `.omf.secret`（口令优先级分离）**：加载顺序为 **环境变量 > `.omf.secret` > `omf.conf` > 出厂默认**。secret 文件仅提取 `*_PASSWORD` 键（防任意注入），且权限非 600 时告警提示收紧。修复了一个优先级 bug：secret 原先会**覆盖环境变量**，现改为仅当变量未在环境中时用 secret 覆盖 omf.conf，保证显式 `export` 优先。

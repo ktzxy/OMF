@@ -140,6 +140,12 @@ install_software() {
         rm -rf "${OMF_CONFIG[ORACLE_HOME]}"
         rm -rf "${OMF_CONFIG[ORACLE_BASE]}/oraInventory/locks" 2>/dev/null || true
         prepare_inventory
+        # 清理系统级注册残留 (oratab 中本 SID 行 + /etc/oracle), 避免重装后旧引用干扰
+        if [ -f /etc/oratab ]; then
+            sed -i "/^${OMF_CONFIG[ORACLE_SID]}:/d" /etc/oratab 2>/dev/null \
+                && log_info "已清理 /etc/oratab 中 ${OMF_CONFIG[ORACLE_SID]} 行"
+        fi
+        [ -d /etc/oracle ] && { rm -rf /etc/oracle 2>/dev/null && log_info "已清理 /etc/oracle"; }
     fi
 
     # 3.6 清理失败残余: 若 ORACLE_HOME 已存在但软件未安装成功 (sqlplus 不存在),

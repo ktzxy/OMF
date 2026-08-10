@@ -1,5 +1,9 @@
 # 版本变更记录
 
+## v1.44 关键改进（install 卸载清理 + clean 删除量回报）
+- **`install --force` 清理系统注册残留**：强制重装路径在清理 ORACLE_HOME/inventory 之外，补充清理 `/etc/oratab` 中本 SID 行与 `/etc/oracle` 目录，避免重装后旧系统引用干扰。
+- **`clean` 删除量回报**：新增 `_clean_del` 删除执行器（`find -delete -print` 一次统计实际删除数，累计到 `CLEAN_DELETED`），替换 `clean_logs`/`clean_trace`/`clean_audit` 的 `-delete`（此前 `|| true` 静默吞错，无法感知清理结果）；`clean all` 末尾回报本次删除文件总数。验证删除计数正确（2+1=3）。
+
 ## v1.43 关键改进（env 加固：内核参数备份 + 依赖包失败检测）
 - **`env_kernel` 覆盖前备份原 sysctl 文件**：此前直接 `cat >` 覆盖 `/etc/sysctl.d/99-oracle.conf`，系统原有自定义内核参数会永久丢失且无回滚途径。现覆盖前若文件非空，先 `cp -a` 备份为 `99-oracle.conf.bak.<时间戳>` 并提示。
 - **`env_packages` 依赖包安装失败不再"假成功"**：rpm 分支一次性安装后捕获退出码，非零即 `log_warn` + `return 1`；apt 分支末尾 `failed` 非空（有关键包缺失）时 `return 1`。此前两分支均无返回非零，部署/预检无法感知关键依赖缺失。

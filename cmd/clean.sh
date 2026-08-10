@@ -131,6 +131,19 @@ SELECT TO_CHAR(completion_time,'YYYY-MM-DD')||'|'||ROUND(SYSDATE-completion_time
     echo -e "  共 ${total} 个归档 | 将清理(超过${days}天): ${RED}${to_del}${NC} | 即将过期(≤${warn}天): ${YELLOW}${soon}${NC}"
 }
 
+# 删除执行器: 封装 find -delete, 统计实际删除数并累计到全局 CLEAN_DELETED。
+#   $1 = 目录   $2 = find 的其余参数 (如 -name '*.log' -mtime +N)。
+#   用 `-delete -print` 一次 find 即得到"成功删除"的文件数 (GNU find 中 -print 仅对实际删除的输出)。
+#   相比直接 `find -delete || true` 静默吞错, 能感知"清理失败/删了多少", 供 clean_all 汇总回报。
+CLEAN_DELETED=0
+_clean_del() {
+    local dir="$1"; shift
+    [ -d "$dir" ] || return 0
+    local n
+    n=$(find "$dir" "$@" -delete -print 2>/dev/null | wc -l)
+    CLEAN_DELETED=$((CLEAN_DELETED + ${n:-0}))
+}
+
 #===============================================================================
 # 清理日志 (OMF 运行日志 / alert 备份 / tmp 安装日志)
 #===============================================================================
@@ -156,10 +169,10 @@ clean_logs() {
     if [ "$days" -eq 0 ]; then
         confirm_danger "清理【全部】OMF 日志 (所有运行日志 / alert 备份 / tmp 安装日志)" || return 1
         log_step "清理全部 OMF 日志 (--all)"
-        find "${OMF_HOME}/logs" -name "*.log" -delete 2>/dev/null || true
-        find "${OMF_CONFIG[ORACLE_BASE]}/diag/rdbms" -name "alert_*.bak" -delete 2>/dev/null || true
-        find /tmp -name "oracle_install*" -delete 2>/dev/null || true
-        find /tmp -name "dbca_*" -delete 2>/dev/null || true
+        _clean_del "${OMF_HOME}/logs" -name "*.log"
+        _clean_del "${OMF_CONFIG[ORACLE_BASE]}/diag/rdbms" -name "alert_*.bak"
+        _clean_del /tmp -name "oracle_install*"
+        _clean_del /tmp -name "dbca_*"
         log_info "日志清理完成 (全部)"
         return
     fi
@@ -172,10 +185,10 @@ clean_logs() {
         "/tmp|dbca_*"
     confirm "确认清理 ${days} 天前的日志文件?"
     log_step "清理 ${days} 天前的日志文件"
-        find "${OMF_HOME}/logs" -name "*.log" -mtime "+$((days-1))" -delete 2>/dev/null || true
-        find "${OMF_CONFIG[ORACLE_BASE]}/diag/rdbms" -name "alert_*.bak" -mtime "+$((days-1))" -delete 2>/dev/null || true
-        find /tmp -name "oracle_install*" -mtime "+$((days-1))" -delete 2>/dev/null || true
-        find /tmp -name "dbca_*" -mtime "+$((days-1))" -delete 2>/dev/null || true
+        _clean_del "${OMF_HOME}/logs" -name "*.log" -mtime "+$((days-1))"
+        _clean_del "${OMF_CONFIG[ORACLE_BASE]}/diag/rdbms" -name "alert_*.bak" -mtime "+$((days-1))"
+        _clean_del /tmp -name "oracle_install*" -mtime "+$((days-1))"
+        _clean_del /tmp -name "dbca_*" -mtime "+$((days-1))"
     log_info "日志清理完成 (${days} 天前)"
 }
 
@@ -213,8 +226,8 @@ clean_trace() {
         if [ "$days" -eq 0 ]; then
             confirm_danger "清理【全部】trace 文件 (${trace_dir})" || return 1
             log_step "清理全部 trace 文件"
-            find "$trace_dir" -name "*.trc" -delete 2>/dev/null || true
-            find "$trace_dir" -name "*.trm" -delete 2>/dev/null || true
+            _clean_del "$trace_dir" -name "*.trc"
+            _clean_del "$trace_dir" -name "*.trm"
             find "$trace_dir" -name "cdmp_*" -exec rm -rf {} \; 2>/dev/null || true
         else
             _clean_preview summary "$days" "$warn" \
@@ -223,8 +236,8 @@ clean_trace() {
                 "${trace_dir}|cdmp_*"
             confirm "确认清理 ${days} 天前的 trace 文件?"
             log_step "清理 ${days} 天前的 trace 文件"
-            find "$trace_dir" -name "*.trc" -mtime "+$((days-1))" -delete 2>/dev/null || true
-            find "$trace_dir" -name "*.trm" -mtime "+$((days-1))" -delete 2>/dev/null || true
+            _clean_del "$trace_dir" -name "*.trc" -mtime "+$((days-1))"
+            _clean_del "$trace_dir" -name "*.trm" -mtime "+$((days-1))"
             find "$trace_dir" -name "cdmp_*" -mtime "+$((days-1))" -exec rm -rf {} \; 2>/dev/null || true
         fi
         local after_size
@@ -261,8 +274,8 @@ clean_audit() {
     if [ "$days" -eq 0 ]; then
         confirm_danger "清理【全部】审计文件?" || return 1
         log_step "清理全部审计文件"
-        [ -d "$audit_dir" ] && find "$audit_dir" -name "*.aud" -delete 2>/dev/null || true
-        [ -d "$xml_audit_dir" ] && find "$xml_audit_dir" -name "*.xml" -delete 2>/dev/null || true
+        _clean_del "$audit_dir" -name "*.aud"
+        _clean_del "$xml_audit_dir" -name "*.xml"
         log_info "审计文件清理完成 (全部)"
     else
         _clean_preview summary "$days" "$warn" \
@@ -270,8 +283,8 @@ clean_audit() {
             "${xml_audit_dir}|*.xml"
         confirm "确认清理 ${days} 天前的审计文件?"
         log_step "清理 ${days} 天前的审计文件"
-        [ -d "$audit_dir" ] && find "$audit_dir" -name "*.aud" -mtime "+$((days-1))" -delete 2>/dev/null || true
-        [ -d "$xml_audit_dir" ] && find "$xml_audit_dir" -name "*.xml" -mtime "+$((days-1))" -delete 2>/dev/null || true
+        _clean_del "$audit_dir" -name "*.aud" -mtime "+$((days-1))"
+        _clean_del "$xml_audit_dir" -name "*.xml" -mtime "+$((days-1))"
         log_info "审计文件清理完成 (${days} 天前)"
     fi
 }
@@ -355,6 +368,7 @@ clean_all() {
     clean_archive
 
     local listener_log="${OMF_CONFIG[ORACLE_BASE]}/diag/tnslsnr/$(hostname)/LISTENER/trace/listener.log"
+    CLEAN_DELETED=0   # 重置删除计数 (由 _clean_del 在各子清理中累计)
 
     if [ "${CLEAN_PREVIEW:-false}" = "true" ]; then
         echo -e "[预览] 以下将在正式清理时执行:"
@@ -407,6 +421,11 @@ SQL
         else
             log_warn "已跳过回收站清理"
         fi
+    fi
+
+    # 汇总回报本次实际删除的文件数 (日志/trace/audit, 由 _clean_del 累计)
+    if [ "${CLEAN_PREVIEW:-false}" = "false" ]; then
+        log_info "本次共清理 ${CLEAN_DELETED:-0} 个文件 (日志/trace/审计); 监听器日志与归档另计"
     fi
 
     echo ""

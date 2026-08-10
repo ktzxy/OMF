@@ -1,5 +1,10 @@
 # 版本变更记录
 
+## v1.56 关键改进（DBA 视角：SQL 事务边界澄清 + 跨主机恢复指引）
+基于资深 DBA 建议的文档级补全：
+- **SQL.md 补「rollback 语义澄清」**：明确 `omf sql rollback` 只清执行标记、**非回滚**（不能撤销已执行的 DDL/DML，需靠 flashback/备份恢复）；并警示 `sql_execute_all` 的"失败即停"是脚本级非事务级——含多条 DDL 的脚本中途失败后前面已持久化、重跑会因对象已存在失败，**SQL 脚本须自身幂等**。
+- **BACKUP.md 新增「跨主机恢复（DR 到异机）」**：说明 `omf backup restore` 只作用于本机；给出逻辑（scp dump + `sql_import`，推荐）与物理（RMAN 控制文件重建 + RESTORE/RECOVER + RESETLOGS，需路径一致）两种跨机恢复流程，并提醒物理恢复路径一致性是 DR 演练最易踩坑点。
+
 ## v1.55 关键改进（DBA 视角：check monitor 补生产关键指标）
 基于资深 DBA 建议，补齐 monitor 生产瓶颈/容量指标：
 - **`_monitor_collect` 新增 4 个指标**：

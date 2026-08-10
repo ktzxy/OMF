@@ -121,6 +121,10 @@ omf sql import /root/lsdherp_202606290300.dmp --schema lsdherp
 - 重置后可重新 `omf sql init`（全量）或 `omf sql init --schema <名>`（仅重建该模式）重跑。
 - `rollback` 仅删执行标记文件，**不碰库内数据**。
 
+> ⚠️ **重要语义澄清**：
+> 1. **`rollback` 不是回滚**：它只清除执行标记（允许重跑），**不能撤销已执行的 DDL/DML**（Oracle 无 DDL 事务）。若想回滚数据库变更，需依赖 flashback/备份恢复（`omf backup restore`），而非 `omf sql rollback`。
+> 2. **脚本须幂等**：`sql_execute_all` 的"失败即停"是**脚本级**非事务级。一个脚本含多条 `CREATE TABLE`（DDL 隐式提交）时，若中途失败，前面的 DDL 已持久化（但 `.executed` 标记不写），重跑会因"对象已存在"失败。**因此 SQL 脚本必须写成幂等**（用 `CREATE OR REPLACE`、先 `DROP` 判断、或 `_create_schema.sql` 那样的"存在则跳过"模板），框架不保证脚本级原子性。
+
 ## 6. 其它
 
 | 命令 | 说明 |

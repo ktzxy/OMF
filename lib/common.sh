@@ -111,17 +111,28 @@ log_set_subcmd() {
 #   2) 通用 webhook: OMF_NOTIFY_WEBHOOK 设 URL 即启用, OMF_NOTIFY_WEBHOOK_FMT 指定
 #      raw(默认, {"title","content"}) / dingtalk(text) / wechat(markdown) —— 兼容 alertmanager/钉钉/企微
 #   3) 邮件兜底: OMF_NOTIFY_MAIL 设收件人且系统有 mail
+# 通知: 多渠道可叠加 (hook / webhook / mail)。
+# 可靠性: 此前全部 `&>/dev/null &` 后台+丢输出, 若三渠道全失败用户毫无感知
+# ("备份失败但告警没发出"最致命)。现改进:
+#   - webhook 前台同步执行 (curl -m 10 有超时保护, 最多阻塞 10s), 失败即检测;
+#   - 配置了渠道但全部失败时 log_warn 提示, 让日志能感知"告警可能未送达"。
+# 返回: 恒 0 (不返回非0, 避免 set -e 下误中断备份/监控调用链; 失败经 log_warn 暴露)。
 send_notification() {
     local subject="$1"; local body="$2"
+    local ok=0 configured=0
     local hook="${OMF_HOME}/conf/notify.sh"
+
+    # 渠道1: 可执行钩子 (优先级最高)
     if [ -x "$hook" ]; then
-        "$hook" "$subject" "$body" &>/dev/null &
+        configured=1
+        if "$hook" "$subject" "$body" >/dev/null 2>&1; then ok=1; fi
     fi
-    # 通用 webhook 渠道
+
+    # 渠道2: 通用 webhook (前台执行以检测成败, curl -m 10 有超时保护)
     local wh="${OMF_NOTIFY_WEBHOOK:-}"
     if [ -n "$wh" ] && command -v curl &>/dev/null; then
+        configured=1
         local fmt="${OMF_NOTIFY_WEBHOOK_FMT:-raw}"
-        # JSON 转义: 反斜杠/双引号/换行
         local s; s="${subject//\\/\\\\}"; s="${s//\"/\\\"}"; s="${s//$'\n'/\\n}"
         local b; b="${body//\\/\\\\}"; b="${b//\"/\\\"}"; b="${b//$'\n'/\\n}"
         local payload
@@ -130,11 +141,24 @@ send_notification() {
             wechat)   payload="{\"msgtype\":\"markdown\",\"markdown\":{\"content\":\"**${s}**\n${b}\"}}";;
             *)        payload="{\"title\":\"${s}\",\"content\":\"${b}\"}";;
         esac
-        curl -s -m 10 -H 'Content-Type: application/json' -X POST -d "$payload" "$wh" &>/dev/null &
+        if curl -s -m 10 -H 'Content-Type: application/json' -X POST -d "$payload" "$wh" >/dev/null 2>&1; then
+            ok=1
+        fi
     fi
+
+    # 渠道3: 邮件兜底 (后台; 无法即时检测成败, 视为尽力而为)
     if command -v mail &>/dev/null && [ -n "${OMF_NOTIFY_MAIL:-}" ]; then
-        echo "$body" | mail -s "[OMF] $subject" "${OMF_NOTIFY_MAIL}" &>/dev/null &
+        configured=1
+        echo "$body" | mail -s "[OMF] $subject" "${OMF_NOTIFY_MAIL}" >/dev/null 2>&1 &
     fi
+
+    # 配置了渠道但全部失败: 告警可能未送达, 必须让日志感知。
+    # 注意: 不返回非0, 避免 set -e 下各调用点(备份成功/监控告警)因通知失败被误中断;
+    # 通过 log_warn 让日志能感知, 调用方如需编程式判断可自行扩展。
+    if [ "$configured" -eq 1 ] && [ "$ok" -eq 0 ]; then
+        log_warn "通知发送失败 (主题: $subject): 已配置通知渠道但均未送达, 请检查 webhook/notify.sh/网络"
+    fi
+    return 0
 }
 
 # ---- 权限 ----

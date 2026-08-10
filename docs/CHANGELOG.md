@@ -1,5 +1,9 @@
 # 版本变更记录
 
+## v1.47 关键改进（通知可靠性：send_notification 失败可感知）
+- **修复"备份失败但告警没发出"隐患**：`send_notification` 原先三渠道全部 `&>/dev/null &`（后台+丢输出），webhook 失败完全静默。现 webhook 改为**前台同步执行**（`curl -m 10` 有超时保护），失败即检测；配置了渠道但全部失败时 `log_warn "通知发送失败..."`，让日志能感知告警未送达。
+- **不返回非0**：避免 `set -e` 下备份成功/监控告警等调用点因通知失败被误中断（失败经 `log_warn` 暴露，调用方如需编程式判断可自行扩展）。
+
 ## v1.46 关键改进（深度排查修复：status 中断 bug / backup 别名 / RMAN mock 测试）
 基于框架深度检测发现的可靠性问题，落地：
 - **修复 `omf status` 在无逻辑备份时中断**：`status.sh`/`backup.sh` 中 `ls -t dump/*.dmp | head -1` 无 `|| true`，在 `set -e` + `pipefail` 下，dump 目录无文件时 `ls` 失败会触发命令替换中断整个 status/backup_list。补 `|| true`（含 status 的最新日志行、backup_list 的 RPO 统计）。

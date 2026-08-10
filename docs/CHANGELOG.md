@@ -1,5 +1,10 @@
 # 版本变更记录
 
+## v1.39 关键改进（巨型文件拆分：backup.sh 846 → 624 行）
+- **`cmd/backup.sh` 拆分出恢复模块**：`backup_restore`/`restore_logical`/`restore_rman` 移至独立的 `cmd/backup_restore.sh`（228 行）。
+- **依赖处理**：restore 组依赖主文件的 `parse_scope`/`scope_clause`/`ensure_dump_dir`（这三个工具被所有 RMAN/恢复类函数共用，宜留在主文件）。`omf.sh` backup 分支改为**先 source 主文件、再 source backup_restore.sh**（保证工具函数先定义，与 v1.37 的 db_pdb 依赖 db_status 同模式）。
+- `omf.sh` backup 分支一次 source 2 个文件。拆分后所有 backup 函数可加载（ALL_LOADED），selftest 40/0。
+
 ## v1.38 关键改进（巨型文件拆分：check.sh 871 → 596 行）
 - **`cmd/check.sh` 拆分出监控模块**：`check_monitor` + `_monitor_collect`/`_monitor_run_once`/`_monitor_alert` 移至独立的 `cmd/check_monitor.sh`（281 行）。monitor 组内部自洽，仅依赖 lib/common.sh，与 check.sh 其余检查函数无调用耦合。
 - `omf.sh` 的 check 分支改为一次 source 2 个文件。拆分后 16 个 check 函数全部可加载（ALL_LOADED），selftest 39/0。

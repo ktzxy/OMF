@@ -17,7 +17,7 @@
 
 ---
 
-# 常见 ORA- 速查表
+## 常见 ORA- 速查表
 
 > 汇总各文档散落的错误码，对应 OMF 处理命令。**先在 `omf log errors`（最近 N 天错误聚合）看高频错误，再对照下表定位。**
 
@@ -36,7 +36,7 @@
 | ORA-39082 | 对象创建后编译失败 | 依赖缺失导致 INVALID | `omf sql usage` 看无效对象，检查依赖 |
 | ORA-39111 / ORA-39151 | 依赖对象/表已存在跳过 | Data Pump 正常行为 | 属良性，`omf sql import` 跳过，结构一致无需覆盖 |
 
-# DG 故障排查指引
+## DG 故障排查指引
 
 > 顺序排查：**先看传输，再看应用，最后看间隙/磁盘**。核心命令：`omf db dg gap`（延迟/间隙）、`omf db dg validate`（传输/角色）、`omf check dg`（健康）、`omf log errors`（错误聚合）。
 

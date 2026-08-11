@@ -135,6 +135,6 @@ omf sql import /root/lsdherp_202606290300.dmp --schema lsdherp
 | `omf sql run --all` | 执行所有待处理（断点续跑）|
 | `omf sql status` | 查看执行状态与日志 |
 
-> 已移除 `ANY` 权限：标准化时去掉了 `CREATE ANY PROCEDURE`/`EXECUTE ANY PROCEDURE` 等过宽权限。若导入 dump 含跨模式建对象或需这类权限，导入会报权限不足，届时按需单独补授。
-> 目录 OS 权限：`oracle_dumps` 指向的 `ORACLE_DUMP_DIR`（`omf sql init` 已自动建好并归属 `oracle:oinstall`，权限 `750`）。若手动改动过导致 impdp 报 `ORA-27037`/`permission denied`，确认该目录属主正确。
-> PDB 须 OPEN：初始化与查询前确保 `omf db pdb open` 已使 PDB 处于 READ WRITE。
+> **已移除 `ANY` 权限**：标准化时去掉了 `CREATE ANY PROCEDURE`/`EXECUTE ANY PROCEDURE` 等过宽权限。若导入 dump 含跨模式建对象或需这类权限，导入会报权限不足，届时按需单独补授。
+>
+> **常见坑点**（目录权限 `ORA-27037`、跨模式权限 `ORA-31631/39149`、PDB 须 OPEN 等）已统一收进 [TROUBLESHOOT.md](TROUBLESHOOT.md) 的 ORA- 速查表，此处不重复展开。

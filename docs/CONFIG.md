@@ -63,24 +63,30 @@ omf config password     # 交互式设置口令到 conf/.omf.secret (权限 600,
 
 ## 3. 多模式（多库）配置
 
-一个 PDB 内运行多个 ERP 库（模式 = Oracle 用户）。在 `APP_SCHEMAS` 给模式名列表，每个模式可用 `<大写名>_USER` / `_PASSWORD` / `_TABLESPACE` / `_DATA_DIR` 个别覆盖：
+> **操作流程、初始化步骤、导入场景等完整说明见 [SQL.md](SQL.md)**（多模式权威文档）。本节只列**配置键**，避免重复。
 
-```bash
-APP_SCHEMAS="dherp lsdherp miserp"   # 空格分隔, 想加第 N 个直接追加
-LSDHERP_PASSWORD="ls_pwd"            # 个别覆盖 (键名 = 大写模式名 + 后缀)
-LSDHERP_TABLESPACE="ls_ts"           #   缺省: 用户名/表空间=模式名, 密码=全局 APP_PASSWORD
-MISERP_DATA_DIR="/data/oracle/oradata/ARTERY/miserp"
-```
+一个 PDB 内运行多个 ERP 库（模式 = Oracle 用户）。在 `APP_SCHEMAS` 给模式名列表，每个模式可用下列键个别覆盖（缺省：用户名=表空间名=模式名，密码=全局 `APP_PASSWORD`）：
 
-要点：
-- 框架自动把主模式 `APP_USER` 纳入列表（防漏建主库被静默丢弃）。
+| 键 | 缺省 | 说明 |
+|----|------|------|
+| `APP_SCHEMAS` | 空（=仅 `APP_USER`）| 模式列表（空格分隔）；填写时自动把 `APP_USER` 纳入 |
+| `<大写名>_USER` | 模式名 | 覆盖 Oracle 用户名 |
+| `<大写名>_PASSWORD` | 全局 `APP_PASSWORD` | 覆盖密码 |
+| `<大写名>_TABLESPACE` | 模式名 | 覆盖表空间名 |
+| `<大写名>_DATA_DIR` | `${ORACLE_DATA}/${ORACLE_SID}/<模式名>` | 覆盖数据文件目录 |
+| `<大写名>_DATAFILES` / `_DATAFILE_SIZE_MB` | 全局 `APP_DATAFILES`(4) / `APP_DATAFILE_SIZE_MB`(1024) | 覆盖该模式表空间数据文件个数 / 大小(MB) |
+
+**关键关系**：无论单/多组织，**都会建 `APP_USER` 那个模式**。若把 `APP_USER` 改成业务名而漏改 `APP_SCHEMAS`/`APP_TABLESPACE`，`omf sql init` 建的表空间/用户会和预期不符——建议改 `APP_USER` 时同步确认三者一致。
+
+**要点**：
 - 数据文件按 `<SID>/<模式名>/` 子目录隔离，避免多表空间同名文件冲突（`ORA-01537`）。
-- `omf sql init` 按列表逐个建用户/表空间/目录授权。
-- `omf sql import --schema <模式名>` 可指定导入到某模式（自动自举建模式）。
+- 每模式表空间数据文件个数/大小可全局设或按模式覆盖，适配大小库（v1.57）。
 
-详见 [SQL.md](SQL.md) 与 [BACKUP.md](BACKUP.md)。
+## 4. 内存与性能调优（`omf tune`）
 
-## 4. 内存参数调优
+`omf tune` 提供内存 / 存储 / 会话 / 分析 / AWR / 应用 六个维度。本节先讲内存规划，再讲其余子命令。
+
+### 4.1 内存规划（memory / apply）
 
 OMF 采用**集中规划、为 OS 预留余量**策略，避免把物理内存 100% 分给数据库导致 OOM：
 
@@ -115,4 +121,18 @@ omf check all                       # 健康检查含内存项
 - **务必为 OS 留余量**：旧版曾硬编码 `SGA=75% + PGA=25% = 100%` 不留 OS 空间会 OOM。
 - **不要贸然 `nr_hugepages=0`**：SGA 跑在大页上时取消大页会无法分配、实例起不来。
 - `omf tune apply` 会重启数据库（SHUTDOWN IMMEDIATE → STARTUP），生产环境务必在维护窗口执行。
-- AWR 报告需快照：`omf tune awr [days]` 依赖 `dba_hist_snapshot` 至少 2 个快照；不足时先 `EXEC DBMS_WORKLOAD_REPOSITORY.CREATE_SNAPSHOT;`（间隔数分钟再建一个）。
+- `tune apply` 的**调优闭环**：调优前自动保存参数快照（`logs/tune_*_before_*.snap`）并生成基线 AWR；重启后健康验证实例 OPEN；等运行稳定后 `omf tune awr` 生成新报告与基线对比。
+
+### 4.2 存储 / 会话 / 分析 / AWR（只读诊断，不修改参数）
+
+```bash
+omf tune storage      # 存储诊断: redo 日志组/大小、表空间使用率 (定位扩容/磁盘压力)
+omf tune session      # 会话诊断: 活动/阻塞会话数、Top 等待事件、锁等待阻塞链 (BLOCKING_SESSION)
+omf tune analyze      # AWR 快照统计 + 内存调优建议 (sga_target_advice)
+omf tune awr [days]   # 生成最近 N 天 AWR HTML 报告到 logs/awr/, 供调优前后对比/排障
+```
+
+- **storage**：查看 redo 日志组数与大小、各表空间使用率，帮助判断是否需要扩容表空间或调整 redo。
+- **session**：生产瓶颈/会话拥塞排查。查看活跃/阻塞会话、Top 等待事件（非 Idle）、以及基于 `v$session.BLOCKING_SESSION` 的锁等待阻塞链（比 `v$lock` JOIN 可靠）。
+- **analyze**：AWR 快照可用性统计 + SGA 目标自动建议（`v$sga_target_advice`），判断当前 SGA 是否偏小/过大。
+- **awr**：非交互生成 AWR HTML 报告（`logs/awr/awr_<begin>_<end>.html`），依赖至少 2 个 `dba_hist_snapshot`（默认每小时自动采）；不足时手动 `EXEC DBMS_WORKLOAD_REPOSITORY.CREATE_SNAPSHOT;` 间隔数分钟再建一个。用于调优前后对比与排障。

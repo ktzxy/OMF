@@ -21,31 +21,25 @@ Oracle 数据库（CDB 系列：18c / 19c / 21c / 23ai）全生命周期管理�
 | 监听器 | `omf listener` | status/start/stop/restart/port | [docs/INSTALL.md](docs/INSTALL.md) |
 | 日志/清理 | `omf log` `omf clean` | 日志与定时清理 | [docs/CHECK.md](docs/CHECK.md) |
 | 配置 | `omf config` | 查看/校验/设置 | [docs/CONFIG.md](docs/CONFIG.md) |
-| 自更新 | `omf self-update` | 框架升级（需 `OMF_UPDATE_URL`） | — |
-| 自检 | `omf selftest` | 语法/分发一致性静态自检（不依赖 Oracle） | — |
-| 信息总览 | `omf info` | 路径/端口/IP/连接串/内存一键总览（排障/交接） | — |
-| 一键部署 | `omf deploy` | 预检→环境→安装→建库→开归档→初始化→首次备份（生产一键） | — |
+| 自更新 | `omf self-update` | 框架升级（需 `OMF_UPDATE_URL`） | [docs/INSTALL.md](docs/INSTALL.md) |
+| 自检 | `omf selftest` | 语法/分发一致性静态自检（不依赖 Oracle） | [docs/CHECK.md](docs/CHECK.md) |
+| 信息总览 | `omf info` | 路径/端口/IP/连接串/内存一键总览（排障/交接） | [docs/INFO.md](docs/INFO.md) |
+| 一键部署 | `omf deploy` | 预检→环境→安装→建库→开归档→初始化→首次备份（生产一键） | [docs/DEPLOY.md](docs/DEPLOY.md) |
 
 > ⚠️ **`omf deploy` 会重建数据库**：其第 7 步 `omf db create` 会 `SHUTDOWN ABORT` 并**删除现有 SID 的全部数据文件后重建（数据不可逆）**。仅限在**全新机器/可重建环境**执行；若机器上已有需要保留的库，请勿直接 `omf deploy`，先用 `omf backup full` 备份。
 > 另外，`deploy` 强依赖 `conf/omf.conf` 中正确的路径、`ORACLE_ZIP` 安装包路径（或已把 db_home zip 放到预期位置）。首次使用前务必先 `omf config init` 编辑好配置并 `omf config validate`，再运行。
 
 ## 安装
 
-**方式一：Git 克隆（推荐）**
 ```bash
+# 必须装到 oracle 用户可读写路径 (推荐 /opt/omf, 切勿装 /root, 见 INSTALL.md)
 git clone git@github.com:ktzxy/OMF.git /opt/omf
 cd /opt/omf
 ./setup.sh                        # 自动 chmod +x、建 omf 软链、校验配置、可选预检
 omf config init && vi conf/omf.conf   # 生成并编辑正式配置
 ```
 
-**方式二：wget 解压**
-```bash
-wget http://your-host/omf.tar.gz && tar xzf omf.tar.gz && cd omf
-./setup.sh
-omf config init && vi conf/omf.conf
-```
-
+> 📄 完整安装（含 wget 方式、支持的 Oracle 版本/发行版、环境准备/安装/建库/监听器命令表）详见 **[docs/INSTALL.md](docs/INSTALL.md)**。
 > 把 Oracle 安装包放到任意路径（如 `/home/oracle/LINUX.X64_193000_db_home.zip`），安装时显式传入或依赖 `ORACLE_VERSION` 推导默认包名。
 
 ## 快速开始

@@ -157,6 +157,8 @@ omf check dg             # DG 健康检查 (传输/MRP/延迟/间隙, 已并入 
 
 ## 5. 排错
 
-- `ORA-16532`（`dg status`）：broker 配置尚未建立，属预期，用 `dg validate` 校验即可。
-- duplicate 失败：检查主备网络/静态监听/密码文件/目录权限；钱包就绪时 `dg standby` 自动用 `/@别名` 免密（否则回退 `sys/密码@host:port/sid`，密码会出现在 ps）。
-- 备库长期未应用：查 `v$managed_standby` 的 MRP 状态与 `v$archive_dest_status` 错误，确认主库 `dest_state_2=ENABLE`（`omf db dg enable`）。
+> **系统化的 DG 故障排查指引**（MRP 不启动 / 传输延迟 / FRA 满 / 角色误判 / 脑裂等 6 类场景的排查顺序）已收进 **[TROUBLESHOOT.md 的「DG 故障排查指引」](TROUBLESHOOT.md)**，此处不重复。
+
+本条保留 DG 特有的两个关键点：
+- **duplicate 失败**：检查主备网络/静态监听/密码文件/目录权限；钱包就绪时 `dg standby` 自动用 `/@别名` 免密（否则回退 `sys/密码@host:port/sid`，密码会出现在 ps，建议先建钱包）。
+- **`ORA-16532`（`dg status`）**：broker 配置尚未建立，属预期，用 `dg validate` 校验；`omf db dg broker` 创建后即正常。

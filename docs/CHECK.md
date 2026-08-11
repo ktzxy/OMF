@@ -38,6 +38,8 @@ omf status history [N] # 监控历史趋势 (默认 10 次, 读 check monitor �
 
 `omf status` 现含 **Data Guard 区块**：显示 `ENABLE_DG` 配置与实际数据库角色（PRIMARY / PHYSICAL STANDBY / …）。
 
+`omf status` 还含 **健康风险段落**（数据库可连接时）：展示 **无效对象数**（>0 提示排查/重编译）、**表空间使用率 >85% 清单**（提前预警写满）、**上次逻辑备份时间**（多久没备份）——一眼掌握库健康度。
+
 ## 3. 监控输出 (`omf check monitor`)
 
 机器可读，对接 Prometheus / 外部监控，不做人类排版：
@@ -77,8 +79,11 @@ omf -y check monitor --alert || echo "监控告警, 请查看通知"   # 推荐:
 |------|------|
 | `omf log view alert` | 查看 Alert 日志 |
 | `omf log tail alert` | 实时跟踪 Alert |
+| `omf log errors [天数]` | **排障核心入口**：汇总最近 N 天（默认 1 天）Alert + 监听器日志的 `ORA-/TNS-/ASM-` 错误并按错误码聚合 Top 10（`dba` 高频故障首选）|
 | `omf log rotate` | 日志轮转 |
 | `omf log clean` | 清理旧日志 |
+
+> 排障时先用 `omf log errors` 看高频错误，再对照 [TROUBLESHOOT.md](TROUBLESHOOT.md) 的 ORA- 速查表定位。
 
 ## 5. 定时清理 (`omf clean`)
 

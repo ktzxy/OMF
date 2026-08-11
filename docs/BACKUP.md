@@ -71,14 +71,13 @@ omf backup restore --rman --validate     # 仅校验可恢复性
 - PDB 级恢复会先将目标 PDB 置于 MOUNT 再 RESTORE+RECOVER。
 - 不完全恢复完成后需 `ALTER DATABASE OPEN RESETLOGS;`；完全恢复可直接 `ALTER DATABASE OPEN;`。
 
-## 7. ⚠️ Data Guard 环境下的备份/恢复（全盘考虑）
+## 7. Data Guard 环境下的备份/恢复
 
-详见 [DATAGUARD.md](DATAGUARD.md)。要点：
-
-- **逻辑备份（expdp）必须在【主库】执行**：物理备库（PHYSICAL STANDBY）是只读/MOUNT 状态，无法运行 expdp。框架已加守卫——在 PHYSICAL STANDBY 上执行 `omf backup logical` 会直接报错并提示到主库跑。
-- **物理备份（RMAN）建议【卸载到备库】**：在物理备库上做 RMAN 备份是标准实践（不占用主库资源），框架对物理备份不作节点限制（备库可正常备份）。
-- **主库上做物理恢复会破坏 DG**：若 `ENABLE_DG=true` 且当前为 PRIMARY，`omf backup restore --rman` 会显式告警——恢复后的主库与备库 redo 流不一致，恢复完成后必须重新在主库 `dgmgrl` 重建备库（或重新 RMAN duplicate）。
-- **逻辑恢复（impdp）无此问题**：impdp 的 DML/DDL 会经 redo 自动同步到备库，DG 环境可安全执行。
+> 完整规则见 [DATAGUARD.md §4](DATAGUARD.md)（与 DG 的备份/恢复/状态/启停交互）。三条核心约定：
+>
+> 1. **逻辑备份（expdp）必须在【主库】**：物理备库是只读/MOUNT 无法 expdp，框架已加守卫（备库上执行会报错提示到主库）。
+> 2. **物理备份（RMAN）建议卸到备库**：标准实践，框架不限制节点。
+> 3. **主库物理恢复会破坏 DG**：`omf backup restore --rman` 在主库+DG 会告警，恢复后须重建备库。
 
 ## 8. 清理
 

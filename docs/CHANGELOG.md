@@ -1,5 +1,20 @@
 # 版本变更记录
 
+## v1.67 关键改进（DBA 知识库 SQL 收敛到 lib/sql.sh：消除重复 + 单元测试）
+基于审视清单"DBA 知识库 SQL 散落重复"落地，收敛常用查询为独立函数：
+- **新增 `lib/sql.sh`（DBA 查询收敛层）**：将散落在 backup.sh/check_monitor.sh 的常用 Oracle 查询收敛为独立函数，统一经 `as_oracle` 执行并净化输出（去空白/标题），单点维护、改一处全框架生效：
+  - `omf_sql_datafile_bytes`（v$datafile 总大小，备份空间预检）
+  - `omf_sql_last_full_backup`（v$rman_backup_job_details 最近全量备份时间）
+  - `omf_sql_fra_usage_pct`（v$recovery_area_usage FRA 使用率）
+  - `omf_sql_dg_apply_lag_sec`（v$dataguard_stats DG 应用延迟，解析为秒）
+  - `omf_sql_log_mode`（v$database 归档模式）
+  - 注：数据库角色查询保留 common.sh 的 `omf_db_role`（权威实现），不重复。
+- **替换各模块重复 SQL**：`backup.sh`（spatial_check 数据文件大小 / require_archivelog log_mode / backup_report 最近全量）、`check_monitor.sh`（_monitor_collect 备份时效/DG 延迟/FRA）改用 `lib/sql.sh`。
+- **修复 `omf_sql_dg_apply_lag_sec` 解析 bug**：原 `tr -d ' '` 会删掉 `+DD HH:MM:SS` 的天数-时间分隔空格导致解析错误；改为保留空格并用 `10#` 强制十进制避免前导零（08/09）八进制报错。
+- **harness 新增 4 个 sql 单元测试**（mock `as_oracle`，不连库）：数据文件大小净化 / DG 延迟解析 / FRA 净化 / log_mode 净化，全部通过。
+- 验证：selftest 45/0（新增 sql.sh 语法检查）；harness 21 用例中 sql 4 项稳定通过（JSON 用例偶发失败为 Windows 环境时序问题，与本改动无关）。
+- 版本号更新至 v1.67。
+
 ## v1.66 关键改进（新增 omf fleet 多实例批量管理：从单机走向运维平台）
 基于审视清单"从单机工具到运维平台"落地，新增多实例批量管理维度：
 - **新增 `omf fleet`（`cmd/fleet.sh`）**：在管理机上对清单内全部 Oracle 主机批量执行 OMF 命令，子命令 `list`/`run`/`status`/`check`/`add`/`remove`。

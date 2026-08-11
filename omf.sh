@@ -36,6 +36,7 @@ export OMF_ASSUME_YES OMF_DEBUG
 
 # 加载公共函数库与配置
 source "${OMF_HOME}/lib/common.sh"
+source "${OMF_HOME}/lib/sql.sh"     # DBA 知识库 SQL 查询收敛层 (复用常用查询, 单点维护)
 source "${OMF_HOME}/lib/config.sh"
 
 # 退出码约定: 0=成功, 1=脚本/执行错误(真正失败), 2=检查/健康检查发现问题(预期内, 非崩溃)

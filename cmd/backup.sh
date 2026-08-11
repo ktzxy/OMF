@@ -54,7 +54,7 @@ SQL
 # 若为 NOARCHIVELOG, 直接给出明确指引并退出, 避免让用户面对 RMAN-06149 错误栈.
 require_archivelog() {
     local logmode
-    logmode=$(as_oracle "echo \"select log_mode from v\\\$database;\" | sqlplus -s / as sysdba" 2>/dev/null)
+    logmode=$(omf_sql_log_mode)   # 复用 lib/sql.sh
     if echo "$logmode" | grep -qi 'NOARCHIVELOG'; then
         log_error "数据库处于 NOARCHIVELOG 模式, 无法执行 RMAN 备份。请先开启归档模式: omf db archivelog enable"
     fi
@@ -106,9 +106,9 @@ backup_spatial_check() {
     [ -z "$avail" ] && { log_warn "无法获取备份目录可用空间, 跳过空间预检"; return 0; }
     local avail_bytes=$(( avail * 1024 ))
 
-    # 估算数据文件总字节 (不含 TEMP)
+    # 估算数据文件总字节 (不含 TEMP) — 复用 lib/sql.sh 收敛查询
     local dbsz
-    dbsz=$(as_oracle "echo \"set pagesize 0 feedback off heading off SELECT SUM(bytes) FROM v\\\$datafile;\" | sqlplus -s / as sysdba" 2>/dev/null | tr -d ' ')
+    dbsz=$(omf_sql_datafile_bytes)
     if [ -z "$dbsz" ] || ! [[ "$dbsz" =~ ^[0-9]+$ ]]; then
         log_warn "无法连接数据库估算体量, 跳过空间预检 (交由 RMAN 自行报错)"
         return 0
@@ -682,11 +682,9 @@ backup_report() {
     local dir_sz=""
     dir_sz=$(du -sh "$target" 2>/dev/null | cut -f1) || dir_sz="(空)"
 
-    # 最近一次成功全量备份时间 (RPO 信号)
+    # 最近一次成功全量备份时间 (RPO 信号) — 复用 lib/sql.sh 收敛查询
     local last_full=""
-    last_full=$(as_oracle "echo \"set pagesize 0 feedback off heading off
-SELECT TO_CHAR(MAX(start_time),'YYYY-MM-DD HH24:MI:SS') FROM v\\\$rman_backup_job_details
-WHERE input_type='DB FULL' AND status='COMPLETED';\" | sqlplus -s / as sysdba" 2>/dev/null | tr -d ' ')
+    last_full=$(omf_sql_last_full_backup)
     [ -z "$last_full" ] || [ "$last_full" = "-" ] && last_full="(尚无完整物理备份)"
 
     local report_file="${report_dir}/backup_$(date '+%Y%m%d_%H%M%S').txt"

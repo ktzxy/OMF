@@ -126,11 +126,9 @@ SELECT ROUND(NVL((SELECT value FROM v\\\$sysstat WHERE name='redo size')/1048576
 SELECT event FROM (SELECT event, time_waited_micro FROM v\\\$system_event
   WHERE wait_class != 'Idle' ORDER BY time_waited_micro DESC) WHERE ROWNUM=1;\" | sqlplus -s / as sysdba" 2>/dev/null | tr -d ' ' | head -1)
 
-        # 最近一次成功全量备份距今天数 (无备份则为 -1, 由 alert 判定为告警)
+        # 最近一次成功全量备份距今天数 (无备份则为 -1, 由 alert 判定为告警) — 复用 lib/sql.sh
         local last_bk
-        last_bk=$(as_oracle "echo \"set pagesize 0 feedback off heading off
-SELECT TO_CHAR(MAX(start_time),'YYYY-MM-DD HH24:MI') FROM v\\\$rman_backup_job_details
-WHERE input_type='DB FULL' AND status='COMPLETED';\" | sqlplus -s / as sysdba" 2>/dev/null | tr -d ' ')
+        last_bk=$(omf_sql_last_full_backup)
         if [ -n "$last_bk" ] && [ "$last_bk" != "-" ]; then
             local bk_ts; bk_ts=$(date -d "$last_bk" +%s 2>/dev/null)
             [ -n "$bk_ts" ] && _MC_BACKUP_AGE=$(( ( $(date +%s) - bk_ts ) / 86400 ))
@@ -138,19 +136,11 @@ WHERE input_type='DB FULL' AND status='COMPLETED';\" | sqlplus -s / as sysdba" 2
             _MC_BACKUP_AGE=-1
         fi
 
-        # DG 应用延迟 (秒): 仅启用 DG 时采集; 解析 +DD HH:MM:SS → 秒
+        # DG 应用延迟 (秒): 仅启用 DG 时采集 — 复用 lib/sql.sh (omf_sql_dg_apply_lag_sec 已解析为秒)
         if omf_dg_enabled; then
-            local lag_raw
-            lag_raw=$(as_oracle "echo \"set pagesize 0 feedback off heading off
-SELECT NVL(MAX(value),'-') FROM v\\\$dataguard_stats WHERE name='apply lag';\" | sqlplus -s / as sysdba" 2>/dev/null | tr -d ' ' | head -1)
-            if [ -n "$lag_raw" ] && [ "$lag_raw" != "-" ]; then
-                # 格式 +DD HH:MM:SS (如 +00 00:05:30) → 提取天数/时/分/秒累计秒
-                local dd hhmmss d h m s
-                dd="${lag_raw%% *}"; dd="${dd#+}"
-                hhmmss="${lag_raw#* }"
-                h="${hhmmss%%:*}"; mmss="${hhmmss#*:}"; m="${mmss%%:*}"; s="${mmss#*:}"
-                _MC_DG_LAG=$(( ${dd:-0}*86400 + ${h:-0}*3600 + ${m:-0}*60 + ${s:-0} ))
-            fi
+            local dg_lag
+            dg_lag=$(omf_sql_dg_apply_lag_sec)
+            [ -n "$dg_lag" ] && _MC_DG_LAG="$dg_lag"
             # PDB 级 redo 应用情况 (备库视角): 列出各 PDB 的 open_mode, 辅助定位多组织下
             # 某个组织所在 PDB 是否单独异常 (CDB 内 v$pdbs 反映备库各 PDB 打开状态)。
             # 格式: con_id:name:open_mode (逗号分隔); 主库视角也可见各 PDB 打开情况。
@@ -161,11 +151,9 @@ SELECT con_id||':'||name||':'||open_mode FROM v\\\$pdbs ORDER BY con_id;\" | sql
             [ -n "$pdb_out" ] && _MC_DG_PDB="$pdb_out"
         fi
 
-        # 快速恢复区(FRA)使用率 (%): 满仓会阻塞归档/备份, 是 DG 与备份场景的高危指标。
-        # v$recovery_area_usage 的 PERCENT_SPACE_USED 为 FRA 整体水位; 不可用(如未配置 FRA)时留 -1。
+        # 快速恢复区(FRA)使用率 (%): 满仓会阻塞归档/备份 — 复用 lib/sql.sh; 未配置时留 -1
         local arch_pct
-        arch_pct=$(as_oracle "echo \"set pagesize 0 feedback off heading off
-SELECT ROUND(SUM(PERCENT_SPACE_USED),1) FROM v\\\$recovery_area_usage;\" | sqlplus -s / as sysdba" 2>/dev/null | tr -d ' ')
+        arch_pct=$(omf_sql_fra_usage_pct)
         if [ -n "$arch_pct" ] && [[ "$arch_pct" =~ ^[0-9.]+$ ]]; then
             _MC_ARCH_PCT=$arch_pct
         fi

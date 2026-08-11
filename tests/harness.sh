@@ -57,6 +57,17 @@ load_set_config() {
     rm -f "$tmp"
 }
 
+# 在子进程中加载 lib/sql.sh, 用 mock 的 as_oracle 测试净化/解析逻辑 (不真连库)
+#   $1 = mock 的 as_oracle 输出; $2 = 被测表达式 (可访问 SQL 函数)
+load_sql() {
+    local mock_out="$1" expr="$2"
+    bash -c "
+        as_oracle() { printf '%s\n' '$mock_out'; }
+        . '${OMF_HOME}/lib/sql.sh'
+        $expr
+    "
+}
+
 # ---- 用例 ----
 echo "=== OMF 危险路径回归测试 ==="
 
@@ -233,6 +244,20 @@ t "特殊字符转义函数正确" \
         [ \"\$restored\" = \"a'b\" ] || exit 1
         echo PASS
     "
+
+# ---- 18-21) lib/sql.sh DBA 查询收敛层 (mock as_oracle, 验证净化/解析逻辑, v1.67 新增) ----
+# 各函数应把 sqlplus 输出(含空白/标题)净化为单值, DG 延迟解析为秒。
+t "omf_sql_datafile_bytes 净化数据文件大小" \
+    load_sql " 1234567890 " 'v=$(omf_sql_datafile_bytes); [ "$v" = "1234567890" ]'
+
+t "omf_sql_dg_apply_lag_sec 解析 DG 应用延迟为秒" \
+    load_sql "+00 00:05:30" 'v=$(omf_sql_dg_apply_lag_sec); [ "$v" = "330" ]'
+
+t "omf_sql_fra_usage_pct 净化 FRA 使用率" \
+    load_sql " 75.5 " 'v=$(omf_sql_fra_usage_pct); [ "$v" = "75.5" ]'
+
+t "omf_sql_log_mode 净化归档模式" \
+    load_sql "NOARCHIVELOG" 'v=$(omf_sql_log_mode); [ "$v" = "NOARCHIVELOG" ]'
 
 echo ""
 echo "═══════════════════════════════════════"

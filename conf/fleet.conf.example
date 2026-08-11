@@ -1,0 +1,22 @@
+#===============================================================================
+# OMF 实例清单 (fleet) - 多实例/多套环境批量管理
+# 用法: 复制为 conf/fleet.conf 并编辑:
+#   cp conf/fleet.conf.example conf/fleet.conf
+# 每行一个实例, 格式: <实例名> <目标> [--omf <远程OMF路径>]
+#   <目标>:  local       表示本机实例 (直接调用本机 omf)
+#            user@host   表示远程实例 (经 SSH 调用该机器上的 omf)
+#   --omf <远程OMF路径>: 远程实例上 omf.sh 的路径 (默认 /opt/omf/omf.sh)
+# 说明:
+#   - 远程实例需已配置 SSH 免密 (ssh-keygen + ssh-copy-id), 否则会交互要密码。
+#   - 实例名唯一, 不能含空格。
+#   - 以 # 开头的行为注释。
+# 批量命令: omf fleet run status / omf fleet check / omf fleet list 等。
+#===============================================================================
+
+# 示例: 两个本地实例 (不同 OMF_HOME, 用 -c 指向各自配置)
+# local-prod   local
+# local-dev    local
+
+# 示例: 远程实例 (SSH 免密)
+# prod-db1     oracle@192.168.1.10  --omf /opt/omf/omf.sh
+# prod-db2     oracle@192.168.1.11  --omf /opt/omf/omf.sh

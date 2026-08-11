@@ -1,5 +1,16 @@
 # 版本变更记录
 
+## v1.66 关键改进（新增 omf fleet 多实例批量管理：从单机走向运维平台）
+基于审视清单"从单机工具到运维平台"落地，新增多实例批量管理维度：
+- **新增 `omf fleet`（`cmd/fleet.sh`）**：在管理机上对清单内全部 Oracle 主机批量执行 OMF 命令，子命令 `list`/`run`/`status`/`check`/`add`/`remove`。
+  - `fleet list`：列出实例清单；`fleet run <omf 命令>` 批量执行（本地直调 / 远程 SSH）；`fleet status`/`check` 快捷批量状态/健康检查；`fleet add/remove` 增删实例。
+  - 清单文件 `conf/fleet.conf`（新增 `fleet.conf.example` 模板）：每行 `<实例名> <local|user@host> [--omf <远程OMF路径>]`。
+  - 批量执行失败不中断，逐实例输出 + 汇总成功/失败计数。
+- **`fleet` 加入只读命令白名单**：fleet 是调度器本身不加锁，其内部调用的子命令（backup/clean 等）各自加锁，避免锁冲突。
+- **修复 `_fleet_load` 解析 bug**：`read` 最后一个变量会拿到剩余全部 token，用 `extra` 捕获 `--omf` 后的路径，正确解析远程 OMF 路径。
+- 验证：selftest 44/0（新增 fleet.sh 语法+分发一致性检查）；mock 验证 list/run/add/remove 正常，批量 selftest 2/2 成功。
+- 版本号更新至 v1.66。
+
 ## v1.65 关键改进（命令钩子机制 Hooks：可复用/可拓展的插件化扩展点）
 基于"可复用性/可拓展性"审视落地，引入轻量命令钩子机制，使对接企业 CMDB/审批流/监控平台无需改 OMF 核心：
 - **新增 `run_hooks <stage>`（`lib/common.sh`）**：执行 `conf/hooks/<stage>.d/*.sh`（须可执行）下所有钩子脚本；参数 `$1=阶段名`、`$2..=附加参数`；**失败不阻断主流程**（记录 warn 继续）；无该 stage 目录时静默跳过（零开销）；仅接受 `*.sh` 且可执行（防误执行非脚本/模板）。

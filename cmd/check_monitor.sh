@@ -9,12 +9,15 @@
 # 用于对接 Prometheus / 外部监控, 不做人类排版
 #===============================================================================
 check_monitor() {
-    local fmt="json" watch=0 alert_mode=0
+    local fmt="json" watch=0 alert_mode=0 push="" job="omf" instance=""
     while [[ $# -gt 0 ]]; do
         case "$1" in
             json|prom) fmt="$1"; shift;;
             --watch)   watch="${2:-10}"; shift 2;;
             --alert)   alert_mode=1; shift;;
+            --push)    push="${2:-}"; shift 2;;
+            --job)     job="${2:-omf}"; shift 2;;
+            --instance) instance="${2:-}"; shift 2;;
             *)         shift;;
         esac
     done
@@ -43,6 +46,29 @@ check_monitor() {
         done
         return 0
     fi
+
+    # ---- push 模式: 采集 prom 文本后 POST 到 Pushgateway (对接 Prometheus, 配合 fleet 多实例大盘) ----
+    #   check monitor prom --push http://pg:9091 [--job omf] [--instance <主机名>]
+    #   Pushgateway 按 job/instance 分组; fleet 场景下用 --instance <实例名> 区分各库。
+    if [ -n "$push" ]; then
+        if [ "$fmt" != "prom" ]; then
+            log_warn "--push 仅支持 prom 格式, 请用: omf check monitor prom --push <url>"
+            return 1
+        fi
+        if ! command -v curl &>/dev/null; then
+            log_error "--push 需要 curl 命令"
+        fi
+        [ -z "$instance" ] && instance="$(hostname 2>/dev/null || echo omf)"
+        local push_url="${push%/}/metrics/job/${job}/instance/${instance}"
+        local body; body=$(_monitor_run_once "prom")
+        if curl -s -m 10 --data-binary "$body" "$push_url" >/dev/null 2>&1; then
+            log_info "监控指标已推送到 Pushgateway: $push_url"
+        else
+            log_error "推送 Pushgateway 失败: $push_url (请检查网络/服务)"
+        fi
+        return 0
+    fi
+
     _monitor_run_once "$fmt"
 }
 

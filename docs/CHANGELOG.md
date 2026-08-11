@@ -1,5 +1,12 @@
 # 版本变更记录
 
+## v1.71 关键改进（监控可视化：check monitor --push 对接 Pushgateway + Grafana 模板，ROADMAP 方案2）
+落地 ROADMAP 方案2 的可落地部分（可视化层纯交付物 + --push 功能）：
+- **`omf check monitor prom --push <pushgateway_url> [--job omf] [--instance <主机名>]`**：采集 prom 文本后 POST 到 Pushgateway（`curl --data-binary`，URL 按 `job/instance` 分组）；配合 `omf fleet` 用 `--instance <实例名>` 区分各库，实现多实例指标聚合到单一大盘。非 prom 格式或缺失 curl 时给出明确提示。
+- **新增 `conf/grafana/omf_dashboard.json`**：Grafana Dashboard 模板（`instance` 变量 + 11 个面板），覆盖 `omf_db_up`/`omf_cpu_pct`/`omf_mem_free_pct`/`omf_disk_usage_pct`/`omf_tbs_max_pct`/`omf_arch_used_pct`/`omf_backup_age_days`/`omf_invalid_objects`/`omf_active_sessions`/`omf_redo_mbps`/`omf_dg_lag_sec`，含阈值（磁盘 85/92、无效对象 20/100、备份时效、DG 延迟 600s）。
+- **验证**：selftest 47/0；`--push` 逻辑经 mock 验证（URL 构造 `http://pg:9091/metrics/job/omf/instance/db1` 正确、curl 调用成功）。`check monitor prom --push` 在真实环境（有 /proc + Oracle）可用；Windows/git-bash 无 /proc 环境 prom 输出受限属环境问题。
+- 版本号更新至 v1.71。
+
 ## v1.70 关键改进（新增 omf report 每日备份/健康 HTML 报表，ROADMAP 方案5）
 落地 ROADMAP 方案5（每日报表，纯 shell 无外部依赖）：
 - **新增 `omf report`（`cmd/report.sh`）**：子命令 `daily`/`list`/`clean`。

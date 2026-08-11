@@ -1,0 +1,131 @@
+{
+  "__inputs": [],
+  "title": "OMF Oracle 实例监控",
+  "tags": ["omf", "oracle"],
+  "schemaVersion": 39,
+  "version": 1,
+  "uid": "omf-dashboard",
+  "timezone": "browser",
+  "editable": true,
+  "refresh": "1m",
+  "time": { "from": "now-6h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "instance",
+        "label": "实例",
+        "type": "query",
+        "query": "label_values(omf_db_up, instance)",
+        "refresh": 1,
+        "includeAll": true,
+        "multi": true,
+        "allValue": ".*"
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "数据库存活 (omf_db_up)",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 0 },
+      "datasource": null,
+      "fieldConfig": {
+        "defaults": { "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": 0 }, { "color": "green", "value": 1 } ] }, "mappings": [ { "type": "value", "options": { "0": { "text": "DOWN", "color": "red" }, "1": { "text": "UP", "color": "green" } } } ] },
+        "overrides": []
+      },
+      "options": { "colorMode": "background", "graphMode": "area", "reduceOptions": { "values": false, "calcs": [ "lastNotNull" ] } },
+      "targets": [ { "expr": "omf_db_up", "refId": "A" } ]
+    },
+    {
+      "id": 2,
+      "title": "CPU 使用率 (%)",
+      "type": "graph",
+      "gridPos": { "h": 7, "w": 8, "x": 4, "y": 0 },
+      "datasource": null,
+      "targets": [ { "expr": "omf_cpu_pct", "legendFormat": "{{instance}}", "refId": "A" } ],
+      "fieldConfig": { "defaults": { "unit": "percent" }, "overrides": [] }
+    },
+    {
+      "id": 3,
+      "title": "可用内存 (%)",
+      "type": "graph",
+      "gridPos": { "h": 7, "w": 8, "x": 12, "y": 0 },
+      "datasource": null,
+      "targets": [ { "expr": "omf_mem_free_pct", "legendFormat": "{{instance}}", "refId": "A" } ],
+      "fieldConfig": { "defaults": { "unit": "percent" }, "overrides": [] }
+    },
+    {
+      "id": 4,
+      "title": "磁盘使用率 (%)",
+      "type": "graph",
+      "gridPos": { "h": 7, "w": 12, "x": 20, "y": 0 },
+      "datasource": null,
+      "targets": [ { "expr": "omf_disk_usage_pct", "legendFormat": "{{mount}}", "refId": "A" } ],
+      "fieldConfig": { "defaults": { "unit": "percent", "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": 0 }, { "color": "yellow", "value": 85 }, { "color": "red", "value": 92 } ] } }, "overrides": [] }
+    },
+    {
+      "id": 5,
+      "title": "表空间最大使用率 (%)",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 7 },
+      "datasource": null,
+      "targets": [ { "expr": "omf_tbs_max_pct", "refId": "A" } ],
+      "fieldConfig": { "defaults": { "unit": "percent" }, "overrides": [] }
+    },
+    {
+      "id": 6,
+      "title": "FRA 使用率 (%)",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 7 },
+      "datasource": null,
+      "targets": [ { "expr": "omf_arch_used_pct", "refId": "A" } ],
+      "fieldConfig": { "defaults": { "unit": "percent" }, "overrides": [] }
+    },
+    {
+      "id": 7,
+      "title": "备份时效 (天, -1=无备份)",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 4, "x": 8, "y": 7 },
+      "datasource": null,
+      "targets": [ { "expr": "omf_backup_age_days", "refId": "A" } ],
+      "fieldConfig": { "defaults": { "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": 0 }, { "color": "yellow", "value": 1 }, { "color": "red", "value": 3 } ] } }, "overrides": [] }
+    },
+    {
+      "id": 8,
+      "title": "无效对象数",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 4, "x": 12, "y": 7 },
+      "datasource": null,
+      "targets": [ { "expr": "omf_invalid_objects", "refId": "A" } ],
+      "fieldConfig": { "defaults": { "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": 0 }, { "color": "yellow", "value": 20 }, { "color": "red", "value": 100 } ] } }, "overrides": [] }
+    },
+    {
+      "id": 9,
+      "title": "活动会话数",
+      "type": "graph",
+      "gridPos": { "h": 7, "w": 8, "x": 16, "y": 7 },
+      "datasource": null,
+      "targets": [ { "expr": "omf_active_sessions", "legendFormat": "{{instance}}", "refId": "A" } ],
+      "fieldConfig": { "defaults": {}, "overrides": [] }
+    },
+    {
+      "id": 10,
+      "title": "Redo 速率 (MB/s)",
+      "type": "graph",
+      "gridPos": { "h": 7, "w": 8, "x": 0, "y": 14 },
+      "datasource": null,
+      "targets": [ { "expr": "omf_redo_mbps", "legendFormat": "{{instance}}", "refId": "A" } ],
+      "fieldConfig": { "defaults": { "unit": "mbs" }, "overrides": [] }
+    },
+    {
+      "id": 11,
+      "title": "DG 应用延迟 (秒)",
+      "type": "graph",
+      "gridPos": { "h": 7, "w": 8, "x": 8, "y": 14 },
+      "datasource": null,
+      "targets": [ { "expr": "omf_dg_lag_sec", "legendFormat": "{{instance}}", "refId": "A" } ],
+      "fieldConfig": { "defaults": { "unit": "s", "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": 0 }, { "color": "yellow", "value": 600 } ] } }, "overrides": [] }
+    }
+  ]
+}

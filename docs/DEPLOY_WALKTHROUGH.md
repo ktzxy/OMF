@@ -1,0 +1,303 @@
+# OMF 部署走查清单（场景推演与落地核对）
+
+> 本文档是**部署流程走查与落地核对清单**，非框架使用指南。
+> 完整命令语义见 `DEPLOY.md`（一键部署）、`DATAGUARD.md`（主备）、`BACKUP.md`（备份）。
+> 每个场景均为「推演结论 → 已核实事实 → 落地命令」三层结构，落地时逐项打勾核对。
+
+---
+
+## 通用：框架硬性前置
+
+任何场景（单机 / 主备）都满足以下前置，否则第一步即拒：
+
+| 检查项 | 要求 | 依据 |
+|---|---|---|
+| 运行身份 | `root`（`require_root`） | `cmd/deploy.sh` 首行 |
+| 数据库可连 | 已建库并 OPEN | `sql init` 的 `sql_preflight` |
+| 内存下限 | 满足 `check_memory_prereq` 强校验 | `cmd/db.sh` |
+| 磁盘 | 数据/备份目录空间足够，触发 `backup_spatial_check` | `cmd/backup.sh` |
+| 发行版 | Ubuntu/Debian 与 CentOS/RHEL 系均支持 | `cmd/env.sh` |
+
+### 发行版适配（已核实的框架能力，非待实测项）
+
+框架在多轮迭代中已系统落地跨发行版适配（`cmd/env.sh`）：
+
+- **依赖包按发行版/版本选择**：Ubuntu 分支区分 `libcrypt1`(22.04+)/`libxcrypt1`(18.04/20.04)、`libaio1t64`(24.04,time_t 64 位改造)/`libaio1`、`libnsl2`/`libtirpc3`；且**逐个安装、单包缺失不阻断整条**。
+- **`libnsl.so.1` 自动软链**：Ubuntu 装完从 `libnsl.so.2` 软链出 `.so.1`，并补链接器名 `libnsl.so`（Oracle 19c 安装/运行必需）。
+- **`/usr/lib64` 软链**：Oracle 链接脚本写死 RHEL 路径，Ubuntu 下自动指向 `/usr/lib/x86_64-linux-gnu/`。
+- **防火墙**：RHEL 系 `firewalld`，Debian 系 `ufw`，改端口自动同步放行。
+- **PAM**：Ubuntu 默认 `pam_deny`，`env all` 补最小可用配置。
+- **RHEL7 libxcrypt 剔除**：老系统仓库无此包，按版本精确剔除避免整条安装失败。
+
+> 结论：Ubuntu 与 CentOS 均可直接走 `deploy` / `env all`，无需手工补包。若某库仍缺，框架会给出明确的包名错误提示。
+
+---
+
+## 场景 1：Ubuntu 新环境部署 Oracle + 全备
+
+**目标**：全新 Ubuntu 主机 → 装 Oracle 19c → 建库 → 全量备份（逻辑+物理）。
+
+### 步骤（可整段走 `omf deploy`，也可逐条）
+
+```bash
+# 0. 准备安装包（默认名推导：LINUX.X64_193000_db_home.zip，19c EE）
+#    put /opt/LINUX.X64_193000_db_home.zip
+
+# 1. 初始化配置（复制模板，按需改 SID/PDB/内存/备份保留天数）
+cp conf/omf.conf.example conf/omf.conf
+
+# 2. 一键部署（7 步串联，失败即停，可 --from 续跑）
+omf -y deploy --zip /opt/LINUX.X64_193000_db_home.zip --edition EE
+```
+
+### deploy 实际执行的 7 步（`cmd/deploy.sh` 步定义）
+
+| # | 步骤 | 子命令 | 关键行为 |
+|---|---|---|---|
+| 1 | 预检 | `check preflight` | root/内存/磁盘/依赖，不满足即拒 |
+| 2 | 环境准备 | `env all` | 建 oracle 用户、内核参数、目录、依赖、ufw 放行 |
+| 3 | 安装软件 | `install software` | 解压→CVU→runInstaller→root.sh，Lib 兼容已内置 |
+| 4 | 建库 | `db create` | 有 `confirm_danger`（删旧 SID 重建），deploy 以 `OMF_ALLOW_DANGEROUS=1` 显式放行 |
+| 5 | 开归档 | `db archivelog enable` | 物理备份前置 |
+| 6 | 初始化 | `sql init` | 按 `APP_SCHEMAS` 建模式/表空间 + 执行 init SQL |
+| 7 | 首次备份 | `backup auto` | 按 `BACKUP_MODE`（默认 both=逻辑+物理） |
+
+> 耗时：框架输出预估 **40-70 分钟**（软件安装+建库各 15-30 分钟）。期间勿 Ctrl-C。
+
+### 首次备份（步骤 7，`backup auto`）实际行为
+
+按 `BACKUP_MODE=both` 顺序执行：
+
+1. **逻辑备份** `backup_logical`：expdp `FULL=Y` 连 PDB 服务，parfile 避免密码进 ps，落 `/backup/oracle/dump/`。
+2. **空间预检** `backup_spatial_check`：`df` 可用空间 vs `SUM(bytes) FROM v$datafile)/3 ×(1+20%)`，不足即中止并告警（防盘满损坏备份集）。
+3. **物理备份** `backup_physical`：RMAN `BACKUP AS COMPRESSED BACKUPSET DATABASE PLUS ARCHIVELOG` + controlfile + spfile，成功后 `DELETE NOPROMPT OBSOLETE` + `rman_purge_archivelog`（防 FRA 满）+ 清理过期 dump。
+
+### 建库/备份的参数自适应
+
+- **FRA 大小**：`FRA_SIZE_MB=40960` 若超磁盘可用空间，自动下调到「可用-15GB」并告警，避免 DBCA `DBT-06604` 失败。
+- **表空间数据文件**：`sql init` 内 PL/SQL 循环按 `APP_DATAFILES`(默认4)/`APP_DATAFILE_SIZE_MB`(默认1024M) 生成，钳制 1-16 个，按 `<SID>/<模式>` 子目录隔离避免 `ORA-01537`。
+
+### 部署后建议
+
+```bash
+omf status                   # 一手总览
+omf backup schedule setup    # cron：每天02:00 backup auto + 每4h备份归档
+omf check monitor --alert    # 监控告警
+```
+
+---
+
+## 场景 2：CentOS 新环境部署主备 Oracle + 备份 + 日志
+
+**目标**：两台 CentOS，主备 Data Guard，端口 1522(主)/1523(备)，IP 192.168.4.100(主)/192.168.4.101(备)，含备份与日志。
+
+### 端口 1522/1523 的语义约定
+
+框架是**单端口模型**（`LISTENER_PORT`）。本走查按最常见的生产拓扑解释：**主库监听 1522、备库监听 1523**，各服务器独立配置，DG 传输、钱包别名均自动带各自端口。
+
+> 若你想的是"同一台跑 1522+1523 双监听"，框架不直接支持（多监听需手动补 listener），会偏离 OMF 编排，不建议。
+
+### db_unique_name 的自动推导（已核实，无需手工配置）
+
+`lib/config.sh` 有出厂默认，由 `ORACLE_SID` 自动推导：
+
+```bash
+DB_UNIQUE_NAME_PRIMARY  = ${ORACLE_SID}_PRIMARY   # SID=ARTERY → ARTERY_PRIMARY
+DB_UNIQUE_NAME_STANDBY  = ${ORACLE_SID}_STANDBY   # SID=ARTERY → ARTERY_STANDBY
+```
+
+**主备两侧只要 `ORACLE_SID` 一致，唯一名就自动一致**，无需手工对齐。这两个键不在 `conf/omf.conf` 模板里，但 config.sh 有默认值，故不要也不需要在 conf 里配。
+
+> 历史提示：早期版本 `db dg config` 存在"`db_unique_name` 未生效"的坑（先连库设置时库未 OPEN，且不重跑）。**当前代码已修正**为「先 `ALTER SYSTEM SET ... SCOPE=SPFILE` → 再 `SHUTDOWN IMMEDIATE`/`STARTUP`」，重启后即生效。见 `TEST_REPORT.md`（历史快照）。
+
+### 主库（192.168.4.100，监听 1522）
+
+**1. 配置 `conf/omf.conf`**：
+
+```bash
+ORACLE_SID="ARTERY"           # 主备必须一致
+PDB_NAME="ARTERYPDB"          # 主备必须一致
+LISTENER_PORT="1522"
+ENABLE_DG="true"
+PRIMARY_IP="192.168.4.100"
+STANDBY_IP="192.168.4.101"
+# 密码：ORACLE_PASSWORD / SYSTEM_PASSWORD / PDB_PASSWORD 主备必须一致（密码文件靠它）
+# 建议用 omf config password 写入 conf/.omf.secret（权限600），或环境变量注入
+```
+
+**2. 部署主库**：
+
+```bash
+omf -y deploy --zip /opt/LINUX.X64_193000_db_home.zip --edition EE
+```
+
+> deploy 步骤5开归档、步骤7做首次全备——全备是建备前的合理基准备备（虽建备用 `DUPLICATE FROM ACTIVE DATABASE` 在线复制，不依赖备份集）。
+
+**3. 配置 DG 主库**：
+
+```bash
+omf -y db dg config
+```
+
+实际执行（`cmd/db_dg.sh`）：设 `db_unique_name`(SPFILE) → `SHUTDOWN IMMEDIATE`/`STARTUP MOUNT` → `ALTER DATABASE ARCHIVELOG` → OPEN → `FORCE LOGGING` → 设 `standby_file_management=AUTO`/`fal_server`/`dg_broker_start=TRUE`/`log_archive_config`/`log_archive_dest_2='SERVICE=<STANDBY> ASYNC ...'` → **`log_archive_dest_state_2=DEFER`**（先不发日志，等备库就绪）→ 自动加 Standby Redo Log → 生成 PFILE → 重启。
+
+**4. 建 DG 钱包（主库）**：
+
+```bash
+omf -y db dg wallet
+```
+
+`orapki wallet create` + `mkstore -createCredential` 写 sys 凭据，写 `sqlnet.ora`/`tnsnames.ora`（含 `PRIMARY_IP:1522` 与 `STANDBY_IP:1523`）。密码经文件管道传入，不进 ps。
+
+### 备库（192.168.4.101，监听 1523）
+
+**1. 配置 `conf/omf.conf`**（关键项与主库一致，仅端口/IP 不同）：
+
+```bash
+ORACLE_SID="ARTERY"
+PDB_NAME="ARTERYPDB"
+LISTENER_PORT="1523"
+ORACLE_PASSWORD="<同主库>"
+SYSTEM_PASSWORD="<同主库>"
+PDB_PASSWORD="<同主库>"
+ENABLE_DG="true"
+PRIMARY_IP="192.168.4.100"
+STANDBY_IP="192.168.4.101"
+```
+
+**2. 备库只装软件、不建库**（备库靠 RMAN duplicate 建，不是 db create）：
+
+```bash
+omf -y env all
+omf -y install software --zip /opt/LINUX.X64_193000_db_home.zip --edition EE
+omf -y listener port 1523    # 改监听端口（同步写回 conf + ufw 放行）
+```
+
+**3. 建 DG 钱包（备库也执行一次）**：
+
+```bash
+omf -y db dg wallet
+```
+
+**4. 复制密码文件到备库**（框架前提条件）：
+
+```bash
+# 主库执行：scp 密码文件到备库
+scp $ORACLE_HOME/dbs/orapwARTERY 192.168.4.101:$ORACLE_HOME/dbs/orapwARTERY
+```
+
+### 回主库：开启日志传输 + 建 Broker
+
+**5. 主库开启日志传输**：
+
+```bash
+omf -y db dg enable      # log_archive_dest_state_2=ENABLE
+```
+
+**6. 备库构建物理备库**（在 192.168.4.101 上执行）：
+
+```bash
+omf -y db dg standby
+```
+
+实际行为：确认前提 → 建目录 → 生成最小 PFILE（含 `db_file_name_convert`/`log_file_name_convert`/`log_archive_dest_2='SERVICE=<PRIMARY>'`/FRA）→ `STARTUP NOMOUNT PFILE=...` → RMAN：
+
+```
+DUPLICATE TARGET DATABASE FOR STANDBY FROM ACTIVE DATABASE DORECOVER SPFILE
+SET db_unique_name='<STANDBY>' NOFILENAMECHECK
+```
+
+**7. 备库启动 MRP 实时应用**：
+
+```bash
+omf -y db dg apply start   # ALTER DATABASE RECOVER MANAGED STANDBY USING CURRENT LOGFILE
+```
+
+**8. 建 Broker（主库，switchover/failover 前置）**：
+
+```bash
+omf -y db dg broker
+# dgmgrl: REMOVE/CREATE CONFIGURATION 'omf_dg' AS PRIMARY ... ADD <STANDBY> ... ENABLE
+omf -y db dg status        # 等 1-2 分钟确认 SUCCESS
+omf -y db dg validate      # 校验
+```
+
+### 备份 + 日志
+
+**主库**：
+
+```bash
+omf -y backup auto                # 逻辑+物理全备
+omf -y backup schedule setup      # cron：02:00 auto + 每4h archive
+omf -y check monitor --alert      # 监控
+```
+
+**备库（DG 守卫会拦截 expdp！）**：
+
+```bash
+omf -y backup archive             # 归档日志备份
+omf -y backup physical            # RMAN 物理备份（不跑 backup auto 的 logical 部分）
+```
+
+> **关键**：`backup_logical` 有 DG 守卫——检测到 `PHYSICAL STANDBY` 直接 `log_error` 拒绝 expdp（备库只读）。所以备库只做归档/物理备份，勿在主备都跑 `backup auto`（若 `BACKUP_MODE=both`，备库 logical 段会报错）。
+
+**"日志"的两层含义**：
+
+1. **数据库告警/归档**：`omf status` / `omf check monitor` 覆盖，归档由 RMAN 自动管理防 FRA 满。
+2. **框架运行日志**：deploy/backup 全程写 `$OMF_HOME/logs/omf_*.log`；可开 `OMF_LOG_STRUCTURED=true`（JSON Lines）接日志平台；`LOG_RETENTION_DAYS=7` 自动清理。
+
+### 主备日常与切换
+
+```bash
+omf db dg gap              # 传输/应用延迟与归档间隙（主备均可）
+omf db dg status           # Broker 状态
+omf db dg switchover       # 计划内切换（主库发起，零丢失，需 Broker SUCCESS + 备 Ready）
+omf db dg failover         # 灾难切换（备库发起，旧主需 reinstate 或重建）
+```
+
+> 切换后 `switchover/failover` 会自动调用 `dg_app_conn_guide` 输出各模式（APP_SCHEMAS）的重连指引。OMF 不自动翻转 tnsnames/钱包 IP，应用需手动改连新主库。
+
+---
+
+## 两场景差异对照
+
+| 维度 | 场景1 Ubuntu 单机全备 | 场景2 CentOS 主备+备份+日志 |
+|---|---|---|
+| 环境准备 | `deploy` 一步全包 | 主备各自 `env all`，备库**不建库** |
+| 建库 | deploy 步骤4 `db create` | 主库 `db create`；备库靠 `db dg standby` duplicate |
+| 归档 | deploy 步骤5 | 主库 `db dg config` 内建；备库由 duplicate 继承 |
+| 端口 | 单端口 1521 | 主 1522 / 备 1523 |
+| 备份 | `backup auto`（both） | 主库 both；备库**不能 expdp**（DG守卫）只做 archive/physical |
+| 日志 | 框架 logs + 归档 | 同上 + DG 延迟监控 `MONITOR_DG_LAG_WARN_SEC` |
+| 高可用 | 无 | DG broker + switchover/failover + wallet 免密 |
+| db_unique_name | 不涉及 | 自动推导 `<SID>_PRIMARY/_STANDBY`，主备 SID 一致即对齐 |
+
+---
+
+## 落地核对清单（逐项打勾）
+
+### 场景 1（Ubuntu）
+- [ ] 安装包 `LINUX.X64_193000_db_home.zip` 已就位
+- [ ] `conf/omf.conf` 已配置（SID/PDB/内存/备份保留天数）
+- [ ] `omf deploy --zip ... --edition EE` 7 步全部 ✓
+- [ ] `omf status` 确认库 OPEN、归档已开
+- [ ] `omf backup list` 确认逻辑+物理备份成功、RPO 正常
+- [ ] `omf backup schedule setup` 定时备份已配
+- [ ] 记录密码（建议已入 `.omf.secret`，权限 600）
+
+### 场景 2（CentOS 主备）
+- [ ] 主备 `ORACLE_SID` / `PDB_NAME` / 三类密码 已对齐
+- [ ] 主 `LISTENER_PORT=1522` / 备 `LISTENER_PORT=1523` 已配
+- [ ] 主库 `deploy` 完成（含首次全备）
+- [ ] 主库 `db dg config` ✓（归档/Force Logging/SRL）
+- [ ] 主备各执行 `db dg wallet` ✓
+- [ ] 密码文件已 scp 到备库
+- [ ] 备库 `env all` + `install software` + `listener port 1523`（**不建库**）
+- [ ] 主库 `db dg enable` 开启日志传输
+- [ ] 备库 `db dg standby` duplicate 成功
+- [ ] 备库 `db dg apply start` MRP 已应用
+- [ ] 主库 `db dg broker` + `status` SUCCESS
+- [ ] 主库 `backup auto`；备库 `backup archive` + `backup physical`
+- [ ] 主备 `backup schedule setup`（备库注意避开 expdp 段）
+- [ ] `omf db dg gap` 延迟正常、无归档间隙
+- [ ] 日志：框架 logs 已接（可选 JSON Lines）+ 归档由 RMAN 管理

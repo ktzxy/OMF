@@ -1,5 +1,10 @@
 # 版本变更记录
 
+## v1.60 关键改进（新增部署走查清单 DEPLOY_WALKTHROUGH.md）
+基于"Ubuntu 单机全备 + CentOS 主备"两个真实部署场景的模拟推演，沉淀为可落地核对的走查清单：
+- **新增 `docs/DEPLOY_WALKTHROUGH.md`**：两个场景从配置到备份/日志的完整命令序列，含 deploy 7 步拆解、backup auto 实际行为、DG 主备构建与 Broker 流程、备库 DG 守卫（禁 expdp）、`db_unique_name` 自动推导说明、落地核对清单。
+- **核实并修正推演臆测**：确认 `DB_UNIQUE_NAME_PRIMARY/STANDBY` 在 `lib/config.sh` 有出厂默认（`<SID>_PRIMARY/_STANDBY`，随 SID 自动对齐，无需手配）；确认 Ubuntu 依赖包/`libnsl.so.1`/`/usr/lib64`/ufw/pam 等跨发行版适配已在 `cmd/env.sh` 系统落地（非待实测项）；标注 TEST_REPORT 中 `db_unique_name` 未生效为历史快照（当前代码已改为 SPFILE 先设后重启）。
+
 ## v1.59 关键改进（文档体系打磨：去重 + 补齐缺失 + 结构统一）
 对全部 md 文档做系统打磨（消除重复、补齐缺失、统一结构）：
 - **去重**：README 安装节压缩为指向 INSTALL.md；BACKUP.md §7 的 DG 规则压缩为交叉引用 DATAGUARD.md；SQL.md/DATAGUARD.md 坑点改为交叉引用 TROUBLESHOOT.md（统一排错入口）；CONFIG.md §3 多模式改为配置键表格并指向 SQL.md。

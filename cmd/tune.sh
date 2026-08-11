@@ -346,6 +346,16 @@ SQL" 2>/dev/null)
     chmod 600 "$snap" 2>/dev/null || true
     log_info "调优前参数快照已保存: $snap"
 
+    # 调优前生成基线 AWR 报告 (供重启稳定后对比调优效果)。快照不足时仅提示不阻断。
+    log_info "生成调优前基线 AWR 报告 (供对比)..."
+    local awr_before=""
+    awr_before=$(tune_awr "${TUNE_AWR_DAYS:-1}" 2>/dev/null | grep -oE 'awr_[0-9]+_[0-9]+\.html' | head -1)
+    if [ -n "$awr_before" ] && [ -f "${OMF_HOME}/logs/awr/${awr_before}" ]; then
+        log_info "调优前基线 AWR 报告: ${OMF_HOME}/logs/awr/${awr_before}"
+    else
+        log_warn "未能生成调优前 AWR 基线 (可能快照不足, 需 ≥2 个; 可稍后 omf tune awr 手动生成)"
+    fi
+
     local sets=""
     [ "$scope" = "sga" ]    && sets="ALTER SYSTEM SET sga_target=${sga_target}M SCOPE=SPFILE;"
     [ "$scope" = "pga" ]    && sets="ALTER SYSTEM SET pga_aggregate_target=${pga_target}M SCOPE=SPFILE;"
@@ -371,6 +381,8 @@ SQL"
     hstatus=$(as_oracle "echo 'select status from v\\\$instance;' | sqlplus -s / as sysdba" 2>/dev/null | grep -iE 'OPEN|STARTED|MOUNTED' | head -1 | tr -d ' ')
     if [ -n "$hstatus" ] && echo "$hstatus" | grep -qi "OPEN"; then
         log_info "重启后健康验证: 实例状态 ${hstatus} ✓ (参数已生效)"
+        # 调优后对比指引: 等库运行稳定(建议 1-2 天积累快照)后, 用 tune awr 生成调优后报告与基线对比
+        log_info "调优后对比: 等运行稳定后执行 'omf tune awr' 生成新报告, 与调优前基线 ${snap:-+}/logs/awr/ 下的报告对比 DB Time / 等待事件"
     else
         log_error "调优重启后实例未正常 OPEN (状态=${hstatus:-未知})。请立即用快照回滚参数: $snap, 或手动修复 SPFILE"
     fi

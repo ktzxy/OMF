@@ -1,5 +1,14 @@
 # 版本变更记录
 
+## v1.70 关键改进（新增 omf report 每日备份/健康 HTML 报表，ROADMAP 方案5）
+落地 ROADMAP 方案5（每日报表，纯 shell 无外部依赖）：
+- **新增 `omf report`（`cmd/report.sh`）**：子命令 `daily`/`list`/`clean`。
+  - `omf report daily [日期] [--push]`：汇总实例信息（SID/PDB/角色/归档/保留策略）、备份概况（最近全量及距今天数/目录占用/dump 数）、健康指标（复用 `check monitor` 采集的 CPU/内存/会话/无效对象/表空间/FRA/DG 延迟/redo/ORA 错误），生成一张自包含 HTML 报表到 `logs/reports/daily_<日期>.html`；`--push` 随 webhook 推送摘要。HTML 转义防注入，无 JS 依赖，运营/交接汇报友好。
+  - `omf report list` 列出报表；`omf report clean [天数]` 清理 N 天前报表（默认 30）。
+- **修复生成类操作在 `set -o pipefail` 下被查询管道中断**：`report_daily` 在无 Oracle 环境时，各查询管道（grep 无匹配等）返回非0 会中断整个报表生成；`cmd_report` daily 分支用 `set +e` 包裹，报表文件生成即视为成功，缺失指标以 "-" 显示（与 monitor 采集兜底一致）。
+- `report` 加入只读命令白名单（跳过锁）。验证：selftest 47/0（新增 report.sh 语法+分发一致性）；`report daily`/`list`/`clean` 实测生成/列出/清理正常。
+- 版本号更新至 v1.70。
+
 ## v1.69 关键改进（ROADMAP 第一批落地：fleet 并行执行 + 审计查询增强）
 落地 ROADMAP 第一批"低风险、立即收益"两项：
 - **`omf fleet run --parallel N`（并行批量执行）**：并发执行清单内实例（默认串行不变；`--parallel N` 限流并发，建议 4-8 避免 SSH 风暴）。每实例独立临时输出文件防覆盖，全部完成后按序汇总成功/失败；`fleet status`/`fleet check` 同样支持 `--parallel`。批量巡检效率数量级提升。

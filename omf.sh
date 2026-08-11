@@ -86,6 +86,7 @@ usage() {
   info       实例信息总览 (路径/端口/IP/连接串/内存)
   deploy     一键部署编排 (预检→环境→安装→建库→初始化→首次备份)
   fleet      多实例清单批量管理 (list/run/status/check)
+  report     每日备份/健康 HTML 报表 (daily/list/clean)
 
 快速开始:
   omf config validate            # 校验配置
@@ -120,6 +121,7 @@ cmd_help() {
         selftest)  echo "用法: omf selftest";;
         info)      echo "用法: omf info";;
         fleet)     echo "用法: omf fleet {list|run|status|check|add|remove}"; echo "  run <cmd>  对 conf/fleet.conf 全部实例批量执行 omf <cmd>  例: omf fleet run status"; echo "  status/check  批量状态 / 批量健康检查(monitor --alert)"; echo "  list/add/remove  查看/增删实例清单 (conf/fleet.conf)";;
+        report)    echo "用法: omf report {daily|list|clean}"; echo "  daily [日期] [--push]  生成每日备份/健康 HTML 报表 (默认今天, 可推送)"; echo "  list  列出已生成报表 | clean [天数] 清理 N 天前报表 (默认30)";;
         deploy)     echo "用法: omf deploy [--zip <db_home.zip>] [--edition EE|SE] [--from <序号|步骤>] [--skip <序号|步骤>[,...]] [--list]";;
         *)          usage;;
     esac
@@ -167,7 +169,7 @@ main() {
     # 防并发锁 (按一级命令隔离); 只读命令不加锁, 避免阻塞并发查询
     # fleet 是批量调度器, 本身不直接操作数据库/文件; 它内部调用的子命令 (backup/clean 等) 各自加锁, 故跳过
     case "$cmd" in
-        check|status|log|config|selftest|info|fleet) ;;   # 只读/静态命令, 跳过锁
+        check|status|log|config|selftest|info|fleet|report) ;;   # 只读/静态命令, 跳过锁
         *) acquire_lock "$cmd";;
     esac
 
@@ -191,6 +193,7 @@ main() {
         info)      source "${OMF_HOME}/cmd/info.sh";      cmd_info "$@";;
         deploy)     source "${OMF_HOME}/cmd/deploy.sh";    cmd_deploy "$@";;
         fleet)     source "${OMF_HOME}/cmd/fleet.sh";    cmd_fleet "$@";;
+        report)    source "${OMF_HOME}/cmd/report.sh";   cmd_report "$@";;
         *)
             log_error "未知命令: $cmd"
             usage

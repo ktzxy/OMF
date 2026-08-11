@@ -12,18 +12,21 @@ set -o pipefail
 # 必须用 readlink -f 解析到真实路径, 否则 OMF_HOME 会错成 /usr/local/bin
 SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 export OMF_HOME="${SCRIPT_DIR}"
-export OMF_VERSION="1.5.0"
+# 版本号单一来源: 修改只动 lib/version.sh
+source "${OMF_HOME}/lib/version.sh"
 
 # 全局选项 (在命令之前)
 OMF_ASSUME_YES="false"
 OMF_DEBUG="false"
 OMF_CONFIG_FILE=""
+OMF_SHOW_VERSION="false"
 while [[ $# -gt 0 ]]; do
     case "$1" in
         -y|--yes|--assume-yes) OMF_ASSUME_YES="true"; shift;;
         -d|--debug) OMF_DEBUG="true"; shift;;
         -c|--config) OMF_CONFIG_FILE="$2"; shift 2;;
         -h|--help) OMF_SHOW_HELP="true"; break;;
+        -v|--version) OMF_SHOW_VERSION="true"; break;;
         --) shift; break;;
         -*) echo "未知全局选项: $1"; exit 1;;
         *) break;;
@@ -108,7 +111,7 @@ cmd_help() {
         check)      echo "用法: omf check {all|db|disk|perf|alert|listener|preflight|schemas|dg|monitor}"; echo "  schemas  校验已配置模式(多库)是否真实存在于数据库"; echo "  dg       Data Guard 健康检查 (传输/MRP/延迟/间隙, 需 ENABLE_DG=true)";;
         listener)   echo "用法: omf listener {status|start|stop|restart|port <新端口>}";;
         status)     echo "用法: omf status [history [N]]";;
-        log)        echo "用法: omf log {view|tail|rotate|clean|errors}"; echo "  errors [天数]  汇总最近 N 天 Alert/监听器日志的 ORA-/TNS-/ASM- 错误并聚合 Top10";;
+        log)        echo "用法: omf log {view|tail|rotate|clean|errors|audit}"; echo "  errors [天数]  汇总最近 N 天 Alert/监听器日志的 ORA-/TNS-/ASM- 错误并聚合 Top10"; echo "  audit [N|--all|--json]  查看高危操作审计 (audit.log)";;
         clean)      echo "用法: omf clean {logs|trace|audit|archive|backup|recyclebin|all|schedule} [-d 天数 | --all] [-p|--preview] [-y]"; echo "  backup: ≡ omf backup cleanup (清理旧备份), 支持 --logical/--physical/-d N/--all/-p/-y"; echo "  recyclebin: 清空数据库回收站 (PURGE DBA_RECYCLEBIN, 不可逆, 需显式调用)";;
         config)     echo "用法: omf config {get|set|list|validate|show|init|password}"; echo "  password [KEY...] 交互式设置敏感口令到 conf/.omf.secret (600); 默认设 ORACLE/SYSTEM/PDB/APP 四口令; --remove <KEY> 移除";;
         self-update) echo "用法: omf self-update [version|force]";;
@@ -144,6 +147,12 @@ main() {
     # (全局选项循环里 -h 会 break, 此时 $@ 已是命令名, 若不清这里直接 dispatch 会误执行命令)
     if [ "${OMF_SHOW_HELP:-false}" = "true" ]; then
         if [ -n "$cmd" ]; then cmd_help "$cmd"; else usage; fi
+        exit 0
+    fi
+
+    # 全局 -v/--version: 打印版本号并退出 (此前 -v 被全局选项循环当"未知选项"拦截, 永远到不了这)
+    if [ "${OMF_SHOW_VERSION:-false}" = "true" ]; then
+        echo "OMF v${OMF_VERSION}"
         exit 0
     fi
 

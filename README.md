@@ -13,17 +13,17 @@ Oracle 数据库（CDB 系列：18c / 19c / 21c / 23ai）全生命周期管理�
 | 环境准备 | `omf env` | 用户/内核/依赖/目录/变量/防火墙 | [docs/INSTALL.md](docs/INSTALL.md) |
 | 软件安装 | `omf install` | Oracle 软件 + 监听器 | [docs/INSTALL.md](docs/INSTALL.md) |
 | 数据库管理 | `omf db` | 建库/启停/PDB/归档/**Data Guard** | [docs/INSTALL.md](docs/INSTALL.md) · [docs/DATAGUARD.md](docs/DATAGUARD.md) |
-| 备份恢复 | `omf backup` | 逻辑/物理/增量，按范围或**按模式** | [docs/BACKUP.md](docs/BACKUP.md) |
+| 备份恢复 | `omf backup` | 逻辑/物理/增量/归档/定时/**恢复校验**/恢复/清理 | [docs/BACKUP.md](docs/BACKUP.md) |
 | SQL 管理 | `omf sql` | 初始化/导入/**多模式(多库)**/回滚 | [docs/SQL.md](docs/SQL.md) |
 | 性能调优 | `omf tune` | 内存/存储/会话/AWR | [docs/CONFIG.md](docs/CONFIG.md) |
 | 健康检查 | `omf check` | 库/磁盘/性能/Alert/**模式存在性**/监控 | [docs/CHECK.md](docs/CHECK.md) |
 | 总览 | `omf status` | 库/监听/**DG 角色**/磁盘/备份一键总览 | [docs/CHECK.md](docs/CHECK.md) |
 | 监听器 | `omf listener` | status/start/stop/restart/port | [docs/INSTALL.md](docs/INSTALL.md) |
-| 日志/清理 | `omf log` `omf clean` | 日志与定时清理 | [docs/CHECK.md](docs/CHECK.md) |
+| 日志/清理 | `omf log` `omf clean` | 日志查看/错误汇总/**高危操作审计**与定时清理 | [docs/CHECK.md](docs/CHECK.md) |
 | 配置 | `omf config` | 查看/校验/设置 | [docs/CONFIG.md](docs/CONFIG.md) |
 | 自更新 | `omf self-update` | 框架升级（需 `OMF_UPDATE_URL`） | [docs/INSTALL.md](docs/INSTALL.md) |
 | 自检 | `omf selftest` | 语法/分发一致性静态自检（不依赖 Oracle） | [docs/CHECK.md](docs/CHECK.md) |
-| 信息总览 | `omf info` | 路径/端口/IP/连接串/内存一键总览（排障/交接） | [docs/INFO.md](docs/INFO.md) |
+| 信息总览 | `omf info` | 路径/端口/IP/连接串/内存一键总览（排障/交接），`--export` 导出实例台账 | [docs/INFO.md](docs/INFO.md) |
 | 一键部署 | `omf deploy` | 预检→环境→安装→建库→开归档→初始化→首次备份（生产一键） | [docs/DEPLOY.md](docs/DEPLOY.md) |
 
 > ⚠️ **`omf deploy` 会重建数据库**：其第 7 步 `omf db create` 会 `SHUTDOWN ABORT` 并**删除现有 SID 的全部数据文件后重建（数据不可逆）**。仅限在**全新机器/可重建环境**执行；若机器上已有需要保留的库，请勿直接 `omf deploy`，先用 `omf backup full` 备份。
@@ -51,10 +51,16 @@ omf env prepare                # 准备系统环境 (需 root)
 omf install software <zip>     # 安装 Oracle 软件
 omf db create                  # 创建数据库 (含内存优化前置)
 omf sql init                  # 初始化: 按 APP_SCHEMAS 建模式/表空间 + 逐目录执行 SQL
-omf backup schedule setup      # 配置定时备份
+omf backup schedule setup      # 配置定时备份 (含每周恢复校验 --validate-day)
 omf clean schedule setup       # 配置定时清理
 omf status                     # 一键总览
 ```
+
+> 💡 **运维提效三件套**（部署后建议固化）：
+> - `omf backup schedule setup` 定时备份（每天 auto + 每4h归档 + **每周 `backup validate` 恢复校验**，可用 `--pdb <名>` 加重点 PDB 单独备份）
+> - `omf clean schedule setup` 定时清理（防日志/归档/回收站撑满）
+> - `omf check monitor --alert` + cron 定时体检告警（CPU/会话/redo/FRA/DG延迟等，超阈值 webhook/邮件推送）
+> - 查看安全审计：`omf log audit`（高危操作留痕）
 
 ## 多模式（多库）一句话
 

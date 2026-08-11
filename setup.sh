@@ -13,6 +13,8 @@ OMF_HOME="$(pwd)"
 export OMF_HOME
 
 # 加载函数与配置
+# 版本号单一来源: setup.sh 顶部需要 OMF_VERSION (Bootstrap banner), 需先 source lib/version.sh
+source "${OMF_HOME}/lib/version.sh"
 source "${OMF_HOME}/lib/common.sh"
 source "${OMF_HOME}/lib/config.sh"
 

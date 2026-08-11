@@ -26,8 +26,11 @@ cmd_log() {
         errors)
             log_errors "$@"
             ;;
+        audit)
+            log_audit "$@"
+            ;;
         *)
-            echo "用法: omf log {view|tail|rotate|clean|errors}"
+            echo "用法: omf log {view|tail|rotate|clean|errors|audit}"
             exit 1
             ;;
     esac
@@ -261,5 +264,66 @@ log_errors() {
     echo "──── 最近的 Oracle 错误汇总 (最近 ${days} 天) ────"
     _log_errors_scan "$(get_alert_log 2>/dev/null)" "Alert 日志" "$days"
     _log_errors_scan "$(get_listener_log 2>/dev/null)" "监听器日志" "$days"
+    echo ""
+}
+
+#===============================================================================
+# 高危操作审计查看: omf log audit [N]
+#   查看 logs/audit.log (由 confirm_danger 放行时经 audit_log 写入) 的最近 N 条
+#   高危/不可逆操作记录 (时间/操作者/命令/操作描述), 供合规审计/变更回溯。
+#   用法:
+#     omf log audit            # 最近 20 条
+#     omf log audit 50         # 最近 50 条
+#     omf log audit --json     # 原始 JSON Lines (机器可读, 供对接审计平台)
+#     omf log audit --all      # 全部记录
+#===============================================================================
+log_audit() {
+    local audit_file="${OMF_HOME}/logs/audit.log"
+    local n=20 raw=0 all=0
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --json) raw=1; shift;;
+            --all)  all=1; shift;;
+            *[0-9]*) n="$1"; shift;;
+            *) shift;;
+        esac
+    done
+
+    echo ""
+    echo "──── OMF 高危操作审计 (audit.log) ────"
+    if [ ! -f "$audit_file" ]; then
+        echo "  (暂无审计记录, 文件: $audit_file)"
+        echo ""
+        return 0
+    fi
+
+    # 机器可读模式: 直接输出原始 JSON Lines
+    if [ "$raw" -eq 1 ]; then
+        cat "$audit_file"
+        echo ""
+        return 0
+    fi
+
+    local total
+    total=$(wc -l < "$audit_file")
+    echo "  文件: $audit_file"
+    echo "  总记录: $total"
+    echo ""
+
+    # 人类可读: 解析 JSON 字段 (ts/actor/cmd/op), 最近 N 条
+    if [ "$all" -eq 1 ]; then
+        n="$total"
+    fi
+    echo "  最近 ${n} 条高危操作:"
+    local shown=0
+    tail -n "$n" "$audit_file" | while IFS= read -r line; do
+        [ -z "$line" ] && continue
+        local ts actor cmd op
+        ts=$(echo "$line" | grep -o '"ts":"[^"]*"' | sed 's/"ts":"//;s/"$//')
+        actor=$(echo "$line" | grep -o '"actor":"[^"]*"' | sed 's/"actor":"//;s/"$//')
+        cmd=$(echo "$line" | grep -o '"cmd":"[^"]*"' | sed 's/"cmd":"//;s/"$//')
+        op=$(echo "$line" | grep -o '"op":"[^"]*"' | sed 's/"op":"//;s/"$//')
+        printf "  %-19s  %-10s  %-22s  %s\n" "$ts" "$actor" "$cmd" "$op"
+    done
     echo ""
 }

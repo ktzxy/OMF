@@ -1,5 +1,13 @@
 # 版本变更记录
 
+## v1.64 关键改进（版本号治理 + 审计查看命令 + 文档同步）
+基于"产品运营/版本治理"审视落地，消除一致性命门与安全缺口：
+- **版本号单源化（P0）**：新增 `lib/version.sh` 作为版本号唯一来源（`OMF_VERSION=1.63`），`omf.sh`/`setup.sh` 均 source 它；修正 `setup.sh` Bootstrap banner 此前读到空版本的问题（现正确显示 v1.63）；版本号从 v1.5.0 对齐到实际 CHANGELOG 版本。
+- **修复 `omf -v/--version` 被全局选项循环拦截的 bug**：此前 `-v` 被当"未知全局选项"报错退出，永远走不到 version 分支；现加 `-v|--version` 全局选项并输出 `OMF v1.63`。
+- **新增 `omf log audit` 高危操作审计查看**：查看 `logs/audit.log`（`confirm_danger` 放行时经 `audit_log` 写入）的最近 N 条高危/不可逆操作（时间/操作者/命令/操作描述），支持 `--all`/`--json`（机器可读对接审计平台），补全审计闭环。
+- **README 功能表与 v1.63 同步**：备份恢复/日志/信息总览行补充新能力（恢复校验/备份报告/PDB 定时/审计/台账导出），快速开始补"运维提效三件套"。
+- 验证：selftest 42/0（新增 version.sh 语法检查项）、harness 17/0 通过；`omf -v`/`--version`/`-h` banner/setup banner 均正确显示 v1.63。
+
 ## v1.63 关键改进（定时恢复校验 + PDB 级定时备份，把可恢复性变成持续监控）
 继续落地 DEPLOY_WALKTHROUGH 建议，强化定时备份的可恢复性与粒度：
 - **`backup validate` 补告警闭环**：捕获 `RESTORE VALIDATE` 退出码与 RMAN-/ORA- 错误，失败时 `send_notification` 告警并返回非0（供 cron 感知），成功也推送确认——"可恢复性"从一次性演练变成持续监控，杜绝"备份天天做却没人验证能否恢复"的隐性风险。

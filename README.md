@@ -88,7 +88,7 @@ omf status                     # 一键总览
 
 ## 版本与变更
 
-支持的 Oracle 版本、发行版及各版本改进记录见 [docs/CHANGELOG.md](docs/CHANGELOG.md)。排错见 [docs/TROUBLESHOOT.md](docs/TROUBLESHOOT.md)。测试报告见 [docs/TEST_REPORT.md](docs/TEST_REPORT.md)。
+支持的 Oracle 版本、发行版及各版本改进记录见 [docs/CHANGELOG.md](docs/CHANGELOG.md)。排错见 [docs/TROUBLESHOOT.md](docs/TROUBLESHOOT.md)。测试报告见 [docs/TEST_REPORT.md](docs/TEST_REPORT.md)。平台化/可视化演进设计方案见 [docs/ROADMAP.md](docs/ROADMAP.md)。
 
 ## 版权与许可
 

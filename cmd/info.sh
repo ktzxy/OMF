@@ -12,6 +12,70 @@ cmd_info() {
     source "${OMF_HOME}/cmd/listener.sh" 2>/dev/null || true
     source "${OMF_HOME}/cmd/log.sh" 2>/dev/null || true
 
+    # 导出模式: omf info --export <file>
+    #   生成机器可读的实例台账 (KEY=VALUE) 到指定文件, 供交接/合规审计/故障应急直接取用,
+    #   避免每次现查。支持 stdout 打印当前信息 (默认) 与导出 (--export)。
+    local export_file=""
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --export) export_file="${2:-}"; shift 2;;
+            -h|--help) echo "用法: omf info [--export <file>]"; return 0;;
+            *) shift;;
+        esac
+    done
+
+    # 收集台账键值 (供终端显示与 --export 复用), 存入 _INFO_* 数组
+    local -A info
+    info[hostname]="$(hostname)"
+    info[os]="$(detect_os)"
+    local host_ip
+    host_ip=$(hostname -I 2>/dev/null | awk '{print $1}')
+    [ -z "$host_ip" ] && host_ip=$(ip -4 addr show 2>/dev/null | grep -oE 'inet [0-9.]+' | awk '{print $2}' | grep -v '^127\.' | head -1)
+    [ -z "$host_ip" ] && host_ip="(无法获取)"
+    info[host_ip]="$host_ip"
+    info[oracle_home]="${ORACLE_HOME}"
+    info[oracle_base]="${ORACLE_BASE}"
+    info[oracle_sid]="${ORACLE_SID}"
+    info[pdb_name]="${PDB_NAME}"
+    info[data_dir]="${ORACLE_DATA_BASE}"
+    info[backup_dir]="${ORACLE_BACKUP}"
+    info[listener_port]="${LISTENER_PORT:-1521}"
+    info[backup_mode]="${BACKUP_MODE}"
+    info[retention_days]="${BACKUP_RETENTION_DAYS}"
+    info[primary_ip]="${PRIMARY_IP}"
+    info[standby_ip]="${STANDBY_IP}"
+    info[enable_dg]="${ENABLE_DG}"
+    info[env_path]="${TNS_ADMIN:-${ORACLE_HOME}/network/admin}"
+    local al; al=$(get_alert_log 2>/dev/null); info[alert_log]="$al"
+
+    # 数据库运行时信息 (可连时补充)
+    local db_line=""
+    if db_line=$(as_oracle "sqlplus -s / as sysdba <<'SQL'
+SET PAGES 0 FEEDBACK OFF
+SELECT instance_name||'|'||version||'|'||open_mode||'|'||database_role||'|'||log_mode FROM v\$instance, v\$database;
+EXIT;
+SQL" 2>/dev/null | tr -d ' ' | grep -v '^$' | tail -1); then
+        IFS='|' read -r iname iver iopen irole ilog <<< "$db_line"
+        info[instance]="$iname"; info[version]="$iver"; info[open_mode]="$iopen"
+        info[database_role]="$irole"; info[log_mode]="$ilog"
+    fi
+
+    # --export: 写 KEY=VALUE 台账到文件 (仅导出键, 不含终端排版)
+    if [ -n "$export_file" ]; then
+        local f="$export_file"
+        {
+            echo "# OMF 实例台账 $(date '+%Y-%m-%d %H:%M:%S')"
+            for k in hostname os host_ip oracle_home oracle_base oracle_sid pdb_name instance version open_mode database_role log_mode data_dir backup_dir listener_port backup_mode retention_days primary_ip standby_ip enable_dg env_path alert_log; do
+                printf "%s=%s\n" "$k" "${info[$k]:-}"
+            done
+        } > "$f"
+        chmod 600 "$f" 2>/dev/null || true
+        log_info "实例台账已导出: $f (${#info[@]} 项, 权限 600)"
+        echo "已导出到 $f:"
+        cat "$f"
+        return 0
+    fi
+
     echo ""
     echo "╔══════════════════════════════════════════════════════════╗"
     echo "║            OMF 实例信息总览 (info)                         ║"

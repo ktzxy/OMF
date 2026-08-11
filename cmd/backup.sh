@@ -216,6 +216,7 @@ select name from v\\\$pdbs;\" | sqlplus -s / as sysdba" 2>/dev/null \
     # 以维持可恢复窗口 (与物理备份"失败不删旧备"语义一致, 避免失败时清掉可用的历史备份)。
     if [ "$_fail" -eq 0 ]; then
         backup_cleanup_disks "dump" "${BACKUP_RETENTION_DAYS}"
+        backup_report "逻辑" "${ORACLE_BACKUP}/dump"
         send_notification "OMF 逻辑备份完成" "实例 ${OMF_CONFIG[ORACLE_SID]} 逻辑备份成功: ${#pdbs[@]} 个 PDB (scope=${SCOPE_MODE})"
     else
         log_warn "本次逻辑备份有 ${_fail} 个分片失败, 已保留旧 dump (未清理), 请检查后重试"
@@ -361,6 +362,7 @@ RUN {
 DELETE NOPROMPT OBSOLETE;
 RMANEOF" 2>&1 | tail -3
         rman_purge_archivelog "${BACKUP_RETENTION_DAYS}"
+        backup_report "增量 Level${level} ${accum}" "${ORACLE_BACKUP}/incremental"
         send_notification "OMF 增量备份完成" "实例 ${OMF_CONFIG[ORACLE_SID]} RMAN 增量(Level $level)备份成功"
     else
         send_notification "OMF 增量备份失败" "日志: $log_file"
@@ -427,6 +429,7 @@ RMANEOF" 2>&1 | tail -3
         # 备份成功后清理已备份的过期归档 (防 FRA 满)
         rman_purge_archivelog "${BACKUP_RETENTION_DAYS}"
         backup_cleanup_disks "full" "${BACKUP_RETENTION_DAYS}"
+        backup_report "物理全量" "${ORACLE_BACKUP}/full"
         send_notification "OMF 物理全量备份完成" "实例 ${OMF_CONFIG[ORACLE_SID]} 物理全量备份成功, 保留 ${BACKUP_RETENTION_DAYS} 天"
     else
         send_notification "OMF 物理备份失败" "日志: $log_file"
@@ -631,6 +634,60 @@ rman_purge_archivelog() {
     as_oracle "rman target / <<RMANEOF
 DELETE NOPROMPT ARCHIVELOG ALL COMPLETED BEFORE 'SYSDATE-${days}';
 RMANEOF" 2>&1 | tail -5
+}
+
+#===============================================================================
+# 备份报告生成与推送 (每次备份成功后调用)
+#   生成一份人类可读的备份报告落盘到 ${OMF_HOME}/logs/backup_reports/,
+#   并随 send_notification 推送 (webhook/hook/mail), 让运维扫一眼即知本次备份结果,
+#   免去逐个 `omf backup list` 的重复操作。
+#   $1 = 类型描述 (如 "物理全量" / "逻辑" / "增量 Level1")
+#   $2 = 备份文件目录 (用于统计大小), 可为空
+#   内容: 时间/类型/库角色/备份目录占用/最近 RPO/保留策略
+#===============================================================================
+backup_report() {
+    local type_desc="$1" bk_dir="$2"
+    local report_dir="${OMF_HOME}/logs/backup_reports"
+    mkdir -p "$report_dir" 2>/dev/null || true
+
+    local ts; ts=$(date '+%Y-%m-%d %H:%M:%S')
+    local role; role=$(omf_db_role 2>/dev/null); [ -z "$role" ] && role="(不可连接)"
+    local sid="${OMF_CONFIG[ORACLE_SID]}"
+    local retention="${BACKUP_RETENTION_DAYS:-30}"
+
+    # 备份目录占用 (指定目录则精确, 否则备份总目录)
+    local target="$bk_dir"
+    [ -z "$target" ] && target="${ORACLE_BACKUP}"
+    local dir_sz=""
+    dir_sz=$(du -sh "$target" 2>/dev/null | cut -f1) || dir_sz="(空)"
+
+    # 最近一次成功全量备份时间 (RPO 信号)
+    local last_full=""
+    last_full=$(as_oracle "echo \"set pagesize 0 feedback off heading off
+SELECT TO_CHAR(MAX(start_time),'YYYY-MM-DD HH24:MI:SS') FROM v\\\$rman_backup_job_details
+WHERE input_type='DB FULL' AND status='COMPLETED';\" | sqlplus -s / as sysdba" 2>/dev/null | tr -d ' ')
+    [ -z "$last_full" ] || [ "$last_full" = "-" ] && last_full="(尚无完整物理备份)"
+
+    local report_file="${report_dir}/backup_$(date '+%Y%m%d_%H%M%S').txt"
+    {
+        echo "════════════ OMF 备份报告 ════════════"
+        echo "时间:        $ts"
+        echo "类型:        ${type_desc}"
+        echo "实例:        $sid"
+        echo "库角色:      $role"
+        echo "保留策略:    $retention 天"
+        echo "备份目录:    ${ORACLE_BACKUP}"
+        echo "目录占用:    $dir_sz"
+        echo "最近全量备份: $last_full"
+        echo "──────────────────────────────────────"
+        echo "后续: 查看明细 omf backup list | 恢复演练 omf backup restore --rman --validate"
+        echo "══════════════════════════════════════"
+    } > "$report_file"
+
+    log_info "备份报告已生成: $report_file"
+    # 随通知推送报告要点 (保持通知简洁, 不整篇推送)
+    send_notification "OMF 备份完成 (${type_desc})" \
+        "实例 ${sid} ${type_desc}备份成功 时间=${ts} 角色=${role} 保留=${retention}天 目录占用=${dir_sz} 最近全量=${last_full}"
 }
 
 #===============================================================================

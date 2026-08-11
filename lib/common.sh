@@ -202,6 +202,7 @@ confirm_danger() {
     local prompt="${1:-危险操作, 确认继续?}"
     if [ "${OMF_ALLOW_DANGEROUS:-0}" = "1" ]; then
         log_warn "OMF_ALLOW_DANGEROUS=1 已设, 放行危险操作: ${prompt}"
+        audit_log "危险操作已放行: ${prompt}"
         return 0
     fi
     echo -e "${RED}════════ 危险操作 ════════${NC}"
@@ -211,6 +212,7 @@ confirm_danger() {
         local ans
         read -r -p "  输入 YES 继续, 其它任意键中止: " ans
         if [ "$ans" = "YES" ]; then
+            audit_log "危险操作已确认执行: ${prompt}"
             return 0
         fi
         echo "已取消"
@@ -224,6 +226,29 @@ confirm_danger() {
 check_cmd() {
     command -v "$1" &>/dev/null || log_error "命令不存在: $1"
 }
+
+# ---- 高危操作审计留痕 ----
+#   记录高危/不可逆操作到 ${OMF_HOME}/logs/audit.log (JSON Lines), 供追溯
+#   "谁在什么时候干了什么"。与普通运行日志分离, 权限收紧(600), 便于合规审计。
+#   用法: audit_log "<操作描述>"    通常在 confirm_danger 放行后调用。
+#   调用方即使不开 OMF_AUDIT 也会记录 (高危操作必须留痕); 目录/写入失败仅告警不阻断。
+audit_log() {
+    local desc="$1"
+    local aud_dir="${OMF_HOME}/logs"
+    local aud_file="${aud_dir}/audit.log"
+    mkdir -p "$aud_dir" 2>/dev/null || true
+    local actor; actor="$(whoami 2>/dev/null || echo unknown)"
+    local cmd=""; [ -n "${OMF_CMD:-}" ] && cmd="${OMF_CMD}"; [ -n "${OMF_SUBCMD:-}" ] && cmd="${cmd} ${OMF_SUBCMD}"
+    [ -z "$cmd" ] && cmd="$(basename "$0")"
+    local line
+    line="{\"ts\":\"$(date '+%Y-%m-%dT%H:%M:%S')\",\"actor\":\"${actor}\",\"cmd\":\"${cmd}\",\"op\":\"$(echo "$desc" | sed 's/"/\\"/g')\"}"
+    if echo "$line" >> "$aud_file" 2>/dev/null; then
+        chmod 600 "$aud_file" 2>/dev/null || true
+    else
+        log_warn "无法写入审计日志: $aud_file (高危操作仍已执行, 请检查权限)"
+    fi
+}
+
 
 # ---- 依赖库探测 (跨发行版, 不依赖 rpm) ----
 # 优先 ldconfig 缓存; 若 ldconfig 不可用/缓存未刷新 (或 set -o pipefail 下

@@ -1,5 +1,12 @@
 # 版本变更记录
 
+## v1.62 关键改进（运维提效三功能：备份报告 / 实例台账导出 / 高危操作审计）
+落地 DEPLOY_WALKTHROUGH 中建议的三个可拓展功能，减少运维手工操作量：
+- **备份报告落盘+推送**：新增 `backup_report()`（`cmd/backup.sh`），在物理/增量/逻辑备份成功后自动生成格式化报告到 `logs/backup_reports/`（时间/类型/实例/库角色/保留策略/目录占用/最近全量备份），并随 `send_notification` 推送要点，运维扫一眼即知本次备份结果，免去逐个 `omf backup list`。
+- **实例台账导出**：`omf info --export <file>` 生成机器可读的 KEY=VALUE 台账（主机/IP/Oracle路径/SID/PDB/端口/备份策略/DG/运行时角色等 22 项），落盘权限 600，供交接、合规审计、故障应急直接取用，免每次现查。
+- **高危操作审计留痕**：新增 `audit_log()`（`lib/common.sh`），并在 `confirm_danger` 的两个放行路径（`OMF_ALLOW_DANGEROUS=1` 放行、交互输入 YES）自动写入 `logs/audit.log`（JSON Lines：时间/操作者/命令/操作描述）。覆盖全部 `confirm_danger` 高危点（db create、dg failover、clean --all、sql rollback --all、archivelog disable、recyclebin purge 等），自动留痕无需逐个改调用点，权限 600。
+- 验证：harness 17/0、selftest 41/0 通过；三功能均在 mock 环境实测生成正确输出；`logs/` 已在 .gitignore 内不影响仓库。
+
 ## v1.61 关键改进（DEPLOY_WALKTHROUGH 补运维速查 + 提效拓展建议）
 基于"部署后日常运维如何减负"视角，为走查清单补充运维能力盘点：
 - **新增「部署+日常运维速查」**：按部署期/日常/故障三类归类的常用功能速查表，含 `sql import`（业务数据导入）、`backup restore --rman --validate`（恢复演练）、`clean schedule setup`（定时清理，易被 deploy 提示忽略）、`log errors`、`check dg`、`tune awr`、`status history`、`selftest` 等走查未展开的命令。

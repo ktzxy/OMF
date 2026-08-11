@@ -133,13 +133,20 @@ backup_spatial_check() {
 # 配置驱动的自动备份
 backup_auto() {
     local mode="${BACKUP_MODE:-both}"
+    # 备份前钩子: conf/hooks/backup_before.d/ (可对接 CMDB 标记"备份中"、预检查、归档前处理)
+    run_hooks "backup_before" "mode=$mode"
     log_step "按配置 BACKUP_MODE=${mode} 执行备份"
+    local _ok=1
     case "$mode" in
-        logical)  backup_logical;;
-        physical) backup_spatial_check || return 1; backup_physical;;
-        both)     backup_logical; backup_spatial_check || return 1; backup_physical;;
-        *) log_error "未知 BACKUP_MODE: $mode (应为 logical|physical|both)";;
+        logical)  backup_logical; _ok=0;;
+        physical) backup_spatial_check || return 1; backup_physical; _ok=0;;
+        both)     backup_logical; backup_spatial_check || return 1; backup_physical; _ok=0;;
+        *) log_error "未知 BACKUP_MODE: $mode (应为 logical|physical|both)"; return 1;;
     esac
+    # 备份后钩子: conf/hooks/backup_after.d/ (可对接归档/报表/清理联动); 失败不阻断
+    if [ "$_ok" -eq 0 ]; then
+        run_hooks "backup_after" "mode=$mode"
+    fi
 }
 
 #===============================================================================

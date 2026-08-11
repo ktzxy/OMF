@@ -1,5 +1,18 @@
 # 版本变更记录
 
+## v1.65 关键改进（命令钩子机制 Hooks：可复用/可拓展的插件化扩展点）
+基于"可复用性/可拓展性"审视落地，引入轻量命令钩子机制，使对接企业 CMDB/审批流/监控平台无需改 OMF 核心：
+- **新增 `run_hooks <stage>`（`lib/common.sh`）**：执行 `conf/hooks/<stage>.d/*.sh`（须可执行）下所有钩子脚本；参数 `$1=阶段名`、`$2..=附加参数`；**失败不阻断主流程**（记录 warn 继续）；无该 stage 目录时静默跳过（零开销）；仅接受 `*.sh` 且可执行（防误执行非脚本/模板）。
+- **接入 6 个生命周期阶段**：
+  - `backup_before`/`backup_after`（`backup auto` 前后，传 `mode=`）
+  - `db_create_after`（建库成功，传 `sid=`/`pdb=`）
+  - `dg_switchover_after`（切换成功，传 `new_primary=`/`old_primary=`）
+  - `dg_failover_after`（灾难切换成功，传 `new_primary=`）
+  - `deploy_after`（部署编排完成，传 `sid=`/`pdb=`）
+- **新增 `conf/hooks/README.md` + 6 个阶段目录**（`.gitkeep` 占位），说明使用方式/参数约定/示例。
+- 验证：selftest 42/0；mock 测试确认可执行 `.sh` 执行、不可执行跳过、非 `.sh`/`.example` 被过滤，失败不阻断。
+- 版本号更新至 v1.65（`lib/version.sh` 单源）。
+
 ## v1.64 关键改进（版本号治理 + 审计查看命令 + 文档同步）
 基于"产品运营/版本治理"审视落地，消除一致性命门与安全缺口：
 - **版本号单源化（P0）**：新增 `lib/version.sh` 作为版本号唯一来源（`OMF_VERSION=1.63`），`omf.sh`/`setup.sh` 均 source 它；修正 `setup.sh` Bootstrap banner 此前读到空版本的问题（现正确显示 v1.63）；版本号从 v1.5.0 对齐到实际 CHANGELOG 版本。

@@ -249,6 +249,44 @@ audit_log() {
     fi
 }
 
+# ---- 命令钩子机制 (可选插件化扩展点) ----
+#   在 OMF 关键生命周期时点执行 conf/hooks/<stage>.d/ 下的可执行钩子脚本,
+#   便于对接企业 CMDB/审批流/监控平台/自定义归档, 而无需改 OMF 核心代码。
+#   用法: run_hooks <stage> [附加参数...]
+#   约定:
+#     - 钩子目录: ${OMF_HOME}/conf/hooks/<stage>.d/*.sh (或任意可执行文件)
+#     - 钩子参数: $1=<stage> $2..=<附加参数> (由调用方定义, 见各阶段接入点注释)
+#     - 幂等/失败策略: 钩子失败不阻断主流程 (记录 warn 并继续), 符合"仅编排"原则;
+#       单个钩子超时由调用方自行控制, 钩子内部应自限时。
+#     - 若无该 stage 目录, 静默跳过 (零开销)。
+run_hooks() {
+    local stage="$1"; shift
+    local hook_dir="${OMF_HOME}/conf/hooks/${stage}.d"
+    [ -d "$hook_dir" ] || return 0
+
+    local hook
+    local ran=0
+    for hook in "$hook_dir"/*.sh; do
+        [ -f "$hook" ] || continue
+        if [ -x "$hook" ]; then
+            log_step "执行钩子 [$stage]: $(basename "$hook")"
+            set +e
+            "$hook" "$stage" "$@"
+            local hr=$?
+            set -e
+            ran=$((ran+1))
+            if [ "$hr" -ne 0 ]; then
+                log_warn "钩子 [$stage] $(basename "$hook") 返回 $hr, 已忽略 (不阻断主流程)"
+            else
+                log_info "钩子 [$stage] $(basename "$hook") 完成"
+            fi
+        else
+            log_debug "跳过不可执行的钩子: $hook (chmod +x 启用)"
+        fi
+    done
+    [ "$ran" -gt 0 ] && log_info "阶段 [$stage] 共执行 ${ran} 个钩子"
+}
+
 
 # ---- 依赖库探测 (跨发行版, 不依赖 rpm) ----
 # 优先 ldconfig 缓存; 若 ldconfig 不可用/缓存未刷新 (或 set -o pipefail 下

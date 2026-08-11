@@ -215,6 +215,8 @@ db_recovery_file_dest_size=${fra_size_mb}M
 
     if grep -qi "Database creation complete" "$OMF_RUN_LOG"; then
         log_info "数据库创建成功!"
+        # 建库后钩子: conf/hooks/db_create_after.d/ (可对接 CMDB 登记新库、权限初始化、合规上报)
+        run_hooks "db_create_after" "sid=${OMF_CONFIG[ORACLE_SID]}" "pdb=${OMF_CONFIG[PDB_NAME]}"
     else
         log_error "数据库创建可能失败，检查日志: $OMF_RUN_LOG"
     fi

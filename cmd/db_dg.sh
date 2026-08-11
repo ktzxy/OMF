@@ -242,6 +242,8 @@ db_dg_switchover() {
         log_info "后续: 1) 应用改连新主库  2) omf db dg status 确认配置 SUCCESS  3) 本机备库确认 MRP 应用 (omf db dg apply status)"
         # 多组织应用重连指引: 切换后新主库为原备库 (STANDBY_IP)
         dg_app_conn_guide "${OMF_CONFIG[STANDBY_IP]}" "$target"
+        # 切换后钩子: conf/hooks/dg_switchover_after.d/ (可对接 CMDB 翻转连接串、通知应用侧、合规留痕)
+        run_hooks "dg_switchover_after" "new_primary=$target" "old_primary=${OMF_CONFIG[ORACLE_SID]}"
         send_notification "OMF DG Switchover 完成" "新主库: ${target}"
     else
         log_warn "Switchover 可能未完全成功, 请立即检查: omf db dg status 与两端 alert 日志"
@@ -298,6 +300,8 @@ db_dg_failover() {
         log_info "后续: 1) 应用改连本机  2) 旧主库修复后执行 omf db dg reinstate 回收为备库"
         # 多组织应用重连指引: failover 后本机(原备库)为新主库
         dg_app_conn_guide "${OMF_CONFIG[STANDBY_IP]}" "$target"
+        # 灾难切换后钩子: conf/hooks/dg_failover_after.d/ (可对接告警升级、CMDB 主备翻转、应急流程)
+        run_hooks "dg_failover_after" "new_primary=$target"
         send_notification "OMF DG Failover 完成" "新主库: ${target}, 请尽快处理旧主库 (reinstate 或重建)"
     else
         log_error "Failover 失败 (rc=$rc), 请检查 dgmgrl 输出与 alert 日志"

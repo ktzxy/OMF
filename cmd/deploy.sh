@@ -150,4 +150,6 @@ cmd_deploy() {
     log_info "========== 部署编排完成 =========="
     log_info "后续建议: 配置定时备份 (omf backup schedule setup) 与定时清理 (omf clean schedule setup)"
     log_info "一手总览: omf status / omf info"
+    # 部署完成钩子: conf/hooks/deploy_after.d/ (可对接 CMDB 登记新环境、初始化监控、发送上线通知)
+    run_hooks "deploy_after" "sid=${OMF_CONFIG[ORACLE_SID]}" "pdb=${OMF_CONFIG[PDB_NAME]}"
 }

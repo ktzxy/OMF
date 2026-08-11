@@ -600,10 +600,24 @@ RMANEOF" 2>&1) || true
         exit 2
     fi
 
+    # 执行 RESTORE VALIDATE (不真恢复, 只验证备份集可读完整). 捕获退出码与错误,
+    # 供 cron 定时校验感知"可恢复性": 失败时发送告警并返回非0, 避免静默失效。
+    local vlog="$OMF_RUN_LOG"
+    set +e
     as_oracle "rman target / <<RMANEOF
 RESTORE ${sc} VALIDATE;
 RESTORE ARCHIVELOG ALL VALIDATE;
-RMANEOF"
+RMANEOF" 2>&1 | tee -a "$vlog"
+    local rc=${PIPESTATUS[0]}
+    set -e
+    if [ "$rc" -eq 0 ] && ! grep -qiE "RMAN-[0-9]{5}|ORA-[0-9]{5}" "$vlog"; then
+        log_info "备份可恢复性校验通过 (RESTORE VALIDATE OK, scope=${SCOPE_MODE})"
+        send_notification "OMF 备份校验通过" "实例 ${OMF_CONFIG[ORACLE_SID]} RESTORE VALIDATE 通过 (scope=${SCOPE_MODE})"
+    else
+        send_notification "OMF 备份校验失败" "实例 ${OMF_CONFIG[ORACLE_SID]} RESTORE VALIDATE 失败! 备份可能不可恢复, 请立即检查 (scope=${SCOPE_MODE})"
+        log_error "备份可恢复性校验失败 (RESTORE VALIDATE 异常, scope=${SCOPE_MODE}), 备份可能不可用! 查看: $vlog"
+        return 1
+    fi
 
     echo ""
     echo "逻辑备份文件:"
@@ -695,6 +709,19 @@ WHERE input_type='DB FULL' AND status='COMPLETED';\" | sqlplus -s / as sysdba" 2
 #===============================================================================
 backup_schedule() {
     local action="${1:-show}"
+    # 可选参数:
+    #   --validate-day <0-7|off>  每周恢复校验日 (0/7=周日, 默认 0); off 不生成校验任务
+    #   --pdb <name> [--pdb-day N] 额外对指定 PDB 做每周物理备份 (粒度更细, 适合"大库只保重点业务PDB")
+    #                              --pdb-day 指定周几 (默认 6=周六), 时间固定 03:00
+    local vd="0" pdb_name="" pdb_day="6"
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --validate-day) vd="${2:-0}"; shift 2;;
+            --pdb)          pdb_name="${2:-}"; shift 2;;
+            --pdb-day)      pdb_day="${2:-6}"; shift 2;;
+            *) [ "$action" = "show" ] || [ "$action" = "remove" ] && break; shift;;
+        esac
+    done
     case "$action" in
         setup|remove) require_root;;
     esac
@@ -705,10 +732,19 @@ backup_schedule() {
                 echo "# OMF 备份定时任务 (BACKUP_MODE=${mode})"
                 echo "0 2 * * * oracle ${OMF_HOME}/omf.sh -y backup auto >> ${OMF_HOME}/logs/omf_backup.log 2>&1"
                 echo "0 */4 * * * oracle ${OMF_HOME}/omf.sh -y backup archive >> ${OMF_HOME}/logs/omf_backup.log 2>&1"
+                # 每周可恢复性校验: RESTORE VALIDATE 不真恢复, 只验证备份可读完整。
+                # 把"可恢复性"从一次性演练变成持续监控, 失败会经 backup validate 发送告警。
+                if [ -n "$vd" ] && [ "$vd" != "off" ] && [[ "$vd" =~ ^[0-7]$ ]]; then
+                    echo "0 4 * * ${vd} oracle ${OMF_HOME}/omf.sh -y backup validate >> ${OMF_HOME}/logs/omf_backup.log 2>&1"
+                fi
+                # 可选: 对指定 PDB 单独做每周物理备份 (RMAN PLUGGABLE DATABASE, 不影响其他 PDB)
+                if [ -n "$pdb_name" ] && [[ "$pdb_day" =~ ^[0-7]$ ]]; then
+                    echo "0 3 * * ${pdb_day} oracle ${OMF_HOME}/omf.sh -y backup physical --pdb ${pdb_name} >> ${OMF_HOME}/logs/omf_backup.log 2>&1"
+                fi
             } > /etc/cron.d/omf_backup
             chmod 644 /etc/cron.d/omf_backup
             systemctl restart crond 2>/dev/null || service cron restart 2>/dev/null || true
-            log_info "定时备份已配置 (BACKUP_MODE=${mode})"
+            log_info "定时备份已配置 (BACKUP_MODE=${mode}, 每周恢复校验日=周${vd:-关}, PDB单独备份=${pdb_name:-无})"
             cat /etc/cron.d/omf_backup
             ;;
         show)
@@ -716,6 +752,6 @@ backup_schedule() {
                 || echo "未配置, 执行 'omf backup schedule setup'"
             ;;
         remove) rm -f /etc/cron.d/omf_backup; log_info "定时备份已移除";;
-        *) echo "用法: omf backup schedule {setup|show|remove}";;
+        *) echo "用法: omf backup schedule {setup|show|remove} [--validate-day <0-7|off>] [--pdb <name> [--pdb-day <0-7>]]";;
     esac
 }

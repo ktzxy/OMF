@@ -1,5 +1,12 @@
 # 版本变更记录
 
+## v1.63 关键改进（定时恢复校验 + PDB 级定时备份，把可恢复性变成持续监控）
+继续落地 DEPLOY_WALKTHROUGH 建议，强化定时备份的可恢复性与粒度：
+- **`backup validate` 补告警闭环**：捕获 `RESTORE VALIDATE` 退出码与 RMAN-/ORA- 错误，失败时 `send_notification` 告警并返回非0（供 cron 感知），成功也推送确认——"可恢复性"从一次性演练变成持续监控，杜绝"备份天天做却没人验证能否恢复"的隐性风险。
+- **`backup schedule setup` 新增 `--validate-day <0-7|off>`**：生成每周固定日的 `backup validate` 定时任务（默认周日 04:00，`off` 关闭）。`omf help backup` 同步更新。
+- **`backup schedule setup` 新增 `--pdb <name> [--pdb-day <0-7>]`**：可选对指定 PDB 单独做每周 RMAN 物理备份（`backup physical --pdb <name>`，默认周六 03:00），粒度更细，适合"大库只保重点业务 PDB"，不影响其他 PDB。
+- 验证：selftest 41/0、harness 17/0 通过；validate-day/pdb 参数分支逻辑经核对正确（非法/off 值安全跳过）。
+
 ## v1.62 关键改进（运维提效三功能：备份报告 / 实例台账导出 / 高危操作审计）
 落地 DEPLOY_WALKTHROUGH 中建议的三个可拓展功能，减少运维手工操作量：
 - **备份报告落盘+推送**：新增 `backup_report()`（`cmd/backup.sh`），在物理/增量/逻辑备份成功后自动生成格式化报告到 `logs/backup_reports/`（时间/类型/实例/库角色/保留策略/目录占用/最近全量备份），并随 `send_notification` 推送要点，运维扫一眼即知本次备份结果，免去逐个 `omf backup list`。

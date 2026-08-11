@@ -42,14 +42,15 @@ _fleet_load() {
 
 # 对单个实例执行命令: 本地直接跑, 远程经 SSH
 #   $1=实例名  $2=目标(local|user@host)  $3=远程omf路径  $4..=omf 命令参数
-# 输出前缀 [实例名] 便于区分; 返回 0=成功 1=失败
+# 输出到 OMF_FLEET_OUT (并行时每实例独立临时文件, 避免并发覆盖); 返回 0=成功 1=失败
 _fleet_exec() {
     local name="$1" target="$2" omf="$3"; shift 3
     local cmdline; cmdline="$*"
+    local out="${OMF_FLEET_OUT:-/tmp/omf_fleet_${name}.out}"
     local rc
     if [ "$target" = "local" ]; then
         # 本机: 直接调用本 OMF (注意: fleet 本身也是 omf, 用 bash omf.sh 避免递归锁问题)
-        bash "${OMF_HOME}/omf.sh" -y $cmdline > /tmp/omf_fleet_${name}.out 2>&1
+        bash "${OMF_HOME}/omf.sh" -y $cmdline > "$out" 2>&1
         rc=$?
     else
         # 远程: SSH 调用目标机的 omf
@@ -57,34 +58,82 @@ _fleet_exec() {
             log_warn "[${name}] 本机无 ssh 命令, 跳过"
             return 1
         fi
-        ssh -o ConnectTimeout=10 -o BatchMode=yes "$target" "'$omf' -y $cmdline" > /tmp/omf_fleet_${name}.out 2>&1
+        ssh -o ConnectTimeout=10 -o BatchMode=yes "$target" "'$omf' -y $cmdline" > "$out" 2>&1
         rc=$?
     fi
     return "$rc"
 }
 
-# 批量执行命令 (fleet run <omf 命令...>)
+# 批量执行命令 (fleet run <omf 命令...>) [--parallel N]
+#   --parallel N  并发执行, 同时最多 N 个实例 (默认 0=串行; 建议 4-8 避免 SSH 风暴)
 fleet_run() {
-    [ $# -eq 0 ] && { echo "用法: omf fleet run <omf 命令及参数>  例: omf fleet run status / omf fleet run check monitor --alert"; return 1; }
-    _fleet_load
-    local cmdline="$*"
-    log_step "批量执行 ${#_FLEET_NAME[@]} 个实例: omf $cmdline"
-    local ok=0 fail=0 i name target omf
-    for (( i=0; i<${#_FLEET_NAME[@]}; i++ )); do
-        name="${_FLEET_NAME[$i]}"; target="${_FLEET_TARGET[$i]}"; omf="${_FLEET_OMF[$i]}"
-        echo "──────────────────────────────────────────"
-        echo "▶ [${name}] (${target})  omf ${cmdline}"
-        if _fleet_exec "$name" "$target" "$omf" $cmdline; then
-            echo "  ✓ [${name}] 成功"
-            ok=$((ok+1))
-        else
-            echo "  ✗ [${name}] 失败 (rc=$?)"
-            fail=$((fail+1))
-        fi
-        # 显示该实例输出 (缩进)
-        sed 's/^/    /' /tmp/omf_fleet_${name}.out 2>/dev/null
-        rm -f /tmp/omf_fleet_${name}.out
+    local parallel=0
+    local -a rest_args=()
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --parallel) parallel="${2:-4}"; shift 2;;
+            --) shift; rest_args+=("$@"); break;;
+            *) rest_args+=("$1"); shift;;
+        esac
     done
+    [ ${#rest_args[@]} -eq 0 ] && { echo "用法: omf fleet run [--parallel N] <omf 命令及参数>  例: omf fleet run status / omf fleet run --parallel 4 check monitor --alert"; return 1; }
+    _fleet_load
+    local cmdline="${rest_args[*]}"
+    log_step "批量执行 ${#_FLEET_NAME[@]} 个实例 (并行度=${parallel:-串行}): omf $cmdline"
+
+    local ok=0 fail=0 i name target omf
+    if [ "$parallel" -gt 1 ]; then
+        # ---- 并行模式: 后台并发, 每实例独立临时文件, 限流并发数 ----
+        local tmpdir; tmpdir="$(mktemp -d /tmp/omf_fleet_XXXXXX)"
+        local -a rc_arr=() pids=() outs=()
+        local running=0
+        for (( i=0; i<${#_FLEET_NAME[@]}; i++ )); do
+            name="${_FLEET_NAME[$i]}"; target="${_FLEET_TARGET[$i]}"; omf="${_FLEET_OMF[$i]}"
+            outs[$i]="${tmpdir}/${i}.out"
+            OMF_FLEET_OUT="${outs[$i]}" _fleet_exec "$name" "$target" "$omf" $cmdline &
+            pids[$i]=$!
+            running=$((running+1))
+            # 限流: 达到并发上限时, 等待最老的进程结束
+            if [ "$running" -ge "$parallel" ]; then
+                wait "${pids[$((i-parallel+1))]}" 2>/dev/null
+                rc_arr[$((i-parallel+1))]=$?
+                running=$((running-1))
+            fi
+        done
+        # 收尾: 等所有剩余进程结束并记录退出码
+        for (( i=0; i<${#_FLEET_NAME[@]}; i++ )); do
+            if [ -z "${rc_arr[$i]:-}" ]; then
+                wait "${pids[$i]}" 2>/dev/null; rc_arr[$i]=$?
+            fi
+        done
+        # 按序汇总输出
+        for (( i=0; i<${#_FLEET_NAME[@]}; i++ )); do
+            name="${_FLEET_NAME[$i]}"; target="${_FLEET_TARGET[$i]}"
+            echo "──────────────────────────────────────────"
+            echo "▶ [${name}] (${target})  omf ${cmdline}"
+            if [ "${rc_arr[$i]:-1}" -eq 0 ]; then
+                echo "  ✓ [${name}] 成功"; ok=$((ok+1))
+            else
+                echo "  ✗ [${name}] 失败 (rc=${rc_arr[$i]:-1})"; fail=$((fail+1))
+            fi
+            sed 's/^/    /' "${outs[$i]}" 2>/dev/null
+        done
+        rm -rf "$tmpdir"
+    else
+        # ---- 串行模式 (默认) ----
+        for (( i=0; i<${#_FLEET_NAME[@]}; i++ )); do
+            name="${_FLEET_NAME[$i]}"; target="${_FLEET_TARGET[$i]}"; omf="${_FLEET_OMF[$i]}"
+            echo "──────────────────────────────────────────"
+            echo "▶ [${name}] (${target})  omf ${cmdline}"
+            if _fleet_exec "$name" "$target" "$omf" $cmdline; then
+                echo "  ✓ [${name}] 成功"; ok=$((ok+1))
+            else
+                echo "  ✗ [${name}] 失败 (rc=$?)"; fail=$((fail+1))
+            fi
+            sed 's/^/    /' /tmp/omf_fleet_${name}.out 2>/dev/null
+            rm -f /tmp/omf_fleet_${name}.out
+        done
+    fi
     echo ""
     echo "══════════════════════════════════════════"
     echo "批量执行汇总: 成功 ${ok}  失败 ${fail}  共 ${#_FLEET_NAME[@]}"
@@ -92,14 +141,18 @@ fleet_run() {
     return 0
 }
 
-# 批量状态 (fleet status)
+# 批量状态 (fleet status [--parallel N])
 fleet_status() {
-    fleet_run status
+    local parallel=0
+    [ "$1" = "--parallel" ] && { parallel="${2:-4}"; shift 2; }
+    fleet_run --parallel "$parallel" status
 }
 
-# 批量健康检查 (fleet check)
+# 批量健康检查 (fleet check [--parallel N])
 fleet_check() {
-    fleet_run check monitor --alert
+    local parallel=0
+    [ "$1" = "--parallel" ] && { parallel="${2:-4}"; shift 2; }
+    fleet_run --parallel "$parallel" check monitor --alert
 }
 
 # 列出实例

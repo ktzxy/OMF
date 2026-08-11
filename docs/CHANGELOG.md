@@ -1,5 +1,13 @@
 # 版本变更记录
 
+## v1.69 关键改进（ROADMAP 第一批落地：fleet 并行执行 + 审计查询增强）
+落地 ROADMAP 第一批"低风险、立即收益"两项：
+- **`omf fleet run --parallel N`（并行批量执行）**：并发执行清单内实例（默认串行不变；`--parallel N` 限流并发，建议 4-8 避免 SSH 风暴）。每实例独立临时输出文件防覆盖，全部完成后按序汇总成功/失败；`fleet status`/`fleet check` 同样支持 `--parallel`。批量巡检效率数量级提升。
+- **`omf log audit` 审计查询增强**：新增 `--since <日期>`（按时间过滤）、`--actor <用户>`（按操作者）、`--cmd <命令>`（按命令，如 `dg failover`）、`--count`（按操作者/命令统计 Top，合规审计）、`--export <file.csv>`（导出 CSV，权限 600）。用 awk 按 JSON 字段过滤，兼容原有 `--json`/`--all`/N。
+- **修复 `--count` 统计含空格命令被拆分**：先 sed 剥离引号再 sort/uniq，`db dg failover` 等命令完整计数。
+- 验证：selftest 45/0、harness 21/0；并行 3 实例实测成功、输出完整；审计过滤/统计/CSV 导出实测正确。
+- 版本号更新至 v1.69。
+
 ## v1.68 关键改进（新增 ROADMAP.md 平台化/可视化演进设计方案）
 将审视报告中剩余"偏平台化/可视化、工作量较大、需部署环境验证"的待评估项整理为设计方案文档，供后续决策：
 - **新增 `docs/ROADMAP.md`**：6 项设计方案（CI 真实 Oracle 集成测试 / 监控可视化 Prometheus+Grafana / 多实例告警聚合 Dashboard / 审计查询增强 / 每日 HTML 报表 / fleet 并行执行），每项含背景/方案/关键设计/价值/风险取舍，并按"低风险立即收益 / 需环境 / 平台化整合"给落地优先级。

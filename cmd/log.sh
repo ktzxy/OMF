@@ -268,23 +268,33 @@ log_errors() {
 }
 
 #===============================================================================
-# 高危操作审计查看: omf log audit [N]
-#   查看 logs/audit.log (由 confirm_danger 放行时经 audit_log 写入) 的最近 N 条
-#   高危/不可逆操作记录 (时间/操作者/命令/操作描述), 供合规审计/变更回溯。
+# 高危操作审计查看: omf log audit [N] [过滤] [--count] [--export csv]
+#   查看 logs/audit.log (由 confirm_danger 放行时经 audit_log 写入) 的高危/不可逆操作记录,
+#   供合规审计/变更回溯。
 #   用法:
-#     omf log audit            # 最近 20 条
-#     omf log audit 50         # 最近 50 条
-#     omf log audit --json     # 原始 JSON Lines (机器可读, 供对接审计平台)
-#     omf log audit --all      # 全部记录
+#     omf log audit                     # 最近 20 条
+#     omf log audit 50                  # 最近 50 条
+#     omf log audit --all               # 全部记录
+#     omf log audit --json              # 原始 JSON Lines (机器可读, 供对接审计平台)
+#     omf log audit --since "YYYY-MM-DD"   # 只显示该日期及之后的记录
+#     omf log audit --actor <用户>      # 只显示指定操作者的记录
+#     omf log audit --cmd <命令>        # 只显示含指定命令的记录 (如 'dg failover' / 'db create')
+#     omf log audit --count             # 按操作者/命令统计出现次数 (Top, 合规审计)
+#     omf log audit --export <file.csv> # 导出为 CSV (时间,操作者,命令,操作描述)
 #===============================================================================
 log_audit() {
     local audit_file="${OMF_HOME}/logs/audit.log"
-    local n=20 raw=0 all=0
+    local n=20 raw=0 all=0 count=0 csv="" since="" actor_f="" cmd_f=""
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --json) raw=1; shift;;
-            --all)  all=1; shift;;
-            *[0-9]*) n="$1"; shift;;
+            --json)   raw=1; shift;;
+            --all)    all=1; shift;;
+            --count)  count=1; shift;;
+            --since)  since="$2"; shift 2;;
+            --actor)  actor_f="$2"; shift 2;;
+            --cmd)    cmd_f="$2"; shift 2;;
+            --export) csv="$2"; shift 2;;
+            *[0-9]*)  n="$1"; shift;;
             *) shift;;
         esac
     done
@@ -297,26 +307,77 @@ log_audit() {
         return 0
     fi
 
-    # 机器可读模式: 直接输出原始 JSON Lines
-    if [ "$raw" -eq 1 ]; then
-        cat "$audit_file"
-        echo ""
-        return 0
-    fi
-
     local total
     total=$(wc -l < "$audit_file")
     echo "  文件: $audit_file"
     echo "  总记录: $total"
+    [ -n "$since" ]  && echo "  过滤时间≥: $since"
+    [ -n "$actor_f" ] && echo "  过滤操作者: $actor_f"
+    [ -n "$cmd_f" ]  && echo "  过滤命令含: $cmd_f"
     echo ""
 
-    # 人类可读: 解析 JSON 字段 (ts/actor/cmd/op), 最近 N 条
-    if [ "$all" -eq 1 ]; then
-        n="$total"
+    # ---- 构建过滤管道 (awk 按 JSON 字段过滤) ----
+    local awk_filter='1'
+    if [ -n "$since" ]; then
+        # ts 形如 2026-08-11T14:38:05, 与 since(YYYY-MM-DD) 前缀比较
+        awk_filter="${awk_filter} && substr(\$0, index(\$0,\"\\\"ts\\\":\\\"\")+7, 10) >= \"${since}\""
     fi
-    echo "  最近 ${n} 条高危操作:"
+    if [ -n "$actor_f" ]; then
+        awk_filter="${awk_filter} && index(\$0, \"\\\"actor\\\":\\\"${actor_f}\\\"\") > 0"
+    fi
+    if [ -n "$cmd_f" ]; then
+        awk_filter="${awk_filter} && index(\$0, \"\\\"cmd\\\":\\\"${cmd_f}\\\"\") > 0"
+    fi
+
+    # ---- --count 统计模式 ----
+    if [ "$count" -eq 1 ]; then
+        # 先 sed 剥离引号得到纯值, 再 sort/uniq, 避免含空格命令被字段拆分
+        echo "  ── 按操作者统计 ──"
+        awk "${awk_filter}" "$audit_file" | grep -o '"actor":"[^"]*"' \
+            | sed 's/"actor":"//;s/"$//' | sort | uniq -c | sort -rn | head -20 \
+            | while read -r c v; do printf "    %-4s %s\n" "$c" "$v"; done
+        echo "  ── 按命令统计 (Top) ──"
+        awk "${awk_filter}" "$audit_file" | grep -o '"cmd":"[^"]*"' \
+            | sed 's/"cmd":"//;s/"$//' | sort | uniq -c | sort -rn | head -20 \
+            | while read -r c v; do printf "    %-4s %s\n" "$c" "$v"; done
+        echo ""
+        return 0
+    fi
+
+    # ---- --export csv 模式 ----
+    if [ -n "$csv" ]; then
+        {
+            echo "时间,操作者,命令,操作描述"
+            awk "${awk_filter}" "$audit_file" | while IFS= read -r line; do
+                local ts actor cmd op
+                ts=$(echo "$line" | grep -o '"ts":"[^"]*"' | sed 's/"ts":"//;s/"$//')
+                actor=$(echo "$line" | grep -o '"actor":"[^"]*"' | sed 's/"actor":"//;s/"$//')
+                cmd=$(echo "$line" | grep -o '"cmd":"[^"]*"' | sed 's/"cmd":"//;s/"$//')
+                op=$(echo "$line" | grep -o '"op":"[^"]*"' | sed 's/"op":"//;s/"$//')
+                printf "%s,%s,%s,%s\n" "$ts" "$actor" "$cmd" "$op"
+            done
+        } > "$csv"
+        chmod 600 "$csv" 2>/dev/null || true
+        log_info "审计已导出: $csv (${total} 条总记录, 权限 600)"
+        echo "已导出到 $csv"
+        echo ""
+        return 0
+    fi
+
+    # ---- 机器可读 (原始 JSON Lines, 含过滤) ----
+    if [ "$raw" -eq 1 ]; then
+        awk "${awk_filter}" "$audit_file"
+        echo ""
+        return 0
+    fi
+
+    # ---- 人类可读: 解析 JSON 字段 (ts/actor/cmd/op), 过滤后最近 N 条 ----
+    if [ "$all" -eq 1 ]; then
+        n=999999
+    fi
+    echo "  最近 ${n} 条高危操作 (已应用过滤):"
     local shown=0
-    tail -n "$n" "$audit_file" | while IFS= read -r line; do
+    awk "${awk_filter}" "$audit_file" | tail -n "$n" | while IFS= read -r line; do
         [ -z "$line" ] && continue
         local ts actor cmd op
         ts=$(echo "$line" | grep -o '"ts":"[^"]*"' | sed 's/"ts":"//;s/"$//')

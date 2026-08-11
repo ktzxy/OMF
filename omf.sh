@@ -113,7 +113,7 @@ cmd_help() {
         check)      echo "用法: omf check {all|db|disk|perf|alert|listener|preflight|schemas|dg|monitor}"; echo "  schemas  校验已配置模式(多库)是否真实存在于数据库"; echo "  dg       Data Guard 健康检查 (传输/MRP/延迟/间隙, 需 ENABLE_DG=true)";;
         listener)   echo "用法: omf listener {status|start|stop|restart|port <新端口>}";;
         status)     echo "用法: omf status [history [N]]";;
-        log)        echo "用法: omf log {view|tail|rotate|clean|errors|audit}"; echo "  errors [天数]  汇总最近 N 天 Alert/监听器日志的 ORA-/TNS-/ASM- 错误并聚合 Top10"; echo "  audit [N|--all|--json]  查看高危操作审计 (audit.log)";;
+        log)        echo "用法: omf log {view|tail|rotate|clean|errors|audit}"; echo "  errors [天数]  汇总最近 N 天 Alert/监听器日志的 ORA-/TNS-/ASM- 错误并聚合 Top10"; echo "  audit [N|--all|--json|--since D|--actor U|--cmd C|--count|--export f.csv]  高危操作审计查询";;
         clean)      echo "用法: omf clean {logs|trace|audit|archive|backup|recyclebin|all|schedule} [-d 天数 | --all] [-p|--preview] [-y]"; echo "  backup: ≡ omf backup cleanup (清理旧备份), 支持 --logical/--physical/-d N/--all/-p/-y"; echo "  recyclebin: 清空数据库回收站 (PURGE DBA_RECYCLEBIN, 不可逆, 需显式调用)";;
         config)     echo "用法: omf config {get|set|list|validate|show|init|password}"; echo "  password [KEY...] 交互式设置敏感口令到 conf/.omf.secret (600); 默认设 ORACLE/SYSTEM/PDB/APP 四口令; --remove <KEY> 移除";;
         self-update) echo "用法: omf self-update [version|force]";;

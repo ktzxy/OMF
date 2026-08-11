@@ -301,3 +301,88 @@ omf db dg failover         # 灾难切换（备库发起，旧主需 reinstate �
 - [ ] 主备 `backup schedule setup`（备库注意避开 expdp 段）
 - [ ] `omf db dg gap` 延迟正常、无归档间隙
 - [ ] 日志：框架 logs 已接（可选 JSON Lines）+ 归档由 RMAN 管理
+
+---
+
+## 部署+日常运维速查（走查未覆盖的常用功能）
+
+部署完成不代表结束。下表是框架已具备、但上述两个场景未展开的常用能力，按"部署期 / 日常 / 故障"三个运维场景归类。**部署期建议全程做完，日常期用 cron 固化。**
+
+### A. 部署期（建议一次性做完）
+
+| 功能 | 命令 | 作用 / 何时用 |
+|---|---|---|
+| 强口令 | `omf config password` | 把 ORACLE/SYSTEM/PDB/APP 四口令写入 `conf/.omf.secret`（600），替代弱口令兜底 |
+| 配置校验 | `omf config validate` | 部署前校验配置 + 弱口令检测，必跑 |
+| 业务数据导入 | `omf sql import <dump>.dmp --apply` | **部署后把历史数据搬进去**（impdp）。多模式加 `--schema <模式>`；`--check` 先探测源模式不导入 |
+| 恢复演练 | `omf backup restore --rman --validate` | RESTORE VALIDATE，**不真恢复**，验证备份可恢复 |
+| 全量体检 | `omf check all` | 库/磁盘/性能/alert/listener/模式 一次看全 |
+
+### B. 日常运维（建议 cron 固化）
+
+| 功能 | 命令 | 作用 / 何时用 |
+|---|---|---|
+| 定时备份 | `omf backup schedule setup` | 每天 02:00 `backup auto` + 每 4h `backup archive` |
+| **定时清理** | `omf clean schedule setup` | **防日志/归档/回收站撑满**（deploy 完成也会提示）。清 logs/trace/audit/archive/backup |
+| 定时体检 | `omf check monitor`（配合 `--alert`）+ cron | 生产指标：CPU/活动会话/redo速率/等待事件/FRA/DG延迟，超阈值告警 |
+| 一键总览 | `omf status` | 库/监听/DG/磁盘/备份/健康风险/最近日志 |
+| 实例信息 | `omf info` | 路径/端口/IP/连接串/内存/版本（交接给新手友好）|
+| 历史趋势 | `omf status history [N]` | 读 `monitor_history.jsonl`，看最近 N 次监控快照趋势 |
+| 启停维护 | `omf db {start\|stop\|restart\|status}` | 补丁/改参数后的常规重启 |
+| 监听管理 | `omf listener {status\|start\|stop\|restart\|port <N>}` | 监听维护 |
+
+### C. 故障 / 排错
+
+| 功能 | 命令 | 作用 / 何时用 |
+|---|---|---|
+| 错误汇总 | `omf log errors [N]` | 汇总最近 N 天 Alert/监听器日志的 ORA-/TNS-/ASM- 错误 Top10 |
+| 日志查看 | `omf log {view\|tail\|rotate\|clean}` | 运行日志查看/跟踪/轮转/清理 |
+| 逻辑恢复 | `omf backup restore <dump>.dmp [--schema x]` | impdp 覆盖恢复（对象已存在 ORA-31684 属非致命）|
+| 物理恢复 | `omf backup restore --rman [--scn N \| --time '...']` | RMAN 时间点/SCN 恢复；**主库+DG 时会告警需重建备库** |
+| DG 健康 | `omf check dg` | 传输/MRP/延迟/间隙 专门体检（比 `db dg gap` 更全）|
+| 性能 | `omf tune awr` | 生成 AWR 报告到 `logs/awr/`（调优前基线对比）|
+| 框架自检 | `omf selftest` | 41 项静态自检（不依赖 Oracle，升级/排错后跑）|
+| 多模式体检 | `omf sql usage` / `omf check schemas` | 各模式段空间/无效对象/表空间容量；校验配置模式真实存在 |
+
+> **核心提醒**：部署后务必做两件事——①`omf sql import` 导入业务数据；②`omf clean schedule setup` 配定时清理（deploy 完成只提示了备份定时，清理定时易被忽略）。
+
+---
+
+## 运维提效拓展建议（框架可进一步自动化）
+
+以下从"减少运维人员手工操作量"角度列出可拓展点，按价值排序。标注 `[已有]` 的是框架已具备、只需用起来；`[可拓展]` 是当前缺失、值得考虑实现。
+
+### 高价值（强烈建议）
+
+1. **[已有] 备份 + 清理 + 监控 三件套 cron 固化**：`backup schedule setup` + `clean schedule setup` + `check monitor --alert` 定时执行。这是最省人工的一件事，deploy 后 3 分钟配好，长期自动跑。
+
+2. **[已有] 恢复演练自动化（DR 演练）**：备份验证 `backup restore --rman --validate` 应**纳入定期 schedule**（如每月一次），否则"备份每天都在做、但没人验证能不能恢复"是生产最隐性风险。当前 validate 是手工命令，建议拓展为可定时（见可拓展 #1）。
+
+3. **[可拓展] 恢复/校验纳入定时**：把 `RESTORE VALIDATE` 做成 `backup schedule` 里的一个周期任务（如每周日 04:00 `backup restore --rman --validate`），失败告警。这样"可恢复性"从一次性变成持续监控。
+
+4. **[可拓展] 备份报告生成**：`backup list` 已有 RPO/保留期分析，但只输出到终端。拓展为每次备份后**生成一份快照报告**（备份集清单/大小/RPO/下次预期），落盘 `logs/backup_reports/` 或随 webhook 推送，运维早上扫一眼即可，不用逐个 `list`。
+
+### 中价值
+
+5. **[已有] 多组织统一体检入口**：多模式场景用 `check schemas` + `sql usage` 一次查完所有 dherp/lsdherp 的空间、无效对象，已省去逐库手工 SQL。建议纳入日常 `check monitor` 一并轮询。
+
+6. **[可拓展] 实例元数据一键导出**：`info` 已给出连接串/IP/端口，但未落盘。拓展为 `omf info --export <file>` 导出实例台账（SID/PDB/端口/IP/模式/备份策略/定时任务），交接、合规审计、故障应急时直接取，避免每次现查。
+
+7. **[可拓展] 变更操作留痕（审计日志）**：`clean recyclebin`、`backup restore`、`sql rollback`、`db stop` 等**高危操作**当前只进运行日志。拓展为独立的**变更审计记录**（时间/操作者/命令/参数），便于回溯"谁在什么时候干了什么"。
+
+### 低价值 / 需权衡
+
+8. **[可拓展] PDB 级定时备份**：多 PDB 场景可对重点 PDB 单独配 `backup physical --pdb x` 定时，粒度更细（当前定时是全库）。适合"大库只保某个业务 PDB"。
+
+9. **[可拓展] 备库自动归档清理守卫**：备库的归档由主库 RMAN 管理，但备库侧 `FRA_SIZE` 也需监控。建议 `check monitor` 对备库 FRA 单独阈值（已有 `MONITOR_ARCH_*`，确认覆盖备库即可）。
+
+---
+
+## 建议优先级小结
+
+| 优先级 | 动作 | 工作量 |
+|---|---|---|
+| 立即做 | 部署后配齐 `config password` + `sql import` + `clean schedule` + `backup schedule` | 无（用起来）|
+| 本周做 | 把 `backup restore --rman --validate` 纳入月/周定时，验证可恢复性 | 无（用起来）|
+| 建议评估 | 备份报告落盘推送、实例台账导出、高危操作审计留痕 | 需开发（3 项各半天~1天）|
+| 按需 | PDB 级定时备份、备库 FRA 阈值确认 | 按实际拓扑 |

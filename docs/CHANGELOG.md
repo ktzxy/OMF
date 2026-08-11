@@ -1,5 +1,10 @@
 # 版本变更记录
 
+## v1.61 关键改进（DEPLOY_WALKTHROUGH 补运维速查 + 提效拓展建议）
+基于"部署后日常运维如何减负"视角，为走查清单补充运维能力盘点：
+- **新增「部署+日常运维速查」**：按部署期/日常/故障三类归类的常用功能速查表，含 `sql import`（业务数据导入）、`backup restore --rman --validate`（恢复演练）、`clean schedule setup`（定时清理，易被 deploy 提示忽略）、`log errors`、`check dg`、`tune awr`、`status history`、`selftest` 等走查未展开的命令。
+- **新增「运维提效拓展建议」**：标注 `[已有]`（用起来即省人工）与 `[可拓展]`（当前缺失值得实现）两类：定时恢复校验、备份报告落盘推送、实例台账导出（info --export）、高危操作审计留痕、PDB 级定时备份等，并给优先级与工作量评估。
+
 ## v1.60 关键改进（新增部署走查清单 DEPLOY_WALKTHROUGH.md）
 基于"Ubuntu 单机全备 + CentOS 主备"两个真实部署场景的模拟推演，沉淀为可落地核对的走查清单：
 - **新增 `docs/DEPLOY_WALKTHROUGH.md`**：两个场景从配置到备份/日志的完整命令序列，含 deploy 7 步拆解、backup auto 实际行为、DG 主备构建与 Broker 流程、备库 DG 守卫（禁 expdp）、`db_unique_name` 自动推导说明、落地核对清单。
